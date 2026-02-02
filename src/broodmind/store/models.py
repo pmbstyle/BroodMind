@@ -15,6 +15,10 @@ class WorkerRecord(BaseModel):
     granted_caps: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+    # Worker results (populated when completed)
+    summary: str | None = None
+    output: dict[str, Any] | None = None
+    error: str | None = None
 
 
 class IntentRecord(BaseModel):
@@ -32,14 +36,17 @@ class IntentRecord(BaseModel):
 
 
 class WorkerTemplateRecord(BaseModel):
+    """Worker template - pre-defined agent with system prompt."""
     model_config = ConfigDict(frozen=True)
 
     id: str
     name: str
     description: str
-    worker_entrypoint: str
-    worker_files: dict[str, str]
-    requested_caps: list[dict[str, Any]] = Field(default_factory=list)
+    system_prompt: str  # Worker's personality and purpose
+    available_tools: list[str]  # Tool names this worker can use
+    required_permissions: list[str]  # ["network", "fs_read", "fs_write", "exec"]
+    max_thinking_steps: int = 10
+    default_timeout_seconds: int = 300
     created_at: datetime
     updated_at: datetime
 

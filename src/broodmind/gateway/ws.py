@@ -53,6 +53,10 @@ def register_ws_routes(app: FastAPI) -> None:
             approvals=ApprovalManager(bot=None),
             memory=app.state.memory,
         )
+        async def _internal_send(chat_id: int, text: str) -> None:
+            await socket.send_json({"type": "message", "text": text, "chat_id": chat_id})
+
+        queen.internal_send = _internal_send
         tasks: set[asyncio.Task] = set()
         try:
             while True:

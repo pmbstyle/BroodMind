@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 
@@ -10,8 +10,8 @@ class ToolSpec:
     description: str
     parameters: dict[str, Any]
     permission: str
-    scope: str  # "queen" | "worker"
     handler: Callable[[dict[str, Any], dict[str, Any]], str]
+    scope: str | None = field(default=None, compare=False)  # Deprecated, kept for compatibility
 
     def to_openai_tool(self) -> dict[str, Any]:
         return {
@@ -27,13 +27,11 @@ class ToolSpec:
 def filter_tools(
     tools: Iterable[ToolSpec],
     *,
-    scope: str,
     permissions: dict[str, bool],
 ) -> list[ToolSpec]:
+    """Filter tools by permissions only. Scope filtering has been removed."""
     available: list[ToolSpec] = []
     for tool in tools:
-        if tool.scope != scope:
-            continue
         if not permissions.get(tool.permission, False):
             continue
         available.append(tool)

@@ -7,7 +7,7 @@ from broodmind.gateway.ws import register_ws_routes
 from broodmind.memory.service import MemoryService
 from broodmind.policy.engine import PolicyEngine
 from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
-from broodmind.providers.zai import ZAIProvider
+from broodmind.providers.litellm_provider import LiteLLMProvider
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.workers.launcher_factory import build_launcher
 from broodmind.workers.runtime import WorkerRuntime
@@ -16,6 +16,11 @@ from broodmind.workers.runtime import WorkerRuntime
 def build_app(settings: Settings) -> FastAPI:
     app = FastAPI(title="BroodMind Gateway")
     store = SQLiteStore(settings)
+
+    # Initialize default worker templates
+    from broodmind.workers.templates import initialize_templates
+    initialize_templates(store)
+
     policy = PolicyEngine()
     launcher = build_launcher(settings)
     runtime = WorkerRuntime(
@@ -24,7 +29,7 @@ def build_app(settings: Settings) -> FastAPI:
         workspace_dir=settings.workspace_dir,
         launcher=launcher,
     )
-    provider = ZAIProvider(settings)
+    provider = LiteLLMProvider(settings)
     embeddings = None
     if settings.openai_api_key:
         embeddings = OpenAIEmbeddingsProvider(settings)

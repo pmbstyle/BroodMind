@@ -8,7 +8,7 @@ from broodmind.config.settings import Settings
 from broodmind.memory.service import MemoryService
 from broodmind.policy.engine import PolicyEngine
 from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
-from broodmind.providers.zai import ZAIProvider
+from broodmind.providers.litellm_provider import LiteLLMProvider
 from broodmind.queen.core import Queen
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.telegram.approvals import ApprovalManager
@@ -20,8 +20,13 @@ logger = logging.getLogger(__name__)
 
 
 def build_dispatcher(settings: Settings, bot: Bot) -> Dispatcher:
-    provider = ZAIProvider(settings)
+    provider = LiteLLMProvider(settings)
     store = SQLiteStore(settings)
+
+    # Initialize default worker templates
+    from broodmind.workers.templates import initialize_templates
+    initialize_templates(store)
+
     policy = PolicyEngine()
     launcher = build_launcher(settings)
     runtime = WorkerRuntime(
@@ -51,13 +56,28 @@ def build_dispatcher(settings: Settings, bot: Bot) -> Dispatcher:
     )
 
     dp = Dispatcher()
-    register_handlers(dp, queen, approvals, settings)
-    return dp
+    register_handlers(dp, queen, approvals, settings, bot)
+    return dp, queen
 
 
 async def run_bot(settings: Settings) -> None:
     bot = Bot(token=settings.telegram_bot_token)
-    dp = build_dispatcher(settings, bot)
+    dp, queen = build_dispatcher(settings, bot)
+
+    # Parse allowed chat IDs from settings
+    allowed_chat_ids = []
+    if settings.allowed_telegram_chat_ids:
+        try:
+            allowed_chat_ids = [
+                int(cid.strip()) for cid in settings.allowed_telegram_chat_ids.split(",") if cid.strip()
+            ]
+        except ValueError:
+            logger.error("Invalid ALLOWED_TELEGRAM_CHAT_IDS format - must be comma-separated integers")
+
+    # Initialize queen system before starting polling
+    logger.info("Initializing queen system")
+    await queen.initialize_system(bot, allowed_chat_ids=allowed_chat_ids)
+    logger.info("Queen system initialization complete")
 
     logger.info("Starting Telegram polling")
     try:

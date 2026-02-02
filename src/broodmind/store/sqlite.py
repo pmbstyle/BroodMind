@@ -37,7 +37,10 @@ class SQLiteStore(Store):
                 task TEXT NOT NULL,
                 granted_caps_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                summary TEXT,
+                output_json TEXT,
+                error TEXT
             );
 
             CREATE TABLE IF NOT EXISTS intents (
@@ -85,16 +88,19 @@ class SQLiteStore(Store):
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL,
-                worker_entrypoint TEXT NOT NULL,
-                worker_files_json TEXT NOT NULL,
-                requested_caps_json TEXT NOT NULL,
+                system_prompt TEXT NOT NULL,
+                available_tools_json TEXT NOT NULL,
+                required_permissions_json TEXT NOT NULL,
+                max_thinking_steps INTEGER NOT NULL DEFAULT 10,
+                default_timeout_seconds INTEGER NOT NULL DEFAULT 300,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS chat_state (
                 chat_id INTEGER PRIMARY KEY,
-                bootstrapped_at TEXT
+                bootstrapped_at TEXT,
+                bootstrap_hash TEXT
             );
             """
         )
@@ -107,12 +113,33 @@ class SQLiteStore(Store):
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
+        try:
+            self._conn.execute("ALTER TABLE chat_state ADD COLUMN bootstrap_hash TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        # Add worker result fields
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN summary TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN output_json TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN error TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def create_worker(self, record: WorkerRecord) -> None:
         self._conn.execute(
             """
-            INSERT INTO workers (id, status, task, granted_caps_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO workers (id, status, task, granted_caps_json, created_at, updated_at, summary, output_json, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
@@ -121,6 +148,9 @@ class SQLiteStore(Store):
                 json.dumps(record.granted_caps),
                 record.created_at.isoformat(),
                 record.updated_at.isoformat(),
+                record.summary,
+                json.dumps(record.output) if record.output else None,
+                record.error,
             ),
         )
         self._conn.commit()
@@ -131,6 +161,83 @@ class SQLiteStore(Store):
             (status, _utc_now().isoformat(), worker_id),
         )
         self._conn.commit()
+
+    def update_worker_result(
+        self,
+        worker_id: str,
+        summary: str | None = None,
+        output: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        updates = ["updated_at = ?"]
+        params = [_utc_now().isoformat()]
+
+        if summary is not None:
+            updates.append("summary = ?")
+            params.append(summary)
+        if output is not None:
+            updates.append("output_json = ?")
+            params.append(json.dumps(output))
+        if error is not None:
+            updates.append("error = ?")
+            params.append(error)
+
+        params.append(worker_id)
+        self._conn.execute(
+            f"UPDATE workers SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        self._conn.commit()
+
+    def get_worker(self, worker_id: str) -> WorkerRecord | None:
+        cursor = self._conn.execute("SELECT * FROM workers WHERE id = ?", (worker_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return self._row_to_worker(row)
+
+    def get_active_workers(self, older_than_minutes: int = 10) -> list[WorkerRecord]:
+        """Get workers that are still running or recently completed."""
+        cursor = self._conn.execute(
+            """
+            SELECT * FROM workers
+            WHERE status IN ('started', 'running')
+               OR updated_at > datetime('now', '-' || ? || ' minutes')
+            ORDER BY updated_at DESC
+            """,
+            (older_than_minutes,),
+        )
+        return [self._row_to_worker(row) for row in cursor.fetchall()]
+
+    def cleanup_old_workers(self, keep_recent_hours: int = 24, keep_completed_count: int = 100) -> int:
+        """
+        Cleanup old worker records to prevent database bloat and reduce context confusion.
+
+        Keeps:
+        - All workers from the last N hours (default: 24)
+        - The last N completed workers (default: 100)
+        - All failed/stopped workers (for debugging)
+
+        Returns: Number of workers deleted
+        """
+        # Delete old completed workers that are not in the recent time window
+        # and not in the last N completed workers
+        cursor = self._conn.execute(
+            f"""
+            DELETE FROM workers
+            WHERE status = 'completed'
+              AND updated_at < datetime('now', '-{keep_recent_hours} hours')
+              AND id NOT IN (
+                  SELECT id FROM workers
+                  WHERE status = 'completed'
+                  ORDER BY updated_at DESC
+                  LIMIT {keep_completed_count}
+              )
+            """
+        )
+        deleted_count = cursor.rowcount
+        self._conn.commit()
+        return deleted_count
 
     def list_workers(self) -> list[WorkerRecord]:
         cursor = self._conn.execute("SELECT * FROM workers ORDER BY created_at DESC")
@@ -241,25 +348,30 @@ class SQLiteStore(Store):
         self._conn.execute(
             """
             INSERT INTO worker_templates (
-                id, name, description, worker_entrypoint, worker_files_json,
-                requested_caps_json, created_at, updated_at
+                id, name, description, system_prompt, available_tools_json,
+                required_permissions_json, max_thinking_steps, default_timeout_seconds,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
-                worker_entrypoint = excluded.worker_entrypoint,
-                worker_files_json = excluded.worker_files_json,
-                requested_caps_json = excluded.requested_caps_json,
+                system_prompt = excluded.system_prompt,
+                available_tools_json = excluded.available_tools_json,
+                required_permissions_json = excluded.required_permissions_json,
+                max_thinking_steps = excluded.max_thinking_steps,
+                default_timeout_seconds = excluded.default_timeout_seconds,
                 updated_at = excluded.updated_at
             """,
             (
                 record.id,
                 record.name,
                 record.description,
-                record.worker_entrypoint,
-                json.dumps(record.worker_files),
-                json.dumps(record.requested_caps),
+                record.system_prompt,
+                json.dumps(record.available_tools),
+                json.dumps(record.required_permissions),
+                record.max_thinking_steps,
+                record.default_timeout_seconds,
                 record.created_at.isoformat(),
                 record.updated_at.isoformat(),
             ),
@@ -276,6 +388,13 @@ class SQLiteStore(Store):
         if not row:
             return None
         return self._row_to_worker_template(row)
+
+        return self._row_to_worker_template(row)
+
+    def delete_worker_template(self, template_id: str) -> None:
+        """Delete a worker template by ID."""
+        self._conn.execute("DELETE FROM worker_templates WHERE id = ?", (template_id,))
+        self._conn.commit()
 
     def add_memory_entry(self, entry: MemoryEntry) -> None:
         self._conn.execute(
@@ -311,11 +430,11 @@ class SQLiteStore(Store):
 
     def is_chat_bootstrapped(self, chat_id: int) -> bool:
         cursor = self._conn.execute(
-            "SELECT bootstrapped_at FROM chat_state WHERE chat_id = ?",
+            "SELECT bootstrapped_at, bootstrap_hash FROM chat_state WHERE chat_id = ?",
             (chat_id,),
         )
         row = cursor.fetchone()
-        return bool(row and row["bootstrapped_at"])
+        return bool(row and (row["bootstrap_hash"] or row["bootstrapped_at"]))
 
     def mark_chat_bootstrapped(self, chat_id: int, ts: datetime) -> None:
         self._conn.execute(
@@ -328,6 +447,29 @@ class SQLiteStore(Store):
         )
         self._conn.commit()
 
+    def get_chat_bootstrap_hash(self, chat_id: int) -> str | None:
+        cursor = self._conn.execute(
+            "SELECT bootstrap_hash FROM chat_state WHERE chat_id = ?",
+            (chat_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return row["bootstrap_hash"]
+
+    def set_chat_bootstrap_hash(self, chat_id: int, bootstrap_hash: str, ts: datetime) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO chat_state (chat_id, bootstrapped_at, bootstrap_hash)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                bootstrapped_at = excluded.bootstrapped_at,
+                bootstrap_hash = excluded.bootstrap_hash
+            """,
+            (chat_id, ts.isoformat(), bootstrap_hash),
+        )
+        self._conn.commit()
+
     def _row_to_worker(self, row: sqlite3.Row) -> WorkerRecord:
         return WorkerRecord(
             id=row["id"],
@@ -336,6 +478,9 @@ class SQLiteStore(Store):
             granted_caps=_loads_json(row["granted_caps_json"]),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
+            summary=row["summary"] if "summary" in row.keys() else None,
+            output=_loads_json(row["output_json"]) if "output_json" in row.keys() and row["output_json"] else None,
+            error=row["error"] if "error" in row.keys() else None,
         )
 
     def _row_to_intent(self, row: sqlite3.Row) -> IntentRecord:
@@ -392,9 +537,11 @@ class SQLiteStore(Store):
             id=row["id"],
             name=row["name"],
             description=row["description"],
-            worker_entrypoint=row["worker_entrypoint"],
-            worker_files=_loads_json(row["worker_files_json"]),
-            requested_caps=_loads_json(row["requested_caps_json"]),
+            system_prompt=row["system_prompt"],
+            available_tools=_loads_json(row["available_tools_json"]),
+            required_permissions=_loads_json(row["required_permissions_json"]),
+            max_thinking_steps=_row_get(row, "max_thinking_steps", 10),
+            default_timeout_seconds=_row_get(row, "default_timeout_seconds", 300),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )
@@ -408,6 +555,14 @@ def _parse_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(value)
+
+
+def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
+    """Safely get a value from a sqlite3.Row with a default."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
 
 
 def _loads_json(value: Any) -> dict:

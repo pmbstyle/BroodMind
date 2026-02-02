@@ -15,3 +15,12 @@ class Message:
 
 class InferenceProvider(Protocol):
     async def complete(self, messages: list[Message | dict], **kwargs: object) -> str: ...
+
+    async def complete_with_tools(
+        self,
+        messages: list[Message | dict],
+        *,
+        tools: list[dict],
+        tool_choice: str = "auto",
+        **kwargs: object,
+    ) -> dict: ...

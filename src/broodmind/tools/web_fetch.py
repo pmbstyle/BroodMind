@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
 
@@ -7,6 +8,34 @@ import httpx
 
 
 DEFAULT_MAX_CHARS = 20000
+
+
+class _HTMLTextExtractor(HTMLParser):
+    """Extract readable text from HTML, excluding scripts and styles."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._text_parts: list[str] = []
+        self._skip_tag = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "head", "meta", "link"}:
+            self._skip_tag = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "head", "meta", "link"}:
+            self._skip_tag = False
+        elif tag.lower() in {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "br"}:
+            self._text_parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_tag:
+            stripped = data.strip()
+            if stripped:
+                self._text_parts.append(stripped)
+
+    def get_text(self) -> str:
+        return " ".join(self._text_parts)
 
 
 def web_fetch(args: dict[str, Any]) -> str:
@@ -29,7 +58,18 @@ def web_fetch(args: dict[str, Any]) -> str:
         with httpx.Client(timeout=20.0, headers=headers) as client:
             resp = client.get(url)
         content = resp.text
-        snippet = content[:max_chars]
+        # Extract readable text if HTML
+        content_type = (resp.headers.get("content-type") or "").lower()
+        if "text/html" in content_type:
+            extractor = _HTMLTextExtractor()
+            try:
+                extractor.feed(content)
+                text = extractor.get_text()
+            except Exception:
+                text = content  # Fall back to raw content if parsing fails
+        else:
+            text = content
+        snippet = text[:max_chars]
         payload = {
             "url": url,
             "status_code": resp.status_code,

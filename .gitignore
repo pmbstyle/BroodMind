@@ -11,3 +11,5 @@
 /src/broodmind/telegram/__pycache__
 /src/broodmind/workers/__pycache__
 /workspace
+/src/broodmind/tools/__pycache__
+/src/broodmind/gateway/__pycache__

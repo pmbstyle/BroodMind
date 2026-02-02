@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     )
 
     telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
+
+    # LLM Provider Settings (LiteLLM)
+    litellm_num_retries: int = Field(3, alias="LITELLM_NUM_RETRIES")
+    litellm_timeout: float = Field(120.0, alias="LITELLM_TIMEOUT")
+    litellm_fallbacks: str | None = Field(default=None, alias="LITELLM_FALLBACKS")
+    litellm_drop_params: bool = Field(True, alias="LITELLM_DROP_PARAMS")
+
+    # Legacy ZAI Settings (used as defaults for LiteLLM)
     zai_api_key: str | None = Field(default=None, alias="ZAI_API_KEY")
     zai_base_url: str = Field("https://api.z.ai/api/coding/paas/v4", alias="ZAI_BASE_URL")
     zai_chat_path: str = Field("/chat/completions", alias="ZAI_CHAT_PATH")
@@ -47,6 +55,12 @@ class Settings(BaseSettings):
     worker_docker_host_workspace: str | None = Field(
         default=None, alias="BROODMIND_WORKER_DOCKER_HOST_WORKSPACE"
     )
+
+    debug_prompts: bool = Field(False, alias="BROODMIND_DEBUG_PROMPTS")
+
+    # Comma-separated list of Telegram chat IDs allowed to interact with the queen
+    # Get your chat ID by messaging @userinfobot on Telegram
+    allowed_telegram_chat_ids: str = Field("", alias="ALLOWED_TELEGRAM_CHAT_IDS")
 
 
 def load_settings() -> Settings:

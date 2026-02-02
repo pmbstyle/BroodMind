@@ -1,70 +1,75 @@
+"""
+Simplified Worker Contracts
+
+Workers are pre-defined agents with system prompts.
+Queen assigns tasks to workers with input data.
+"""
 from __future__ import annotations
 
-import json
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class WorkerTemplate(BaseModel):
+    """Pre-defined worker agent with system prompt and tools."""
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    name: str
+    description: str
+    system_prompt: str  # Worker's personality and purpose
+    available_tools: list[str]  # Tool names this worker can use
+    required_permissions: list[str]  # ["network", "fs_read", "fs_write", "exec"]
+    max_thinking_steps: int = 10
+    default_timeout_seconds: int = 300
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskRequest(BaseModel):
+    """Task from Queen to worker."""
+    model_config = ConfigDict(frozen=True)
+
+    worker_id: str  # Which worker template to use
+    task: str  # Natural language task description
+    inputs: dict[str, Any] = Field(default_factory=dict)  # Task-specific inputs
+    tools: list[str] | None = None  # Override default tools if needed
+    timeout_seconds: int | None = None  # Override default timeout
+
+
+class WorkerSpec(BaseModel):
+    """Simplified worker specification for runtime."""
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    task: str
+    inputs: dict[str, Any]
+    system_prompt: str
+    available_tools: list[str]
+    granted_capabilities: list[dict[str, Any]]  # From policy engine
+    timeout_seconds: int
+    max_thinking_steps: int
+    run_id: str = ""
+    lifecycle: str = "ephemeral"
+
+
+class WorkerResult(BaseModel):
+    """Worker result with optional questions for Queen."""
+    model_config = ConfigDict(frozen=True)
+
+    summary: str
+    output: dict[str, Any] | None = None
+    questions: list[str] = Field(default_factory=list)  # Questions for Queen
+    thinking_steps: int = 0
+    tools_used: list[str] = Field(default_factory=list)
+
+
 class Capability(BaseModel):
+    """Permission capability (kept for policy engine compatibility)."""
     model_config = ConfigDict(frozen=True)
 
     type: str
     scope: str
     read_only: bool = False
-
-
-class WorkerSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    id: str
-    task: str
-    system_prompt: str
-    requested_capabilities: list[Capability] = Field(default_factory=list)
-    granted_capabilities: list[Capability] = Field(default_factory=list)
-    timeout_seconds: int = 300
-    memory_limit_mb: int = 256
-    lifecycle: str = "ephemeral"
-    worker_module: str = "broodmind.workers.reference.web_fetch_worker"
-    worker_entrypoint: str = "worker.py"
-    worker_files: dict[str, str] = Field(default_factory=dict)
-
-
-class Evidence(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    type: str
-    content: Any
-
-
-class ExecutedIntent(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    intent_id: str
-    permit_id: str
-    success: bool
-    result: str | None = None
-    payload_hash_verified: bool = False
-
-
-class WorkerResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    summary: str
-    intents_executed: list[ExecutedIntent] = Field(default_factory=list)
-    evidence: list[Evidence] = Field(default_factory=list)
-    risk_flags: list[str] = Field(default_factory=list)
-    escalations: list[str] = Field(default_factory=list)
-
-
-class WorkerTemplateSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str
-    worker_entrypoint: str = "worker.py"
-    worker_files: dict[str, str]
-    requested_capabilities: list[Capability] = Field(default_factory=list)
-
-    def to_json(self) -> str:
-        return json.dumps(self.model_dump(), indent=2)

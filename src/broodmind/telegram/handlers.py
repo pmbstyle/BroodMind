@@ -18,8 +18,12 @@ _CHAT_SEND_TASKS: dict[int, asyncio.Task] = {}
 
 
 def register_handlers(
-    dp: Dispatcher, queen: Queen, approvals: ApprovalManager, settings: Settings
+    dp: Dispatcher, queen: Queen, approvals: ApprovalManager, settings: Settings, bot: Bot
 ) -> None:
+    async def _internal_send(chat_id: int, text: str) -> None:
+        await _enqueue_send(bot, chat_id, text)
+
+    queen.internal_send = _internal_send
     @dp.message()
     async def handle_message(message: Message) -> None:
         if not message.text:
@@ -50,9 +54,15 @@ def register_handlers(
                     async def _send_followup(task):
                         try:
                             result_text = await task
-                            await _enqueue_send(message.bot, message.chat.id, result_text)
-                        except Exception:
+                            if result_text and result_text.strip():
+                                await _enqueue_send(message.bot, message.chat.id, result_text)
+                        except Exception as exc:
                             logger.exception("Failed to send followup")
+                            await _enqueue_send(
+                                message.bot,
+                                message.chat.id,
+                                f"Worker error: {exc}",
+                            )
                     asyncio.create_task(_send_followup(reply.followup))
                 return
 
