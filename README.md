@@ -35,6 +35,12 @@ A distributed AI agent orchestration platform built on a **Queen + Workers** arc
 - Conversation history per chat ID
 - Bootstrap context injection from workspace files
 - Automatic context retrieval for relevant queries
+- CLI commands for memory management and cleanup
+
+**LLM Providers**
+- **LiteLLM** (default): Supports 100+ providers through unified API
+- **OpenRouter**: Access to Claude, GPT-4, and other models via OpenRouter
+- Easy switching via `BROODMIND_LLM_PROVIDER` environment variable
 
 **Communication**
 - Telegram bot integration for user interaction
@@ -48,6 +54,10 @@ A distributed AI agent orchestration platform built on a **Queen + Workers** arc
 - **System Initialization**: Queen wakes up on every container restart, reads workspace files, and notifies ready users
 - **Tool-Based Architecture**: Workers use declarative tools instead of ad-hoc code
 - **Memory System**: Semantic search retrieves relevant context from past conversations
+- **Memory Management**: CLI commands for cleanup and statistics
+- **No Worker Spam**: Only Queen messages appear in Telegram, workers provide context only
+- **Duplicate Prevention**: Automatic detection of duplicate worker tasks
+- **Multi-Provider Support**: LiteLLM and OpenRouter with easy switching
 - **Isolated Execution**: Workers run in Docker containers with workspace mounts
 - **Permission Control**: Granular permissions for network, filesystem, and execution
 - **Multi-User Support**: Configure allowed Telegram chat IDs for access control
@@ -58,7 +68,7 @@ A distributed AI agent orchestration platform built on a **Queen + Workers** arc
 
 - Docker and Docker Compose
 - Telegram bot token (from [@BotFather](https://t.me/botfather))
-- LLM provider API key (OpenAI, Z.ai, or compatible)
+- LLM provider API key (LiteLLM-compatible, OpenRouter, or OpenAI)
 - Optional: Brave Search API key for web search
 - Optional: OpenAI API key for embeddings
 
@@ -75,7 +85,16 @@ A distributed AI agent orchestration platform built on a **Queen + Workers** arc
    ```bash
    # Required
    TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+   # LLM Provider (choose one)
+   BROODMIND_LLM_PROVIDER=litellm  # Options: litellm, openrouter
+
+   # For LiteLLM provider (default)
    ZAI_API_KEY=your_provider_api_key
+
+   # For OpenRouter provider
+   OPENROUTER_API_KEY=your_openrouter_key
+   OPENROUTER_MODEL=anthropic/claude-sonnet-4  # Optional: custom model
 
    # Optional - for web search
    BRAVE_API_KEY=your_brave_search_key
@@ -100,6 +119,41 @@ A distributed AI agent orchestration platform built on a **Queen + Workers** arc
 
 The Queen will initialize, read workspace files, and send "Queen ready. All systems operational." to all allowed Telegram users.
 
+## CLI Commands
+
+BroodMind includes a command-line interface for management tasks:
+
+```bash
+# Show system status
+broodmind status
+
+# View logs
+broodmind logs -f  # Follow logs
+
+# Worker management
+broodmind workers list              # List all workers
+broodmind audit list                 # List audit events
+broodmind audit show <event_id>      # Show audit event details
+
+# Memory management
+broodmind memory stats               # Show memory/RAG statistics
+broodmind memory cleanup             # Clean up old memory entries (30 days, keep 1000)
+broodmind memory cleanup -d 7 -c 500  # Custom cleanup: keep 7 days, keep last 500
+broodmind memory cleanup --dry-run   # Preview what would be deleted
+
+# Start services
+broodmind start                      # Start Telegram bot
+broodmind gateway                    # Start gateway server
+```
+
+### Memory Cleanup
+
+The RAG memory system can grow over time. Use cleanup commands to manage it:
+
+- `broodmind memory stats` - See total entries, breakdown by role, unique chats
+- `broodmind memory cleanup -d <days> -c <count>` - Delete entries older than N days, but keep N most recent
+- `--dry-run` flag - Preview deletions without executing
+
 ## Configuration
 
 ### Environment Variables
@@ -107,13 +161,18 @@ The Queen will initialize, read workspace files, and send "Queen ready. All syst
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | Bot token from @BotFather |
-| `ZAI_API_KEY` | Yes | LLM provider API key |
+| `BROODMIND_LLM_PROVIDER` | No | LLM provider: `litellm` (default) or `openrouter` |
+| `ZAI_API_KEY` | No* | LiteLLM-compatible API key (required if using litellm) |
+| `OPENROUTER_API_KEY` | No* | OpenRouter API key (required if using openrouter) |
+| `OPENROUTER_MODEL` | No | OpenRouter model (default: `anthropic/claude-sonnet-4`) |
 | `ALLOWED_TELEGRAM_CHAT_IDS` | No | Comma-separated Telegram chat IDs |
 | `BRAVE_API_KEY` | No | Brave Search API for web_search tool |
 | `OPENAI_API_KEY` | No | OpenAI API for semantic memory |
 | `BROODMIND_WORKSPACE_DIR` | No | Workspace directory (default: ./workspace) |
 | `BROODMIND_STATE_DIR` | No | Database directory (default: ./data) |
 | `BROODMIND_WORKER_LAUNCHER` | No | Worker launcher: `same_env` or `docker` |
+
+*One of `ZAI_API_KEY` or `OPENROUTER_API_KEY` is required depending on your chosen provider.
 
 ### Workspace Files
 
@@ -152,8 +211,14 @@ The Queen automatically decides when to delegate:
 You: Read this repo and tell me about it https://github.com/user/repo
 Queen: I'll delegate this to a worker.
 [start_worker(worker_id="web_fetcher", task="...")]
-Queen: The worker completed. Here's what I found...
+Queen: Here's what I found...
 ```
+
+**Key improvements:**
+- Worker results are stored in memory for context
+- Only the Queen's messages appear in Telegram (no worker spam)
+- Duplicate worker detection prevents redundant tasks
+- Queen synthesizes worker results into coherent responses
 
 ### Tool Usage
 
@@ -190,8 +255,11 @@ Worker: Task completed with summary
 1. Queen calls `start_worker` with worker_id, task, inputs
 2. WorkerRuntime launches worker in container/same_env
 3. Worker executes with tools, returns `WorkerResult`
-4. Queen processes result and responds to user
-5. Worker directory cleaned up
+4. Result stored in memory (context for Queen)
+5. Queen synthesizes response based on worker results
+6. Worker directory cleaned up
+
+**Note:** Workers no longer send messages directly to Telegram. All communication goes through the Queen for a unified conversation experience.
 
 ## Development
 
