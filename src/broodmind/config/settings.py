@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     zai_model: str = Field("glm-4.7", alias="ZAI_MODEL")
 
     brave_api_key: str | None = Field(default=None, alias="BRAVE_API_KEY")
+    firecrawl_api_key: str | None = Field(default=None, alias="FIRECRAWL_API_KEY")
 
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_base_url: str = Field("https://api.openai.com/v1", alias="OPENAI_BASE_URL")

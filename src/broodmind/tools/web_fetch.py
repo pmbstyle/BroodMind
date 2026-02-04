@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
@@ -50,10 +51,29 @@ def web_fetch(args: dict[str, Any]) -> str:
     except Exception:
         max_chars = DEFAULT_MAX_CHARS
     max_chars = max(200, min(200000, max_chars))
+
+    # Support custom headers (e.g. for API tokens)
+    custom_headers = args.get("headers")
+    if not isinstance(custom_headers, dict):
+        custom_headers = {}
+
+    # Try Firecrawl first if configured
+    firecrawl_key = os.getenv("FIRECRAWL_API_KEY")
+    if firecrawl_key:
+        try:
+            return _fetch_firecrawl(url, firecrawl_key, max_chars, custom_headers)
+        except Exception as exc:
+            # Fall back to basic fetch if Firecrawl fails
+            pass
+
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; BroodMind/1.0)",
         "Accept-Language": "en-US,en;q=0.9",
     }
+    # Merge custom headers
+    if custom_headers:
+        headers.update(custom_headers)
+
     try:
         with httpx.Client(timeout=20.0, headers=headers) as client:
             resp = client.get(url)
@@ -79,6 +99,43 @@ def web_fetch(args: dict[str, Any]) -> str:
         return _to_json(payload)
     except Exception as exc:
         return f"web_fetch error: {exc}"
+
+
+def _fetch_firecrawl(url: str, api_key: str, max_chars: int, target_headers: dict[str, Any] | None = None) -> str:
+    """Fetch content using Firecrawl API."""
+    endpoint = "https://api.firecrawl.dev/v1/scrape"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "url": url,
+        "formats": ["markdown"],
+        "onlyMainContent": True,
+        "timeout": 30000,
+    }
+    if target_headers:
+        payload["headers"] = target_headers
+    
+    with httpx.Client(timeout=40.0) as client:
+        resp = client.post(endpoint, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+
+    if not data.get("success"):
+        raise ValueError(f"Firecrawl failed: {data.get('error')}")
+    
+    markdown = data.get("data", {}).get("markdown", "")
+    snippet = markdown[:max_chars]
+    
+    result = {
+        "url": url,
+        "status_code": 200,
+        "content_type": "text/markdown",
+        "snippet": snippet,
+        "source": "firecrawl",
+    }
+    return _to_json(result)
 
 
 def _is_safe_url(url: str) -> bool:

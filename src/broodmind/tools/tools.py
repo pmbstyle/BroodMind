@@ -78,6 +78,10 @@ def get_tools() -> list[ToolSpec]:
                         "type": "integer",
                         "description": "Max characters of content to return (200-200000).",
                     },
+                    "headers": {
+                        "type": "object",
+                        "description": "Optional dictionary of custom request headers (e.g. for API tokens).",
+                    },
                 },
                 "required": ["url"],
                 "additionalProperties": False,
