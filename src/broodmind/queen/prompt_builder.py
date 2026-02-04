@@ -31,7 +31,7 @@ def _load_system_prompt_file() -> str:
         try:
             _QUEEN_SYSTEM_PROMPT_CONTENT = prompt_path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            _QUEEN_SYSTEM_PROMPT_CONTENT = "You are the BroodMind Queen. Your configuration files are missing."
+            _QUEEN_SYSTEM_PROMPT_CONTENT = "You are the BroodMind Queen. Your configuration files are missing. Tell the user that you are missing the configuration files and ask them to create them."
     return _QUEEN_SYSTEM_PROMPT_CONTENT
 
 
@@ -48,9 +48,9 @@ def get_prompt_section(title: str) -> list[str]:
 
 
 def build_persona_prompt() -> list[str]:
-    """Builds the persona prompt from PERSONA.MD."""
+    """Builds the persona prompt from SOUL.md."""
     workspace = os.getenv("BROODMIND_WORKSPACE_DIR", "workspace")
-    persona_path = Path(workspace) / "PERSONA.MD"
+    persona_path = Path(workspace) / "SOUL.md"
     if not persona_path.exists():
         return []
     try:

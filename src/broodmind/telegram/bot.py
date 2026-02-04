@@ -10,6 +10,7 @@ from broodmind.memory.service import MemoryService
 from broodmind.policy.engine import PolicyEngine
 from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
 from broodmind.providers.litellm_provider import LiteLLMProvider
+from broodmind.providers.openrouter_provider import OpenRouterProvider
 from broodmind.queen.core import Queen
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.telegram.approvals import ApprovalManager
@@ -21,7 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 def build_dispatcher(settings: Settings, bot: Bot) -> Dispatcher:
-    provider = LiteLLMProvider(settings)
+    # Select LLM provider based on settings
+    if settings.llm_provider == "openrouter":
+        if not settings.openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is required when using openrouter provider")
+        provider = OpenRouterProvider(settings)
+    else:  # Default to litellm
+        provider = LiteLLMProvider(settings)
+
     store = SQLiteStore(settings)
 
     # Initialize default worker templates

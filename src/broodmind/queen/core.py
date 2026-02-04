@@ -147,7 +147,8 @@ class Queen:
                 self, self.provider, self.memory, wake_up_prompt, system_chat_id, bootstrap_context.content
             )
             logger.info("Queen wake up complete", result_preview=f"{result[:60]}..." if result else "empty")
-            if self.internal_send and result:
+            # Only send result if we have valid chat IDs (chat_id=0 is invalid)
+            if self.internal_send and result and chat_ids:
                 try:
                     await self.internal_send(system_chat_id, result)
                     logger.info("Queen ready message sent")

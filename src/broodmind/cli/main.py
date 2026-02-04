@@ -11,11 +11,13 @@ from broodmind.config.settings import Settings, load_settings
 from broodmind.gateway.app import build_app
 from broodmind.logging_config import configure_logging
 from broodmind.state import is_pid_running, read_status, write_start_status
+from broodmind.store.sqlite import SQLiteStore
 from broodmind.telegram.bot import run_bot
 
 app = typer.Typer(add_completion=False)
 workers_app = typer.Typer(add_completion=False)
 audit_app = typer.Typer(add_completion=False)
+memory_app = typer.Typer(add_completion=False)
 
 
 def _init_logging(settings: Settings) -> None:
@@ -111,6 +113,78 @@ def audit_show(event_id: str) -> None:
     typer.echo(f"data: {event.data}")
 
 
+@memory_app.command("stats")
+def memory_stats() -> None:
+    """Show memory/RAG statistics."""
+    settings = load_settings()
+    store = SQLiteStore(settings)
+
+    entries = store.list_memory_entries(limit=1000000)  # Get all for stats
+    total = len(entries)
+
+    if total == 0:
+        typer.echo("No memory entries found.")
+        return
+
+    # Count by role
+    by_role: dict[str, int] = {}
+    # Count by chat_id
+    by_chat: dict[int, int] = {}
+
+    for entry in entries:
+        by_role[entry.role] = by_role.get(entry.role, 0) + 1
+        chat_id = entry.metadata.get("chat_id") if entry.metadata else None
+        if chat_id:
+            by_chat[chat_id] = by_chat.get(chat_id, 0) + 1
+
+    typer.echo(f"Total memory entries: {total}")
+    typer.echo(f"By role:")
+    for role, count in sorted(by_role.items()):
+        typer.echo(f"  {role}: {count}")
+    typer.echo(f"Unique chats: {len(by_chat)}")
+
+
+@memory_app.command("cleanup")
+def memory_cleanup(
+    keep_days: int = typer.Option(30, "--keep-days", "-d", help="Keep entries newer than this (default: 30)"),
+    keep_count: int = typer.Option(1000, "--keep-count", "-c", help="Keep this many most recent entries (default: 1000)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without deleting"),
+) -> None:
+    """Clean up old memory entries."""
+    settings = load_settings()
+    store = SQLiteStore(settings)
+
+    if dry_run:
+        # Show what would be deleted
+        all_entries = store.list_memory_entries(limit=1000000)
+        to_delete = []
+        cutoff_date = _calculate_cutoff_date(keep_days)
+
+        # Get most recent N entries
+        recent_ids = set(e.id for e in sorted(all_entries, key=lambda e: e.created_at, reverse=True)[:keep_count])
+
+        for entry in all_entries:
+            if entry.id in recent_ids:
+                continue
+            if entry.created_at < cutoff_date:
+                to_delete.append(entry)
+
+        typer.echo(f"Would delete {len(to_delete)} entries (dry run)")
+        typer.echo(f"Parameters: keep_days={keep_days}, keep_count={keep_count}")
+        return
+
+    deleted = store.cleanup_old_memory(keep_days=keep_days, keep_count=keep_count)
+    typer.echo(f"Deleted {deleted} old memory entries.")
+    typer.echo(f"Parameters: keep_days={keep_days}, keep_count={keep_count}")
+
+
+def _calculate_cutoff_date(days: int):
+    """Calculate cutoff date for cleanup."""
+    from datetime import timedelta
+    from broodmind.utils import utc_now
+    return utc_now() - timedelta(days=days)
+
+
 @app.command()
 def logs(follow: bool = typer.Option(False, "--follow", "-f")) -> None:
     settings = load_settings()
@@ -165,6 +239,7 @@ def build_worker_image(tag: str = "broodmind-worker:latest") -> None:
 
 app.add_typer(workers_app, name="workers")
 app.add_typer(audit_app, name="audit")
+app.add_typer(memory_app, name="memory")
 
 
 if __name__ == "__main__":

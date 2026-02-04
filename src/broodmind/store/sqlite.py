@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -145,7 +146,6 @@ class SQLiteStore(Store):
         except Exception as e:
             # This might fail if run in a transaction, but we commit after.
             # It's a complex operation, so we log if it fails.
-            import logging
             logging.getLogger(__name__).warning("Memory schema migration failed (this may be ok if table was empty): %s", e)
 
         # Drop deprecated worker_templates table (now using filesystem)
@@ -155,7 +155,6 @@ class SQLiteStore(Store):
             logger = logging.getLogger(__name__)
             logger.info("Dropped deprecated worker_templates table (workers now loaded from filesystem)")
         except Exception as e:
-            import logging
             logging.getLogger(__name__).warning("Failed to drop worker_templates table: %s", e)
 
 
@@ -445,6 +444,31 @@ class SQLiteStore(Store):
             (f"%{needle}%", limit),
         )
         return [self._row_to_memory(row) for row in cursor.fetchall()]
+
+    def cleanup_old_memory(self, keep_days: int = 30, keep_count: int = 1000) -> int:
+        """
+        Cleanup old memory entries to prevent database bloat.
+
+        Keeps:
+        - All entries from the last N days (default: 30)
+        - The last N entries total (default: 1000)
+
+        Returns: Number of entries deleted
+        """
+        cursor = self._conn.execute(
+            f"""
+            DELETE FROM memory_entries
+            WHERE created_at < datetime('now', '-{keep_days} days')
+              AND id NOT IN (
+                  SELECT id FROM memory_entries
+                  ORDER BY created_at DESC
+                  LIMIT {keep_count}
+              )
+            """
+        )
+        deleted_count = cursor.rowcount
+        self._conn.commit()
+        return deleted_count
 
     def is_chat_bootstrapped(self, chat_id: int) -> bool:
         cursor = self._conn.execute(

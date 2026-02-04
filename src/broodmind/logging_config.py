@@ -98,11 +98,12 @@ def configure_logging(log_level: str, log_dir: Path, debug_prompts: bool) -> Non
     # They will still be captured and processed by our handlers if their level is WARNING or higher.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("litellm").setLevel(logging.WARNING)
-    
+
     # Special handling for our own debug flags
     if not debug_prompts:
-        # If debug_prompts is off, ensure litellm provider logs are not at DEBUG
+        # If debug_prompts is off, ensure provider logs are not at DEBUG
         logging.getLogger("broodmind.providers.litellm_provider").setLevel(logging.INFO)
+        logging.getLogger("broodmind.providers.openrouter_provider").setLevel(logging.INFO)
     
     logger = structlog.get_logger("logging_config")
     logger.info(
