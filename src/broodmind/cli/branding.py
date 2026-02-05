@@ -5,8 +5,6 @@ from rich.align import Align
 from rich.text import Text
 
 def print_banner() -> None:
-    # ASCII Art for "BroodMind"
-    # Added explicit spacing between Brood and Mind to prevent visual collapsing
     banner_text = textwrap.dedent(r"""
       ____                     _ __  __             _ 
      |  _ \                   | |  \/  |           | |

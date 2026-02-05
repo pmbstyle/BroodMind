@@ -21,7 +21,7 @@ class LiteLLMProvider:
     Supports both OpenRouter and z.ai (custom OpenAI-compatible endpoints).
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, model: str | None = None) -> None:
         self._settings = settings
 
         # Auto-detect which provider to use based on settings
@@ -32,13 +32,23 @@ class LiteLLMProvider:
 
         if use_openrouter:
             # Use OpenRouter via LiteLLM
-            self._model = f"openrouter/{settings.openrouter_model}"
+            model_name = model or settings.openrouter_model
+            # If the provided model already has a provider prefix, use it as is
+            if "/" in model_name:
+                self._model = model_name
+            else:
+                self._model = f"openrouter/{model_name}"
             self._api_base = settings.openrouter_base_url.rstrip("/")
             self._api_key = settings.openrouter_api_key
             logger.info("LiteLLM configured for OpenRouter: model=%s", self._model)
         else:
             # Use z.ai (custom OpenAI-compatible endpoint)
-            self._model = f"openai/{settings.zai_model}"
+            model_name = model or settings.zai_model
+            # If the provided model already has a provider prefix, use it as is
+            if "/" in model_name:
+                self._model = model_name
+            else:
+                self._model = f"openai/{model_name}"
             self._api_base = settings.zai_base_url.rstrip("/")
             self._api_key = settings.zai_api_key
             logger.info("LiteLLM configured for z.ai: model=%s", self._model)

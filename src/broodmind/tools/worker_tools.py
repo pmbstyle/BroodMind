@@ -44,6 +44,10 @@ def get_worker_tools() -> list[ToolSpec]:
                         "items": {"type": "string"},
                         "description": "Override default tools for this task (optional).",
                     },
+                    "model": {
+                        "type": "string",
+                        "description": "Override model for this task (optional, e.g., 'gpt-4o', 'anthropic/claude-3-opus').",
+                    },
                     "timeout_seconds": {
                         "type": "number",
                         "description": "Override default timeout (optional).",
@@ -149,6 +153,10 @@ def get_worker_tools() -> list[ToolSpec]:
                         "items": {"type": "string"},
                         "description": "Permissions needed: 'network', 'filesystem_read', 'filesystem_write', 'exec'.",
                     },
+                    "model": {
+                        "type": "string",
+                        "description": "Optional model override (e.g., 'gpt-4o').",
+                    },
                     "max_thinking_steps": {
                         "type": "number",
                         "description": "Max reasoning iterations (default: 10).",
@@ -187,6 +195,7 @@ def get_worker_tools() -> list[ToolSpec]:
                         "items": {"type": "string"},
                         "description": "New permissions (optional).",
                     },
+                    "model": {"type": "string", "description": "New model override (optional)."},
                     "max_thinking_steps": {"type": "number", "description": "New max steps (optional)."},
                     "default_timeout_seconds": {"type": "number", "description": "New timeout (optional)."},
                 },
@@ -266,6 +275,7 @@ def _tool_create_worker_template(args: dict[str, object], ctx: dict[str, object]
     # Get optional parameters with defaults
     available_tools = args.get("available_tools") if isinstance(args.get("available_tools"), list) else []
     required_permissions = args.get("required_permissions") if isinstance(args.get("required_permissions"), list) else []
+    model = str(args.get("model", "")).strip() or None
     max_thinking_steps = int(args.get("max_thinking_steps")) if args.get("max_thinking_steps") else 10
     default_timeout_seconds = int(args.get("default_timeout_seconds")) if args.get("default_timeout_seconds") else 300
 
@@ -277,6 +287,7 @@ def _tool_create_worker_template(args: dict[str, object], ctx: dict[str, object]
         "system_prompt": system_prompt,
         "available_tools": available_tools,
         "required_permissions": required_permissions,
+        "model": model,
         "max_thinking_steps": max_thinking_steps,
         "default_timeout_seconds": default_timeout_seconds,
     }
@@ -332,6 +343,8 @@ def _tool_update_worker_template(args: dict[str, object], ctx: dict[str, object]
         existing_config["available_tools"] = args.get("available_tools")
     if isinstance(args.get("required_permissions"), list):
         existing_config["required_permissions"] = args.get("required_permissions")
+    if args.get("model"):
+        existing_config["model"] = str(args.get("model")).strip()
     if args.get("max_thinking_steps"):
         existing_config["max_thinking_steps"] = int(args.get("max_thinking_steps"))
     if args.get("default_timeout_seconds"):
@@ -389,6 +402,7 @@ def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) -> str:
     task = str(args.get("task", "")).strip()
     inputs = args.get("inputs") if isinstance(args.get("inputs"), dict) else {}
     tools = args.get("tools") if isinstance(args.get("tools"), list) else None
+    model = str(args.get("model", "")).strip() or None
     timeout_seconds = int(args.get("timeout_seconds")) if args.get("timeout_seconds") else None
 
     if not worker_id:
@@ -407,6 +421,7 @@ def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) -> str:
         chat_id=chat_id,
         inputs=inputs,
         tools=tools,
+        model=model,
         timeout_seconds=timeout_seconds,
     )
     return json.dumps({

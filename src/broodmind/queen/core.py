@@ -209,6 +209,7 @@ class Queen:
         chat_id: int,
         inputs: dict[str, Any] | None,
         tools: list[str] | None,
+        model: str | None,
         timeout_seconds: int | None,
     ) -> str:
         from broodmind.logging_config import correlation_id_var
@@ -226,6 +227,7 @@ class Queen:
             task=task,
             inputs=inputs or {},
             tools=tools,
+            model=model,
             timeout_seconds=timeout_seconds,
             correlation_id=correlation_id_var.get(),
         )

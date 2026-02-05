@@ -22,6 +22,7 @@ class WorkerTemplate(BaseModel):
     system_prompt: str  # Worker's personality and purpose
     available_tools: list[str]  # Tool names this worker can use
     required_permissions: list[str]  # ["network", "fs_read", "fs_write", "exec"]
+    model: str | None = None  # Optional model override for this worker
     max_thinking_steps: int = 10
     default_timeout_seconds: int = 300
     created_at: datetime
@@ -36,6 +37,7 @@ class TaskRequest(BaseModel):
     task: str  # Natural language task description
     inputs: dict[str, Any] = Field(default_factory=dict)  # Task-specific inputs
     tools: list[str] | None = None  # Override default tools if needed
+    model: str | None = None  # Override model for this task
     timeout_seconds: int | None = None  # Override default timeout
     correlation_id: str | None = None
 
@@ -49,6 +51,7 @@ class WorkerSpec(BaseModel):
     inputs: dict[str, Any]
     system_prompt: str
     available_tools: list[str]
+    model: str | None = None
     granted_capabilities: list[dict[str, Any]]  # From policy engine
     timeout_seconds: int
     max_thinking_steps: int

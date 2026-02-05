@@ -45,6 +45,7 @@ class WorkerTemplateRecord(BaseModel):
     system_prompt: str  # Worker's personality and purpose
     available_tools: list[str]  # Tool names this worker can use
     required_permissions: list[str]  # ["network", "fs_read", "fs_write", "exec"]
+    model: str | None = None  # Optional model override
     max_thinking_steps: int = 10
     default_timeout_seconds: int = 300
     created_at: datetime

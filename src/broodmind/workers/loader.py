@@ -121,6 +121,7 @@ def _load_worker_template(worker_file: Path) -> WorkerTemplateRecord | None:
         system_prompt=config["system_prompt"],
         available_tools=config["available_tools"],
         required_permissions=config["required_permissions"],
+        model=config.get("model"),
         max_thinking_steps=config["max_thinking_steps"],
         default_timeout_seconds=config["default_timeout_seconds"],
         created_at=updated_at,  # Use file mtime for both

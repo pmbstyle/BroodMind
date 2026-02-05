@@ -62,6 +62,7 @@ class WorkerRuntime:
             inputs=task_request.inputs,
             system_prompt=template.system_prompt,
             available_tools=task_request.tools or template.available_tools,
+            model=task_request.model or template.model,
             granted_capabilities=[c.model_dump() for c in granted],
             timeout_seconds=task_request.timeout_seconds or template.default_timeout_seconds,
             max_thinking_steps=template.max_thinking_steps,
