@@ -33,8 +33,8 @@ class LiteLLMProvider:
         if use_openrouter:
             # Use OpenRouter via LiteLLM
             model_name = model or settings.openrouter_model
-            # If the provided model already has a provider prefix, use it as is
-            if "/" in model_name:
+            # If the provided model already has the provider prefix, use it as is
+            if model_name.startswith("openrouter/"):
                 self._model = model_name
             else:
                 self._model = f"openrouter/{model_name}"
@@ -44,8 +44,8 @@ class LiteLLMProvider:
         else:
             # Use z.ai (custom OpenAI-compatible endpoint)
             model_name = model or settings.zai_model
-            # If the provided model already has a provider prefix, use it as is
-            if "/" in model_name:
+            # If the provided model already has the provider prefix, use it as is
+            if model_name.startswith("openai/"):
                 self._model = model_name
             else:
                 self._model = f"openai/{model_name}"

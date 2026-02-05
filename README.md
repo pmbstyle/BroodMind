@@ -124,25 +124,14 @@ The Queen will initialize, read workspace files, and send "Queen ready. All syst
 BroodMind includes a command-line interface for management tasks:
 
 ```bash
-# Show system status
-broodmind status
+# Management sub-commands
+broodmind configure                 # Run interactive onboarding wizard
+broodmind status                    # Show system status
+broodmind logs -f                   # Follow logs
 
-# View logs
-broodmind logs -f  # Follow logs
-
-# Worker management
-broodmind workers list              # List all workers
-broodmind audit list                 # List audit events
-broodmind audit show <event_id>      # Show audit event details
-
-# Memory management
-broodmind memory stats               # Show memory/RAG statistics
-broodmind memory cleanup             # Clean up old memory entries (30 days, keep 1000)
-broodmind memory cleanup -d 7 -c 500  # Custom cleanup: keep 7 days, keep last 500
-broodmind memory cleanup --dry-run   # Preview what would be deleted
-
-# Start services
-broodmind start                      # Start Telegram bot
+# Start/Stop/Restart services
+broodmind start                      # Start Telegram bot (foreground)
+broodmind start -d                   # Start in background (detached)
 broodmind stop                       # Stop running BroodMind process
 broodmind restart                    # Restart BroodMind Queen
 broodmind gateway                    # Start gateway server

@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
+from rich.prompt import Confirm
 from rich import print as rprint
 
 from broodmind.cli.branding import print_banner
@@ -29,6 +30,13 @@ config_app = typer.Typer(add_completion=False)
 console = Console()
 
 
+@app.command()
+def configure() -> None:
+    """Run the interactive configuration wizard."""
+    from broodmind.cli.configure import configure_wizard
+    configure_wizard()
+
+
 def _init_logging(settings: Settings) -> None:
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     log_dir = settings.state_dir / "logs"
@@ -41,19 +49,36 @@ def _init_logging(settings: Settings) -> None:
 
 
 @app.command()
-def start() -> None:
-    settings = load_settings()
+def start(
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground mode (showing logs)"),
+) -> None:
+    """Start the BroodMind Queen."""
+    try:
+        settings = load_settings()
+    except Exception as e:
+        console.print(f"[bold red]Configuration error:[/bold red] {e}")
+        if Confirm.ask("Would you like to run the configuration wizard now?", default=True):
+            from broodmind.cli.configure import configure_wizard
+            configure_wizard()
+            settings = load_settings()
+        else:
+            raise typer.Exit(code=1)
+
+    if not foreground:
+        print_banner()
+        _start_background()
+        return
+
     _init_logging(settings)
-    
-    print_banner()
     
     with console.status("[bold green]Initializing BroodMind Queen...[/bold green]", spinner="dots"):
         write_start_status(settings)
-        time.sleep(0.5) # A little pause for dramatic effect / to let FS settle
+        time.sleep(0.5)
     
-    console.print(f"[bold green]✓ BroodMind Queen started.[/bold green]")
+    # Use ASCII checkmark [V] instead of unicode checkmark to avoid encoding issues in background processes
+    console.print(f"[bold green][V] BroodMind Queen started.[/bold green]")
     console.print(f"   [dim]Logs directory:[/dim] [cyan]{settings.state_dir / 'logs'}[/cyan]")
-    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+    console.print("[dim]Press Ctrl+C to stop (if in foreground).[/dim]\n")
 
     try:
         asyncio.run(run_bot(settings))
@@ -61,6 +86,64 @@ def start() -> None:
         # Use standard logging here as structlog might be torn down
         logging.getLogger(__name__).info("Shutting down")
         console.print("\n[bold yellow]Shutting down...[/bold yellow]")
+
+
+def _start_background() -> None:
+    import subprocess
+    import sys
+    import platform
+    import os
+
+    console.print("[bold cyan]Starting BroodMind in background...[/bold cyan]")
+    
+    # Use the current python executable and run the module with --foreground
+    args = [sys.executable, "-m", "broodmind.cli", "start", "--foreground"]
+    
+    # Ensure src is in PYTHONPATH for the background process
+    project_root = Path(__file__).resolve().parents[3]
+    src_dir = project_root / "src"
+    
+    env = os.environ.copy()
+    existing_pp = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing_pp}" if existing_pp else str(src_dir)
+    
+    # Redirect output to a file for debugging
+    log_dir = project_root / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    out_file = open(log_dir / "startup_stdout.log", "w", encoding="utf-8")
+    err_file = open(log_dir / "startup_stderr.log", "w", encoding="utf-8")
+
+    try:
+        if platform.system() == "Windows":
+            # DETACHED_PROCESS = 0x00000008
+            subprocess.Popen(
+                args, 
+                creationflags=0x00000008,
+                stdout=out_file,
+                stderr=err_file,
+                stdin=subprocess.DEVNULL,
+                close_fds=False, # close_fds=True can cause issues with handles on Windows sometimes
+                env=env
+            )
+        else:
+            # Simple nohup-like behavior
+            subprocess.Popen(
+                args,
+                stdout=out_file,
+                stderr=err_file,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env
+            )
+        
+        # Give it a moment to initialize and write the PID file
+        time.sleep(2)
+        console.print("[bold green][V] BroodMind started in background.[/bold green]")
+        console.print("Use [magenta]broodmind status[/magenta] to check status.")
+        console.print("Use [magenta]broodmind logs -f[/magenta] to view logs.")
+    except Exception as e:
+        console.print(f"[bold red]Failed to start background process:[/bold red] {e}")
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -84,18 +167,35 @@ def stop() -> None:
         else:
             import signal
             os.kill(pid, signal.SIGTERM)
-        console.print("[bold green]✓ BroodMind stopped.[/bold green]")
+        console.print("[bold green][V] BroodMind stopped.[/bold green]")
     except Exception as e:
         console.print(f"[bold red]Failed to stop BroodMind: {e}[/bold red]")
 
 
 @app.command()
-def restart() -> None:
+def restart(
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground after restart"),
+) -> None:
     """Stop and then start the BroodMind Queen."""
     stop()
-    with console.status("[bold yellow]Waiting for system to settle...[/bold yellow]"):
+    
+    settings = load_settings()
+    log_dir = settings.state_dir / "logs"
+    
+    with console.status("[bold yellow]Restarting system...[/bold yellow]"):
+        # Give it a moment to release file handles
         time.sleep(2)
-    start()
+        
+        # Purge logs
+        if log_dir.exists():
+            for log_file in log_dir.glob("*"):
+                try:
+                    if log_file.is_file():
+                        log_file.unlink()
+                except Exception:
+                    pass
+                    
+    start(foreground=foreground)
 
 
 @app.command()

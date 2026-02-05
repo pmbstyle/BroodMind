@@ -209,7 +209,7 @@ wheels = [
 
 [[package]]
 name = "broodmind"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiogram" },
@@ -220,6 +220,7 @@ dependencies = [
     { name = "litellm" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "rich" },
     { name = "structlog" },
     { name = "typer" },
@@ -249,6 +250,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "rich", specifier = ">=13.7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "structlog", specifier = ">=24.1.0" },
