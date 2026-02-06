@@ -9,7 +9,6 @@ Workers are pre-defined agents that:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -18,7 +17,8 @@ from typing import Any
 from broodmind.config.settings import load_settings
 from broodmind.providers.litellm_provider import LiteLLMProvider
 from broodmind.tools.tools import get_tools
-from broodmind.workers.contracts import WorkerResult, WorkerSpec
+from broodmind.worker_sdk.worker import Worker
+from broodmind.workers.contracts import WorkerResult
 
 _LOG_MAX_CHARS = 2000
 _MAX_TOOL_ITERS = 10
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 async def run_agent_worker(spec_path: str) -> None:
     """Main entry point for simplified agent worker."""
-    from broodmind.worker_sdk.worker import Worker
     from broodmind.logging_config import correlation_id_var
 
     worker = Worker.from_spec_file(spec_path)
@@ -118,7 +117,7 @@ If you need clarification from the Queen, include:
                 await worker.log("info", f"Using tool: {tool_name}")
 
                 # Execute tool
-                tool_result = await _execute_tool(tool_name, tool_input, base_dir)
+                tool_result = await _execute_tool(tool_name, tool_input, base_dir, worker)
                 tools_used.append(tool_name)
 
                 # Add assistant message with tool call
@@ -200,7 +199,7 @@ async def _call_llm(
     return response
 
 
-async def _execute_tool(tool_name: str, tool_input: dict, base_dir: Path) -> Any:
+async def _execute_tool(tool_name: str, tool_input: dict, base_dir: Path, worker: Worker) -> Any:
     """Execute a tool by name."""
     available_tools = get_tools()
     tool_map = {t.name: t for t in available_tools}

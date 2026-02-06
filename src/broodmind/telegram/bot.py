@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher
 
 from broodmind.config.settings import Settings
+from broodmind.memory.canon import CanonService
 from broodmind.memory.service import MemoryService
 from broodmind.policy.engine import PolicyEngine
-from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
 from broodmind.providers.litellm_provider import LiteLLMProvider
+from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
 from broodmind.queen.core import Queen
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.telegram.approvals import ApprovalManager
@@ -49,6 +50,11 @@ def build_dispatcher(settings: Settings, bot: Bot) -> Dispatcher:
         min_score=settings.memory_min_score,
         max_chars=settings.memory_max_chars,
     )
+    canon = CanonService(
+        workspace_dir=settings.workspace_dir,
+        store=store,
+        embeddings=embeddings
+    )
     queen = Queen(
         provider=provider,
         store=store,
@@ -56,6 +62,7 @@ def build_dispatcher(settings: Settings, bot: Bot) -> Dispatcher:
         runtime=runtime,
         approvals=approvals,
         memory=memory,
+        canon=canon,
     )
 
     dp = Dispatcher()
@@ -116,7 +123,7 @@ async def run_bot(settings: Settings) -> None:
     finally:
         logger.info("Shutting down bot session")
         await bot.session.close()
-        
+
         if heartbeat_task:
             heartbeat_task.cancel()
             try:

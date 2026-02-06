@@ -12,13 +12,12 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from broodmind.policy.engine import PolicyEngine
 from broodmind.store.base import Store
-from broodmind.store.models import AuditEvent, WorkerRecord, WorkerTemplateRecord
+from broodmind.store.models import AuditEvent, WorkerRecord
 from broodmind.utils import utc_now
 from broodmind.workers.contracts import TaskRequest, WorkerResult, WorkerSpec
 from broodmind.workers.launcher import WorkerLauncher
@@ -144,7 +143,7 @@ class WorkerRuntime:
                 data={"summary": result.summary},
             )
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Worker %s timed out", spec.id)
             process.kill()
             await asyncio.to_thread(self.store.update_worker_status, spec.id, "failed")
@@ -155,7 +154,7 @@ class WorkerRuntime:
                 correlation_id=spec.id,
                 data={"reason": "timeout"},
             )
-            raise RuntimeError("Worker timed out")
+            raise RuntimeError("Worker timed out") from None
         except Exception as exc:
             await asyncio.to_thread(self.store.update_worker_status, spec.id, "failed")
             await asyncio.to_thread(
@@ -235,11 +234,11 @@ class WorkerRuntime:
                 try:
                     req_data = payload.get("intent")
                     request = IntentRequest.model_validate(req_data)
-                    
+
                     # Check if approval is needed
                     # Note: For now, we only support auto-approved intents in this runtime loop
                     approval_req = self.policy.check_intent(request.intent)
-                    
+
                     if approval_req.requires_approval:
                          # TODO: Implement user approval flow via Queen
                         response = {

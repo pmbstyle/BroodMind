@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import math
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
 import uuid
+from dataclasses import dataclass
+from typing import Any
 
 from broodmind.providers.embeddings import EmbeddingsProvider
 from broodmind.store.base import Store
@@ -79,7 +78,7 @@ class MemoryService:
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     if len(a) != len(b) or not a:
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     if norm_a == 0 or norm_b == 0:

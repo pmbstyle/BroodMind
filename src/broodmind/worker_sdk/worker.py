@@ -17,7 +17,7 @@ class Worker:
     spec: WorkerSpec
 
     @classmethod
-    def from_spec_file(cls, path: str) -> "Worker":
+    def from_spec_file(cls, path: str) -> Worker:
         data = json.loads(_read_text(path))
         spec = WorkerSpec.model_validate(data)
         return cls(spec=spec)

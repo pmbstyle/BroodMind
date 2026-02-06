@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +12,28 @@ if TYPE_CHECKING:
 
 def get_worker_tools() -> list[ToolSpec]:
     return [
+        ToolSpec(
+            name="propose_knowledge",
+            description="Propose a fact, decision, or failure lesson for the permanent canonical memory. The Queen will review and potentially add it.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Category of knowledge.",
+                        "enum": ["fact", "decision", "failure"],
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The concise fact or lesson to remember.",
+                    },
+                },
+                "required": ["category", "content"],
+                "additionalProperties": False,
+            },
+            permission="network",
+            handler=_tool_propose_knowledge,
+        ),
         ToolSpec(
             name="list_workers",
             description="List available worker templates with their capabilities.",
@@ -248,8 +269,7 @@ def _tool_list_workers(args: dict[str, object], ctx: dict[str, object]) -> str:
 
 
 def _tool_create_worker_template(args: dict[str, object], ctx: dict[str, object]) -> str:
-    """Create a new worker template by writing worker.json to workspace."""
-    from broodmind.store.models import WorkerTemplateRecord
+    """Create a new worker template by writing a worker.json file to the workspace."""
     queen: Queen = ctx["queen"]
     base_dir: Path = ctx.get("base_dir", Path("workspace"))
 
@@ -314,8 +334,6 @@ def _tool_create_worker_template(args: dict[str, object], ctx: dict[str, object]
 
 def _tool_update_worker_template(args: dict[str, object], ctx: dict[str, object]) -> str:
     """Update an existing worker template by modifying its worker.json file."""
-    from broodmind.store.models import WorkerTemplateRecord
-    queen: Queen = ctx["queen"]
     base_dir: Path = ctx.get("base_dir", Path("workspace"))
 
     worker_id = str(args.get("id", "")).strip()
@@ -368,7 +386,6 @@ def _tool_update_worker_template(args: dict[str, object], ctx: dict[str, object]
 def _tool_delete_worker_template(args: dict[str, object], ctx: dict[str, object]) -> str:
     """Delete a worker template by removing its directory."""
     import shutil
-    queen: Queen = ctx["queen"]
     base_dir: Path = ctx.get("base_dir", Path("workspace"))
 
     worker_id = str(args.get("id", "")).strip()
@@ -522,3 +539,16 @@ def _tool_get_worker_result(args: dict[str, object], ctx: dict[str, object]) -> 
             "worker_id": worker.id,
             "message": f"Worker is still {worker.status}. Result not available yet.",
         }, ensure_ascii=False)
+
+
+def _tool_propose_knowledge(args: dict[str, object], ctx: dict[str, object]) -> str:
+    """Propose a fact or insight for the canonical memory."""
+    category = str(args.get("category", "fact")).upper()
+    content = str(args.get("content", ""))
+
+    if not content:
+        return "Error: Content is required."
+
+    # In this phase, we just acknowledge it. The Queen sees the tool output.
+    # The worker is expected to include this in their final summary or the Queen reviews the tool usage.
+    return f"Proposal logged: [{category}] {content}"

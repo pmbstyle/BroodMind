@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -25,9 +24,7 @@ class Permit(BaseModel):
             return False
         if self.intent_type != intent_type:
             return False
-        if payload_hash != self.payload_hash:
-            return False
-        return True
+        return payload_hash == self.payload_hash
 
 
 class ApprovalRequirement(BaseModel):

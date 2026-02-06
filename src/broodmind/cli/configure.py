@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm, IntPrompt
+from rich.prompt import Confirm, Prompt
 from rich.text import Text
 
 from broodmind.cli.branding import print_banner
@@ -18,7 +14,7 @@ console = Console()
 def configure_wizard() -> None:
     """Run the interactive configuration wizard."""
     print_banner()
-    
+
     console.print(Panel(
         Text("Welcome to the BroodMind Configuration Wizard!\n", style="bold green") +
         Text("This tool will help you set up your environment to run the BroodMind Queen and Workers.", style="dim"),
@@ -34,9 +30,9 @@ def configure_wizard() -> None:
     console.print("You need a Telegram Bot Token from @BotFather.")
     current_token = config.get("TELEGRAM_BOT_TOKEN", "")
     token = Prompt.ask(
-        "Enter your Telegram Bot Token", 
-        default=current_token, 
-        password=True if current_token else False
+        "Enter your Telegram Bot Token",
+        default=current_token,
+        password=bool(current_token)
     )
     if token:
         config.set("TELEGRAM_BOT_TOKEN", token)
@@ -47,7 +43,7 @@ def configure_wizard() -> None:
     console.print("[dim]You can find your ID by messaging @userinfobot on Telegram.[/dim]")
     current_ids = config.get("ALLOWED_TELEGRAM_CHAT_IDS", "")
     allowed_ids = Prompt.ask(
-        "Enter allowed Chat IDs (comma-separated)", 
+        "Enter allowed Chat IDs (comma-separated)",
         default=current_ids
     )
     if allowed_ids:
@@ -57,8 +53,8 @@ def configure_wizard() -> None:
     console.print("\n[bold]Step 3: LLM Provider[/bold]")
     current_provider = config.get("BROODMIND_LLM_PROVIDER", "litellm")
     provider = Prompt.ask(
-        "Choose LLM Provider", 
-        choices=["litellm", "openrouter"], 
+        "Choose LLM Provider",
+        choices=["litellm", "openrouter"],
         default=current_provider
     )
     config.set("BROODMIND_LLM_PROVIDER", provider)
@@ -67,13 +63,13 @@ def configure_wizard() -> None:
         console.print("\n[bold]Step 3a: OpenRouter Configuration[/bold]")
         current_or_key = config.get("OPENROUTER_API_KEY", "")
         or_key = Prompt.ask(
-            "Enter OpenRouter API Key", 
-            default=current_or_key, 
-            password=True if current_or_key else False
+            "Enter OpenRouter API Key",
+            default=current_or_key,
+            password=bool(current_or_key)
         )
         if or_key:
             config.set("OPENROUTER_API_KEY", or_key)
-            
+
         current_or_model = config.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
         or_model = Prompt.ask("Enter default OpenRouter model", default=current_or_model)
         config.set("OPENROUTER_MODEL", or_model)
@@ -81,13 +77,13 @@ def configure_wizard() -> None:
         console.print("\n[bold]Step 3a: LiteLLM / Z.ai Configuration[/bold]")
         current_zai_key = config.get("ZAI_API_KEY", "")
         zai_key = Prompt.ask(
-            "Enter Z.ai (or OpenAI-compatible) API Key", 
-            default=current_zai_key, 
-            password=True if current_zai_key else False
+            "Enter Z.ai (or OpenAI-compatible) API Key",
+            default=current_zai_key,
+            password=bool(current_zai_key)
         )
         if zai_key:
             config.set("ZAI_API_KEY", zai_key)
-            
+
         current_zai_model = config.get("ZAI_MODEL", "glm-4.7")
         zai_model = Prompt.ask("Enter default model name", default=current_zai_model)
         config.set("ZAI_MODEL", zai_model)
@@ -97,14 +93,14 @@ def configure_wizard() -> None:
     current_workspace = config.get("BROODMIND_WORKSPACE_DIR", "workspace")
     workspace = Prompt.ask("Enter workspace directory path", default=current_workspace)
     config.set("BROODMIND_WORKSPACE_DIR", workspace)
-    
+
     current_state = config.get("BROODMIND_STATE_DIR", "data")
     state_dir = Prompt.ask("Enter state directory (DB, logs)", default=current_state)
     config.set("BROODMIND_STATE_DIR", state_dir)
 
     # 5. Optional Features
     console.print("\n[bold]Step 5: Optional Features[/bold]")
-    
+
     # Brave Search
     if Confirm.ask("Do you want to enable Web Search (requires Brave API key)?", default=False):
         current_brave = config.get("BRAVE_API_KEY", "")

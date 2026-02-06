@@ -43,7 +43,7 @@ class PolicyEngine:
         """Issue a permit for a verified/approved intent."""
         normalized = normalize_payload(intent.type, intent.payload)
         payload_hash = _hash_payload(normalized)
-        
+
         return Permit(
             id=str(uuid4()),
             intent_id="auto", # Placeholder if not linked to a persisted intent record yet
@@ -63,6 +63,7 @@ def _scope_allowed(scope: str, allowed_scopes: list[str]) -> bool:
 
 
 def _hash_payload(payload: dict) -> str:
-    from broodmind.intents.registry import canonical_json
     import hashlib
+
+    from broodmind.intents.registry import canonical_json
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()

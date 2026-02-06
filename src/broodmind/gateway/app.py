@@ -6,8 +6,8 @@ from broodmind.config.settings import Settings
 from broodmind.gateway.ws import register_ws_routes
 from broodmind.memory.service import MemoryService
 from broodmind.policy.engine import PolicyEngine
-from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
 from broodmind.providers.litellm_provider import LiteLLMProvider
+from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.workers.launcher_factory import build_launcher
 from broodmind.workers.runtime import WorkerRuntime

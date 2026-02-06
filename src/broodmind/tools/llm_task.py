@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import json
 from typing import Any
+
 from broodmind.providers.base import InferenceProvider, Message
 
 # We need a JSON schema validator. `fastapi` depends on `pydantic`, which has
@@ -35,7 +37,7 @@ async def run_llm_subtask(args: dict[str, Any], provider: InferenceProvider) -> 
         "and return ONLY a single, valid JSON object that conforms to the user's request. "
         "Do not include any commentary, explanations, or markdown fences. Do not call any tools."
     )
-    
+
     full_prompt = f"Task: {prompt}"
     if input_data:
         try:
@@ -51,12 +53,12 @@ async def run_llm_subtask(args: dict[str, Any], provider: InferenceProvider) -> 
 
     try:
         response_text = await provider.complete(messages)
-        
+
         try:
             parsed_json = json.loads(response_text)
         except json.JSONDecodeError:
             return json.dumps({"error": "run_llm_subtask error: LLM returned invalid JSON."})
-        
+
         if schema:
             try:
                 jsonschema.validate(instance=parsed_json, schema=schema)
@@ -64,7 +66,7 @@ async def run_llm_subtask(args: dict[str, Any], provider: InferenceProvider) -> 
                 return json.dumps({
                     "error": f"run_llm_subtask error: LLM output failed schema validation: {e.message}"
                 })
-        
+
         return json.dumps(parsed_json)
 
     except Exception as e:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -14,7 +15,7 @@ from broodmind.telegram.approvals import ApprovalManager
 class WsApprovalManager:
     send: Callable[[dict[str, Any]], Awaitable[None]]
     timeout_seconds: int = 60
-    _pending: Dict[str, asyncio.Future] = field(default_factory=dict)
+    _pending: dict[str, asyncio.Future] = field(default_factory=dict)
 
     async def request_approval(self, intent) -> bool:
         loop = asyncio.get_running_loop()
@@ -28,7 +29,7 @@ class WsApprovalManager:
         )
         try:
             return await asyncio.wait_for(future, timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._pending.pop(intent.id, None)
             return False
 

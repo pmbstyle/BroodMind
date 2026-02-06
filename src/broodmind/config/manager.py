@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv, set_key, get_key
+from dotenv import get_key, load_dotenv, set_key
 
 
 class ConfigManager:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from broodmind.store.models import WorkerTemplateRecord
@@ -111,7 +111,7 @@ def _load_worker_template(worker_file: Path) -> WorkerTemplateRecord | None:
 
     # Get file modification time for updated_at
     mtime = worker_file.stat().st_mtime
-    updated_at = datetime.fromtimestamp(mtime, tz=timezone.utc)
+    updated_at = datetime.fromtimestamp(mtime, tz=UTC)
 
     # Create WorkerTemplateRecord
     return WorkerTemplateRecord(

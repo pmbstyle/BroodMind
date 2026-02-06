@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from broodmind.memory.canon import CanonService
     from broodmind.memory.service import MemoryService
     from broodmind.providers.base import Message
     from broodmind.store.base import Store
@@ -190,6 +191,7 @@ def _current_datetime_prompt() -> str:
 async def build_queen_prompt(
     store: Store,
     memory: MemoryService,
+    canon: CanonService,
     user_text: str,
     chat_id: int,
     bootstrap_context: str,
@@ -204,6 +206,8 @@ async def build_queen_prompt(
 
     datetime_prompt = _current_datetime_prompt()
 
+    canon_context = await asyncio.to_thread(canon.get_tier1_context)
+
     memory_context = await memory.get_context(user_text)
 
     recent_history = await memory.get_recent_history(chat_id, limit=8)
@@ -216,6 +220,10 @@ async def build_queen_prompt(
     if bootstrap_context:
         messages.append(Message(role="system", content=bootstrap_context))
     messages.append(Message(role="system", content=datetime_prompt))
+
+    if canon_context:
+        messages.append(Message(role="system", content=canon_context))
+
     if memory_context:
         messages.append(
             Message(

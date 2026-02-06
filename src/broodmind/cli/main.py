@@ -7,11 +7,9 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.text import Text
 from rich.prompt import Confirm
-from rich import print as rprint
+from rich.table import Table
 
 from broodmind.cli.branding import print_banner
 from broodmind.config.settings import Settings, load_settings
@@ -42,8 +40,8 @@ def _init_logging(settings: Settings) -> None:
     log_dir = settings.state_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(
-        log_level=settings.log_level, 
-        log_dir=log_dir, 
+        log_level=settings.log_level,
+        log_dir=log_dir,
         debug_prompts=settings.debug_prompts
     )
 
@@ -62,7 +60,7 @@ def start(
             configure_wizard()
             settings = load_settings()
         else:
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     if not foreground:
         print_banner()
@@ -70,13 +68,13 @@ def start(
         return
 
     _init_logging(settings)
-    
+
     with console.status("[bold green]Initializing BroodMind Queen...[/bold green]", spinner="dots"):
         write_start_status(settings)
         time.sleep(0.5)
-    
+
     # Use ASCII checkmark [V] instead of unicode checkmark to avoid encoding issues in background processes
-    console.print(f"[bold green][V] BroodMind Queen started.[/bold green]")
+    console.print("[bold green][V] BroodMind Queen started.[/bold green]")
     console.print(f"   [dim]Logs directory:[/dim] [cyan]{settings.state_dir / 'logs'}[/cyan]")
     console.print("[dim]Press Ctrl+C to stop (if in foreground).[/dim]\n")
 
@@ -89,61 +87,62 @@ def start(
 
 
 def _start_background() -> None:
+    import os
+    import platform
     import subprocess
     import sys
-    import platform
-    import os
 
     console.print("[bold cyan]Starting BroodMind in background...[/bold cyan]")
-    
+
     # Use the current python executable and run the module with --foreground
     args = [sys.executable, "-m", "broodmind.cli", "start", "--foreground"]
-    
+
     # Ensure src is in PYTHONPATH for the background process
     project_root = Path(__file__).resolve().parents[3]
     src_dir = project_root / "src"
-    
+
     env = os.environ.copy()
     existing_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing_pp}" if existing_pp else str(src_dir)
-    
+
     # Redirect output to a file for debugging
     log_dir = project_root / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    out_file = open(log_dir / "startup_stdout.log", "w", encoding="utf-8")
-    err_file = open(log_dir / "startup_stderr.log", "w", encoding="utf-8")
+    with (
+        open(log_dir / "startup_stdout.log", "w", encoding="utf-8") as out_file,
+        open(log_dir / "startup_stderr.log", "w", encoding="utf-8") as err_file,
+    ):
+        try:
+            if platform.system() == "Windows":
+                # DETACHED_PROCESS = 0x00000008
+                subprocess.Popen(
+                    args,
+                    creationflags=0x00000008,
+                    stdout=out_file,
+                    stderr=err_file,
+                    stdin=subprocess.DEVNULL,
+                    close_fds=False, # close_fds=True can cause issues with handles on Windows sometimes
+                    env=env
+                )
+            else:
+                # Simple nohup-like behavior
+                subprocess.Popen(
+                    args,
+                    stdout=out_file,
+                    stderr=err_file,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    env=env
+                )
 
-    try:
-        if platform.system() == "Windows":
-            # DETACHED_PROCESS = 0x00000008
-            subprocess.Popen(
-                args, 
-                creationflags=0x00000008,
-                stdout=out_file,
-                stderr=err_file,
-                stdin=subprocess.DEVNULL,
-                close_fds=False, # close_fds=True can cause issues with handles on Windows sometimes
-                env=env
-            )
-        else:
-            # Simple nohup-like behavior
-            subprocess.Popen(
-                args,
-                stdout=out_file,
-                stderr=err_file,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                env=env
-            )
-        
-        # Give it a moment to initialize and write the PID file
-        time.sleep(2)
-        console.print("[bold green][V] BroodMind started in background.[/bold green]")
-        console.print("Use [magenta]broodmind status[/magenta] to check status.")
-        console.print("Use [magenta]broodmind logs -f[/magenta] to view logs.")
-    except Exception as e:
-        console.print(f"[bold red]Failed to start background process:[/bold red] {e}")
-        raise typer.Exit(code=1)
+            # Give it a moment to initialize and write the PID file
+            time.sleep(2)
+            console.print("[bold green][V] BroodMind started in background.[/bold green]")
+            console.print("Use [magenta]broodmind status[/magenta] to check status.")
+            console.print("Use [magenta]broodmind logs -f[/magenta] to view logs.")
+        except Exception as e:
+            console.print(f"[bold red]Failed to start background process:[/bold red] {e}")
+            raise typer.Exit(code=1) from e
 
 
 @app.command()
@@ -151,15 +150,15 @@ def stop() -> None:
     settings = load_settings()
     status_data = read_status(settings)
     pid = status_data.get("pid") if status_data else None
-    
+
     if not pid or not is_pid_running(pid):
         console.print("[yellow]BroodMind is not running.[/yellow]")
         return
-        
+
     console.print(f"[bold yellow]Stopping BroodMind (PID: {pid})...[/bold yellow]")
     import os
     import platform
-    
+
     try:
         if platform.system() == "Windows":
             import subprocess
@@ -178,14 +177,14 @@ def restart(
 ) -> None:
     """Stop and then start the BroodMind Queen."""
     stop()
-    
+
     settings = load_settings()
     log_dir = settings.state_dir / "logs"
-    
+
     with console.status("[bold yellow]Restarting system...[/bold yellow]"):
         # Give it a moment to release file handles
         time.sleep(2)
-        
+
         # Purge logs
         if log_dir.exists():
             for log_file in log_dir.glob("*"):
@@ -194,7 +193,7 @@ def restart(
                         log_file.unlink()
                 except Exception:
                     pass
-                    
+
     start(foreground=foreground)
 
 
@@ -234,11 +233,11 @@ def status() -> None:
 
     status_color = "green" if running else "red"
     status_text = "RUNNING" if running else "STOPPED"
-    
+
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="bold white")
     grid.add_column()
-    
+
     grid.add_row("System Status:", f"[{status_color}]{status_text}[/{status_color}]")
     grid.add_row("Process ID:", str(pid) if pid else "[dim]N/A[/dim]")
     grid.add_row("Last Heartbeat:", str(last_message) if last_message else "[dim]Never[/dim]")
@@ -261,7 +260,7 @@ def workers_list() -> None:
     if not workers:
         console.print("[yellow]No workers found.[/yellow]")
         return
-    
+
     table = Table(title="Registered Workers", border_style="blue", show_header=True, header_style="bold cyan")
     table.add_column("Worker ID", style="dim")
     table.add_column("Status")
@@ -285,7 +284,7 @@ def audit_list(limit: int = 50) -> None:
     if not events:
         console.print("[yellow]No audit events found.[/yellow]")
         return
-    
+
     table = Table(title=f"Audit Log (Last {limit})", border_style="blue", header_style="bold cyan")
     table.add_column("ID", style="dim", width=10)
     table.add_column("Timestamp", style="white")
@@ -313,32 +312,33 @@ def audit_show(event_id: str) -> None:
     if not event:
         console.print(f"[red]Audit event not found: {event_id}[/red]")
         raise typer.Exit(code=1)
-    
+
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="bold cyan")
     grid.add_column()
-    
+
     grid.add_row("ID:", event.id)
     grid.add_row("Timestamp:", event.ts.isoformat())
     grid.add_row("Level:", f"[{'red' if event.level == 'ERROR' else 'green'}]{event.level}[/]")
     grid.add_row("Type:", event.event_type)
     grid.add_row("Correlation ID:", event.correlation_id or "-")
-    
+
     console.print(Panel(grid, title="Audit Event Details", border_style="blue"))
-    
-    from rich.syntax import Syntax
+
     import json
-    
+
+    from rich.syntax import Syntax
+
     # Try to pretty print data if it's a dict or similar
     data_str = str(event.data)
     try:
-        if isinstance(event.data, (dict, list)):
+        if isinstance(event.data, dict | list):
             data_str = json.dumps(event.data, indent=2)
             syntax = Syntax(data_str, "json", theme="monokai", background_color="default")
             console.print(Panel(syntax, title="Data Payload", border_style="white"))
         else:
              console.print(Panel(data_str, title="Data Payload", border_style="white"))
-    except:
+    except Exception:
         console.print(Panel(str(event.data), title="Data Payload", border_style="white"))
 
 
@@ -350,7 +350,7 @@ def memory_stats() -> None:
 
     with console.status("[bold green]Analyzing memory...[/bold green]"):
         entries = store.list_memory_entries(limit=1000000)  # Get all for stats
-    
+
     total = len(entries)
 
     if total == 0:
@@ -369,14 +369,14 @@ def memory_stats() -> None:
             by_chat[chat_id] = by_chat.get(chat_id, 0) + 1
 
     console.print(f"\n[bold]Total Memory Entries:[/bold] [cyan]{total}[/cyan]")
-    
+
     role_table = Table(title="Entries by Role", border_style="blue", show_header=True)
     role_table.add_column("Role", style="magenta")
     role_table.add_column("Count", style="green", justify="right")
-    
+
     for role, count in sorted(by_role.items()):
         role_table.add_row(role, str(count))
-        
+
     console.print(role_table)
     console.print(f"[bold]Unique Chats:[/bold] [cyan]{len(by_chat)}[/cyan]\n")
 
@@ -398,7 +398,7 @@ def memory_cleanup(
         cutoff_date = _calculate_cutoff_date(keep_days)
 
         # Get most recent N entries
-        recent_ids = set(e.id for e in sorted(all_entries, key=lambda e: e.created_at, reverse=True)[:keep_count])
+        recent_ids = {e.id for e in sorted(all_entries, key=lambda e: e.created_at, reverse=True)[:keep_count]}
 
         for entry in all_entries:
             if entry.id in recent_ids:
@@ -418,6 +418,7 @@ def memory_cleanup(
 def _calculate_cutoff_date(days: int):
     """Calculate cutoff date for cleanup."""
     from datetime import timedelta
+
     from broodmind.utils import utc_now
     return utc_now() - timedelta(days=days)
 
@@ -426,28 +427,28 @@ def _calculate_cutoff_date(days: int):
 def config_show(reveal_secrets: bool = typer.Option(False, "--reveal-secrets", help="Show API keys and tokens")) -> None:
     """Show current configuration settings."""
     settings = load_settings()
-    
+
     table = Table(title="BroodMind Configuration", border_style="blue", show_header=True)
     table.add_column("Setting", style="cyan")
     table.add_column("Value")
-    
+
     secret_keywords = ("token", "key", "secret", "api_key")
-    
+
     # Get values from settings, using aliases if possible
     for field_name, field in settings.model_fields.items():
         value = getattr(settings, field_name)
-        
+
         is_secret = any(k in field_name.lower() or (field.alias and k in field.alias.lower()) for k in secret_keywords)
-        
+
         if is_secret and not reveal_secrets and value:
             display_value = "[dim]********[/dim]"
         elif value is None:
             display_value = "[dim]None[/dim]"
         else:
             display_value = str(value)
-            
+
         table.add_row(field.alias or field_name, display_value)
-        
+
     console.print(table)
 
 
@@ -461,7 +462,7 @@ def logs(follow: bool = typer.Option(False, "--follow", "-f")) -> None:
     if not follow:
         console.print(log_path.read_text(encoding="utf-8"))
         return
-    
+
     console.print(f"[dim]Tailing logs from {log_path} (Ctrl+C to stop)...[/dim]")
     with log_path.open("r", encoding="utf-8") as handle:
         handle.seek(0, 2)
@@ -484,7 +485,8 @@ def gateway() -> None:
 
 @app.command()
 def build_worker_image(tag: str = "broodmind-worker:latest") -> None:
-    settings = load_settings()
+    # Validate settings before building
+    load_settings()
     project_root = Path(__file__).resolve().parents[3]
     dockerfile = project_root / "docker" / "Dockerfile"
     if not dockerfile.exists():

@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from broodmind.config.settings import Settings
@@ -18,7 +17,8 @@ from broodmind.store.models import (
     WorkerTemplateRecord,
 )
 from broodmind.utils import utc_now
-from broodmind.workers.loader import discover_worker_templates, get_worker_template as get_template_from_fs
+from broodmind.workers.loader import discover_worker_templates
+from broodmind.workers.loader import get_worker_template as get_template_from_fs
 
 
 class SQLiteStore(Store):
@@ -89,6 +89,26 @@ class SQLiteStore(Store):
                 metadata_json TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                entry_uuid TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                vector_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(entry_uuid) REFERENCES memory_entries(uuid) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS canon_embeddings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                model TEXT NOT NULL,
+                vector_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_canon_embeddings_filename ON canon_embeddings (filename);
+
             CREATE TABLE IF NOT EXISTS chat_state (
                 chat_id INTEGER PRIMARY KEY,
                 bootstrapped_at TEXT,
@@ -104,6 +124,36 @@ class SQLiteStore(Store):
 
     def _ensure_schema_upgrades(self) -> None:
         try:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    entry_uuid TEXT PRIMARY KEY,
+                    model TEXT NOT NULL,
+                    vector_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(entry_uuid) REFERENCES memory_entries(uuid) ON DELETE CASCADE
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS canon_embeddings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    vector_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS ix_canon_embeddings_filename ON canon_embeddings (filename)")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        try:
             self._conn.execute("ALTER TABLE permits ADD COLUMN intent_type TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
         except sqlite3.OperationalError:
@@ -113,17 +163,17 @@ class SQLiteStore(Store):
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
-        
+
         # Migration for memory_entries table for robust ordering
         try:
             cursor = self._conn.execute("PRAGMA table_info(memory_entries)")
             columns = [row['name'] for row in cursor.fetchall()]
             is_old_schema = 'uuid' not in columns and 'id' in columns
-            
+
             if is_old_schema:
                 self._conn.executescript("""
                     ALTER TABLE memory_entries RENAME TO _memory_entries_old;
-                    
+
                     CREATE TABLE memory_entries (
                         id INTEGER PRIMARY KEY,
                         uuid TEXT NOT NULL UNIQUE,
@@ -136,7 +186,7 @@ class SQLiteStore(Store):
 
                     INSERT INTO memory_entries (uuid, role, content, embedding_json, created_at, metadata_json)
                     SELECT id, role, content, embedding_json, created_at, metadata_json FROM _memory_entries_old;
-                    
+
                     DROP TABLE _memory_entries_old;
 
                     DROP INDEX IF EXISTS ix_memory_entries_created_at;
@@ -418,11 +468,37 @@ class SQLiteStore(Store):
                 json.dumps(entry.metadata),
             ),
         )
+
+        # Also write to new embeddings table if embedding exists
+        if entry.embedding:
+            self._conn.execute(
+                """
+                INSERT INTO memory_embeddings (entry_uuid, model, vector_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    entry.id,
+                    "openai-text-embedding-3-small", # TODO: Get this from settings/provider
+                    json.dumps(entry.embedding),
+                    entry.created_at.isoformat(),
+                ),
+            )
+
         self._conn.commit()
 
     def list_memory_entries(self, limit: int = 200) -> list[MemoryEntry]:
+        # Join with memory_embeddings to get the vector.
+        # Prefer the new table, fallback to the old column if needed (handled in _row_to_memory logic implicitly if we select correctly)
+        # For now, let's select from memory_entries and we can patch _row_to_memory if we want to switch the source of truth entirely.
+        # But wait, _row_to_memory reads 'embedding_json'.
+        # Let's do a LEFT JOIN to get the vector from the new table if available.
         cursor = self._conn.execute(
-            "SELECT * FROM memory_entries ORDER BY id DESC LIMIT ?",
+            """
+            SELECT m.*, e.vector_json as new_embedding_json
+            FROM memory_entries m
+            LEFT JOIN memory_embeddings e ON m.uuid = e.entry_uuid
+            ORDER BY m.id DESC LIMIT ?
+            """,
             (limit,),
         )
         return [self._row_to_memory(row) for row in cursor.fetchall()]
@@ -434,6 +510,36 @@ class SQLiteStore(Store):
             (f"%{needle}%", limit),
         )
         return [self._row_to_memory(row) for row in cursor.fetchall()]
+
+    def add_canon_embedding(self, filename: str, chunk_index: int, content: str, model: str, vector: list[float]) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO canon_embeddings (filename, chunk_index, content, model, vector_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (filename, chunk_index, content, model, json.dumps(vector), utc_now().isoformat()),
+        )
+        self._conn.commit()
+
+    def clear_canon_embeddings(self, filename: str) -> None:
+        self._conn.execute("DELETE FROM canon_embeddings WHERE filename = ?", (filename,))
+        self._conn.commit()
+
+    def list_canon_embeddings(self, filename: str | None = None) -> list[dict[str, Any]]:
+        if filename:
+            cursor = self._conn.execute("SELECT * FROM canon_embeddings WHERE filename = ?", (filename,))
+        else:
+            cursor = self._conn.execute("SELECT * FROM canon_embeddings")
+
+        rows = cursor.fetchall()
+        return [
+            {
+                "filename": row["filename"],
+                "content": row["content"],
+                "vector": json.loads(row["vector_json"]),
+            }
+            for row in rows
+        ]
 
     def cleanup_old_memory(self, keep_days: int = 30, keep_count: int = 1000) -> int:
         """
@@ -510,9 +616,9 @@ class SQLiteStore(Store):
             granted_caps=_loads_json(row["granted_caps_json"]),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
-            summary=row["summary"] if "summary" in row.keys() else None,
-            output=_loads_json(row["output_json"]) if "output_json" in row.keys() and row["output_json"] else None,
-            error=row["error"] if "error" in row.keys() else None,
+            summary=row.get("summary", None),
+            output=_loads_json(row["output_json"]) if "output_json" in row and row["output_json"] else None,
+            error=row.get("error", None),
         )
 
     def _row_to_intent(self, row: sqlite3.Row) -> IntentRecord:
@@ -529,7 +635,7 @@ class SQLiteStore(Store):
         )
 
     def _row_to_permit(self, row: sqlite3.Row) -> PermitRecord:
-        intent_type = row["intent_type"] if "intent_type" in row.keys() else ""
+        intent_type = row.get("intent_type", "")
         return PermitRecord(
             id=row["id"],
             intent_id=row["intent_id"],
@@ -553,8 +659,12 @@ class SQLiteStore(Store):
 
     def _row_to_memory(self, row: sqlite3.Row) -> MemoryEntry:
         embedding = None
-        if row["embedding_json"]:
+        # Check for new embedding column from JOIN first
+        if "new_embedding_json" in row and row["new_embedding_json"]:
+            embedding = json.loads(row["new_embedding_json"])
+        elif row["embedding_json"]:
             embedding = json.loads(row["embedding_json"])
+
         return MemoryEntry(
             id=row["uuid"],
             role=row["role"],

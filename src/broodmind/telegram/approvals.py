@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Dict
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,7 +13,7 @@ from broodmind.intents.types import ActionIntent
 class ApprovalManager:
     bot: Bot | None
     timeout_seconds: int = 60
-    _pending: Dict[str, asyncio.Future] = field(default_factory=dict)
+    _pending: dict[str, asyncio.Future] = field(default_factory=dict)
 
     async def request_approval(self, chat_id: int, intent: ActionIntent) -> bool:
         if self.bot is None:
@@ -36,7 +35,7 @@ class ApprovalManager:
         )
         try:
             return await asyncio.wait_for(future, timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if intent.id in self._pending:
                 self._pending.pop(intent.id, None)
             return False

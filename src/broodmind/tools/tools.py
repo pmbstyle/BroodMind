@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from broodmind.tools.canon_tools import manage_canon, search_canon
 from broodmind.tools.download_file import download_file
 from broodmind.tools.exec_run import exec_run
 from broodmind.tools.filesystem import fs_delete, fs_list, fs_move, fs_read, fs_write
@@ -12,6 +13,55 @@ from broodmind.tools.worker_tools import get_worker_tools
 
 def get_tools() -> list[ToolSpec]:
     tools = [
+        ToolSpec(
+            name="manage_canon",
+            description="Manage canonical memory files (facts.md, decisions.md, failures.md). Only the Queen can use this.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action to perform.",
+                        "enum": ["list", "read", "write"],
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename (e.g., 'facts.md'). Required for read/write.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write. Required for write.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Write mode: 'append' (default) or 'overwrite'.",
+                        "enum": ["append", "overwrite"],
+                    },
+                },
+                "required": ["action"],
+                "additionalProperties": False,
+            },
+            permission="canon_manage",
+            handler=lambda args, ctx: manage_canon(args, ctx),
+        ),
+        ToolSpec(
+            name="search_canon",
+            description="Semantically search for facts and decisions in the canonical memory base.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query or topic to look for.",
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            permission="canon_manage",
+            handler=lambda args, ctx: search_canon(args, ctx),
+            is_async=True,
+        ),
         ToolSpec(
             name="run_llm_subtask",
             description="Run a generic, JSON-only LLM sub-task. Ideal for tasks requiring structured data generation or analysis based on a prompt.",

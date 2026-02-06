@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
+import uuid
 
 from aiogram import Bot, Dispatcher
-from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
-import uuid
 
 from broodmind.config.settings import Settings
 from broodmind.logging_config import correlation_id_var
@@ -27,7 +26,7 @@ def register_handlers(
         await _enqueue_send(bot, chat_id, text)
 
     queen.internal_send = _internal_send
-    
+
     @dp.message()
     async def handle_message(message: Message) -> None:
         # Generate a unique ID for this request chain
@@ -110,7 +109,7 @@ async def _enqueue_send(bot: Bot, chat_id: int, text: str) -> None:
     # If the task is missing or has finished, create a new one.
     if chat_id not in _CHAT_SEND_TASKS or _CHAT_SEND_TASKS[chat_id].done():
         _CHAT_SEND_TASKS[chat_id] = asyncio.create_task(_sender_loop(bot, chat_id, queue))
-        
+
     await queue.put(text)
 
 
@@ -119,7 +118,7 @@ async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[str]) -> Non
         try:
             # Wait for a new message, but with a timeout.
             text = await asyncio.wait_for(queue.get(), timeout=300.0)  # 5-minute timeout
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Queue has been empty for the timeout duration, so this worker can exit.
             break
 
@@ -129,7 +128,7 @@ async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[str]) -> Non
             logger.exception("Failed to send queued message")
         finally:
             queue.task_done()
-    
+
     # The task is now finished, remove it from the registry so a new one can be created later.
     _CHAT_SEND_TASKS.pop(chat_id, None)
     logger.debug("Sender loop for chat_id=%s finished due to inactivity.", chat_id)
@@ -142,7 +141,7 @@ async def _typing_loop(message: Message, stop: asyncio.Event) -> None:
             await message.bot.send_chat_action(message.chat.id, action="typing")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=4.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
     except Exception:
         logger.debug("Typing indicator failed", exc_info=True)

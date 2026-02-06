@@ -1,8 +1,10 @@
 import textwrap
+
 from rich import print
-from rich.panel import Panel
 from rich.align import Align
+from rich.panel import Panel
 from rich.text import Text
+
 
 def print_banner() -> None:
     banner_text = textwrap.dedent(r"""
@@ -13,12 +15,12 @@ def print_banner() -> None:
     ██████╔╝██║  ██║╚██████╔╝╚██████╔╝██████╔╝██║ ╚═╝ ██║██║██║ ╚████║██████╔╝
     ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝
     """).strip()
-    
+
     tagline = Text("Friendly and safe AI agents", style="bold white")
-    
+
     # Create the content stack
     content = Text(banner_text, style="bold white", justify="center") + Text("\n\n") + tagline
-    
+
     panel = Panel(
         Align.center(content),
         border_style="cyan",

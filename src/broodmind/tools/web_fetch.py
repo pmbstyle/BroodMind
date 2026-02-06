@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 
 import httpx
 
-
 DEFAULT_MAX_CHARS = 20000
 
 
@@ -62,7 +61,7 @@ def web_fetch(args: dict[str, Any]) -> str:
     if firecrawl_key:
         try:
             return _fetch_firecrawl(url, firecrawl_key, max_chars, custom_headers)
-        except Exception as exc:
+        except Exception:
             # Fall back to basic fetch if Firecrawl fails
             pass
 
@@ -116,7 +115,7 @@ def _fetch_firecrawl(url: str, api_key: str, max_chars: int, target_headers: dic
     }
     if target_headers:
         payload["headers"] = target_headers
-    
+
     with httpx.Client(timeout=40.0) as client:
         resp = client.post(endpoint, json=payload, headers=headers)
         resp.raise_for_status()
@@ -124,10 +123,10 @@ def _fetch_firecrawl(url: str, api_key: str, max_chars: int, target_headers: dic
 
     if not data.get("success"):
         raise ValueError(f"Firecrawl failed: {data.get('error')}")
-    
+
     markdown = data.get("data", {}).get("markdown", "")
     snippet = markdown[:max_chars]
-    
+
     result = {
         "url": url,
         "status_code": 200,
@@ -146,9 +145,7 @@ def _is_safe_url(url: str) -> bool:
     if parsed.scheme not in {"http", "https"}:
         return False
     host = (parsed.hostname or "").lower()
-    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
-        return False
-    return True
+    return host not in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 
 
 def _to_json(payload: dict[str, Any]) -> str:

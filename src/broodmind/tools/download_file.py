@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
 from typing import Any
+
 import httpx
+
 
 async def download_file(args: dict[str, Any], ctx: dict[str, Any]) -> str:
     """
@@ -32,7 +35,7 @@ async def download_file(args: dict[str, Any], ctx: dict[str, Any]) -> str:
         return json.dumps({"error": "download_file error: base_dir not found in context."})
 
     download_dir = base_dir / "downloads"
-    
+
     try:
         download_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -43,16 +46,15 @@ async def download_file(args: dict[str, Any], ctx: dict[str, Any]) -> str:
     # Basic security check to ensure the filename doesn't try to escape the directory
     if str(save_path.resolve().parent) != str(download_dir.resolve()):
         return json.dumps({"error": "download_file error: invalid filename, path traversal detected."})
-        
+
     try:
-        async with httpx.AsyncClient() as client:
-            async with client.stream("GET", url, follow_redirects=True, timeout=30.0) as response:
-                response.raise_for_status()
-                
-                with open(save_path, "wb") as f:
-                    async for chunk in response.aiter_bytes():
-                        f.write(chunk)
-                        
+        async with httpx.AsyncClient() as client, client.stream("GET", url, follow_redirects=True, timeout=30.0) as response:
+            response.raise_for_status()
+
+            with open(save_path, "wb") as f:
+                async for chunk in response.aiter_bytes():
+                    f.write(chunk)
+
         file_size = save_path.stat().st_size
         return json.dumps({
             "status": "success",

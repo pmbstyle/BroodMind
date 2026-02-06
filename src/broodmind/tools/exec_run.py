@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import queue
+import select
 import subprocess
+import sys
+import threading
 import time
 import uuid
-import shlex
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,7 @@ _PROCESS_REGISTRY: dict[str, dict[str, Any]] = {}
 def exec_run(args: dict[str, Any], base_dir: Path) -> str:
     """
     Execute a shell command. Supports foreground (blocking) and background (async) execution.
-    
+
     Args:
         command (str): Shell command to run.
         timeout_seconds (int): Timeout for blocking calls (default 20).
@@ -26,7 +28,7 @@ def exec_run(args: dict[str, Any], base_dir: Path) -> str:
         input_data (str): Data to write to stdin (for "write" action).
     """
     action = args.get("action", "start")
-    
+
     if action == "start":
         return _handle_start(args, base_dir)
     elif action in {"poll", "kill", "write", "read"}:
@@ -39,28 +41,26 @@ def _read_stream(stream: Any) -> str:
     """Non-blocking read from a stream."""
     if not stream:
         return ""
-    
+
     # Try reading available lines without blocking
     output = []
-    import sys
-    
+
     if sys.platform == "win32":
         # Windows doesn't support select() on pipes.
         # We can't easily peek into the pipe without blocking or threads.
-        # However, since we are in a synchronous tool call, simply falling back 
+        # However, since we are in a synchronous tool call, simply falling back
         # to a short blocking read or just returning what we can isn't trivial.
         #
-        # A robust solution for Windows sync non-blocking reads requires 
-        # named pipes or threads. For this MVP, we will assume the caller 
-        # accepts that 'poll' might not return ALL output immediately 
+        # A robust solution for Windows sync non-blocking reads requires
+        # named pipes or threads. For this MVP, we will assume the caller
+        # accepts that 'poll' might not return ALL output immediately
         # unless we use threads to populate a buffer.
-        
-        # NOTE: For this specific implementation, we'll return a note that 
+
+        # NOTE: For this specific implementation, we'll return a note that
         # full streaming requires the threaded implementation (see below).
         return "(Output streaming on Windows requires threaded buffer implementation)"
     else:
         # Unix-like systems can use select
-        import select
         while True:
             reads, _, _ = select.select([stream], [], [], 0.0)
             if stream in reads:
@@ -71,7 +71,7 @@ def _read_stream(stream: Any) -> str:
                     break
             else:
                 break
-                
+
     return "".join(output)
 
 # -------------------------------------------------------------------------
@@ -80,19 +80,17 @@ def _read_stream(stream: Any) -> str:
 # To properly solve the reading issue on Windows, we spin up daemon threads
 # that consume stdout/stderr and push to a queue.
 
-import threading
-import queue
 
 class ProcessBuffer:
     def __init__(self, process: subprocess.Popen):
         self.process = process
         self.stdout_queue = queue.Queue()
         self.stderr_queue = queue.Queue()
-        
+
         self.t_out = threading.Thread(target=self._reader, args=(process.stdout, self.stdout_queue))
         self.t_out.daemon = True
         self.t_out.start()
-        
+
         self.t_err = threading.Thread(target=self._reader, args=(process.stderr, self.stderr_queue))
         self.t_err.daemon = True
         self.t_err.start()
@@ -143,10 +141,10 @@ def _handle_start(args: dict[str, Any], base_dir: Path) -> str:
                 bufsize=1, # Line buffered
             )
             session_id = str(uuid.uuid4())
-            
+
             # Use threaded buffer wrapper
             pb = ProcessBuffer(process)
-            
+
             _PROCESS_REGISTRY[session_id] = {
                 "process": process,
                 "start_time": time.time(),
@@ -184,7 +182,7 @@ def _handle_management(action: str, args: dict[str, Any]) -> str:
     session_id = args.get("session_id")
     if not session_id:
         return "exec_run error: session_id is required for management actions."
-    
+
     session = _PROCESS_REGISTRY.get(session_id)
     if not session:
         return f"exec_run error: Session '{session_id}' not found or expired."
@@ -195,10 +193,10 @@ def _handle_management(action: str, args: dict[str, Any]) -> str:
     if action == "poll":
         returncode = proc.poll()
         is_running = returncode is None
-        
+
         stdout_chunk = pb.read_stdout()
         stderr_chunk = pb.read_stderr()
-        
+
         return json.dumps({
             "session_id": session_id,
             "running": is_running,
@@ -220,7 +218,7 @@ def _handle_management(action: str, args: dict[str, Any]) -> str:
         input_data = args.get("input_data", "")
         if not input_data:
             return "exec_run error: input_data required for write."
-        
+
         if proc.poll() is not None:
              return "exec_run error: Process is not running."
 
@@ -241,12 +239,8 @@ def _handle_management(action: str, args: dict[str, Any]) -> str:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        
+
         del _PROCESS_REGISTRY[session_id]
         return json.dumps({"status": "killed", "session_id": session_id})
 
     return "exec_run error: Unreachable."
-
-def _read_stream(stream: Any) -> str:
-    # Deprecated by ProcessBuffer
-    return ""

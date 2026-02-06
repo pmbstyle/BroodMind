@@ -5,7 +5,6 @@ from typing import Any
 
 import httpx
 
-
 BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 DEFAULT_COUNT = 5
 MAX_COUNT = 10
