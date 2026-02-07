@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 DEFAULT_CAPABILITY_WHITELIST: dict[str, list[str]] = {
-    "filesystem": ["/workspace/**"],
+    "filesystem": ["worker", "/workspace/**"],
+    "filesystem_read": ["worker"],
+    "filesystem_write": ["worker"],
     "network": ["*"],
-    "exec": ["python", "node"],
+    "exec": ["worker", "python", "node"],
     "email": ["*"],
     "payment": [],
 }

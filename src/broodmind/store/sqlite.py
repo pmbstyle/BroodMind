@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from broodmind.config.settings import Settings
@@ -278,14 +278,15 @@ class SQLiteStore(Store):
 
     def get_active_workers(self, older_than_minutes: int = 10) -> list[WorkerRecord]:
         """Get workers that are still running or recently completed."""
+        cutoff = utc_now() - timedelta(minutes=max(0, older_than_minutes))
         cursor = self._conn.execute(
             """
             SELECT * FROM workers
             WHERE status IN ('started', 'running')
-               OR updated_at > datetime('now', '-' || ? || ' minutes')
+               OR julianday(updated_at) > julianday(?)
             ORDER BY updated_at DESC
             """,
-            (older_than_minutes,),
+            (cutoff.isoformat(),),
         )
         return [self._row_to_worker(row) for row in cursor.fetchall()]
 
@@ -300,20 +301,25 @@ class SQLiteStore(Store):
 
         Returns: Number of workers deleted
         """
+        safe_hours = max(0, keep_recent_hours)
+        safe_keep_count = max(0, keep_completed_count)
+        cutoff = utc_now() - timedelta(hours=safe_hours)
+
         # Delete old completed workers that are not in the recent time window
         # and not in the last N completed workers
         cursor = self._conn.execute(
-            f"""
+            """
             DELETE FROM workers
             WHERE status = 'completed'
-              AND updated_at < datetime('now', '-{keep_recent_hours} hours')
+              AND julianday(updated_at) < julianday(?)
               AND id NOT IN (
                   SELECT id FROM workers
                   WHERE status = 'completed'
                   ORDER BY updated_at DESC
-                  LIMIT {keep_completed_count}
+                  LIMIT ?
               )
-            """
+            """,
+            (cutoff.isoformat(), safe_keep_count),
         )
         deleted_count = cursor.rowcount
         self._conn.commit()
@@ -551,16 +557,21 @@ class SQLiteStore(Store):
 
         Returns: Number of entries deleted
         """
+        safe_days = max(0, keep_days)
+        safe_keep_count = max(0, keep_count)
+        cutoff = utc_now() - timedelta(days=safe_days)
+
         cursor = self._conn.execute(
-            f"""
+            """
             DELETE FROM memory_entries
-            WHERE created_at < datetime('now', '-{keep_days} days')
+            WHERE julianday(created_at) < julianday(?)
               AND id NOT IN (
                   SELECT id FROM memory_entries
                   ORDER BY created_at DESC
-                  LIMIT {keep_count}
+                  LIMIT ?
               )
-            """
+            """,
+            (cutoff.isoformat(), safe_keep_count),
         )
         deleted_count = cursor.rowcount
         self._conn.commit()
@@ -616,9 +627,9 @@ class SQLiteStore(Store):
             granted_caps=_loads_json(row["granted_caps_json"]),
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
-            summary=row.get("summary", None),
+            summary=_row_get(row, "summary"),
             output=_loads_json(row["output_json"]) if "output_json" in row and row["output_json"] else None,
-            error=row.get("error", None),
+            error=_row_get(row, "error"),
         )
 
     def _row_to_intent(self, row: sqlite3.Row) -> IntentRecord:
@@ -635,7 +646,7 @@ class SQLiteStore(Store):
         )
 
     def _row_to_permit(self, row: sqlite3.Row) -> PermitRecord:
-        intent_type = row.get("intent_type", "")
+        intent_type = _row_get(row, "intent_type", "")
         return PermitRecord(
             id=row["id"],
             intent_id=row["intent_id"],

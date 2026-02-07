@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher
 
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_dispatcher(settings: Settings, bot: Bot) -> Dispatcher:
+    os.environ.setdefault("BROODMIND_STATE_DIR", str(settings.state_dir))
+
     # Use unified LiteLLM provider (supports both OpenRouter and z.ai)
     provider = LiteLLMProvider(settings)
 

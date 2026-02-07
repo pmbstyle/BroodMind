@@ -95,7 +95,7 @@ This is distinct from the chat history. It is your "crystallized" knowledge.
     - inputs (object): Task-specific input data
     - tools (array): Override default tools for this task
     - timeout_seconds (number): Override default timeout
-  - Returns: run_id and status
+  - Returns: worker_id, run_id, and status
 
 - **stop_worker: Force-stop a running worker.**
   - Parameter: worker_id (string).

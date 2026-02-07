@@ -43,7 +43,7 @@ def get_worker_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="start_worker",
-            description="Start a worker task with the specified worker template. Returns run_id and status.",
+            description="Start a worker task with the specified worker template. Returns worker_id, run_id, and status.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -434,7 +434,7 @@ async def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) ->
     if not template:
         return f"start_worker error: worker '{worker_id}' not found. Use list_workers to see available workers."
 
-    run_id = await queen._start_worker_async(
+    launch = await queen._start_worker_async(
         worker_id=worker_id,
         task=task,
         chat_id=chat_id,
@@ -443,11 +443,22 @@ async def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) ->
         model=model,
         timeout_seconds=timeout_seconds,
     )
+    status = str(launch.get("status", "started"))
+    launched_worker_id = launch.get("worker_id")
+    run_id = launch.get("run_id")
+    if status == "started" and launched_worker_id:
+        message = f"Worker '{template.name}' started as {launched_worker_id}. Use get_worker_status/get_worker_result with this worker_id."
+    elif status == "skipped_duplicate":
+        message = "Duplicate worker task detected in this turn; skipped starting a new worker."
+    else:
+        message = f"Worker start returned status={status}."
+
     return json.dumps({
-        "status": "started",
-        "worker_id": worker_id,
+        "status": status,
+        "worker_template_id": worker_id,
+        "worker_id": launched_worker_id,
         "run_id": run_id,
-        "message": f"Worker '{template.name}' started. Use get_worker_status to check progress."
+        "message": message,
     }, ensure_ascii=False)
 
 

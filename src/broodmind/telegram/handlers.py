@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from broodmind.config.settings import Settings
 from broodmind.logging_config import correlation_id_var
 from broodmind.queen.core import Queen, QueenReply
+from broodmind.runtime_metrics import update_component_gauges
 from broodmind.state import update_last_message
 from broodmind.telegram.approvals import ApprovalManager
 
@@ -17,6 +18,18 @@ logger = logging.getLogger(__name__)
 _CHAT_LOCKS: dict[int, asyncio.Lock] = {}
 _CHAT_QUEUES: dict[int, asyncio.Queue[str]] = {}
 _CHAT_SEND_TASKS: dict[int, asyncio.Task] = {}
+_SEND_IDLE_TIMEOUT_SECONDS = 300.0
+
+
+def _publish_runtime_metrics() -> None:
+    update_component_gauges(
+        "telegram",
+        {
+            "chat_locks": len(_CHAT_LOCKS),
+            "chat_queues": len(_CHAT_QUEUES),
+            "send_tasks": len(_CHAT_SEND_TASKS),
+        },
+    )
 
 
 def register_handlers(
@@ -37,6 +50,7 @@ def register_handlers(
             return
         logger.debug("Incoming message from chat_id=%s", message.chat.id)
         lock = _CHAT_LOCKS.setdefault(message.chat.id, asyncio.Lock())
+        _publish_runtime_metrics()
         async with lock:
             typing_stop = asyncio.Event()
             typing_task = asyncio.create_task(_typing_loop(message, typing_stop))
@@ -109,6 +123,7 @@ async def _enqueue_send(bot: Bot, chat_id: int, text: str) -> None:
     # If the task is missing or has finished, create a new one.
     if chat_id not in _CHAT_SEND_TASKS or _CHAT_SEND_TASKS[chat_id].done():
         _CHAT_SEND_TASKS[chat_id] = asyncio.create_task(_sender_loop(bot, chat_id, queue))
+    _publish_runtime_metrics()
 
     await queue.put(text)
 
@@ -117,7 +132,7 @@ async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[str]) -> Non
     while True:
         try:
             # Wait for a new message, but with a timeout.
-            text = await asyncio.wait_for(queue.get(), timeout=300.0)  # 5-minute timeout
+            text = await asyncio.wait_for(queue.get(), timeout=_SEND_IDLE_TIMEOUT_SECONDS)
         except TimeoutError:
             # Queue has been empty for the timeout duration, so this worker can exit.
             break
@@ -131,6 +146,10 @@ async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[str]) -> Non
 
     # The task is now finished, remove it from the registry so a new one can be created later.
     _CHAT_SEND_TASKS.pop(chat_id, None)
+    # Drop idle queue to avoid unbounded per-chat growth over long runtimes.
+    if queue.empty():
+        _CHAT_QUEUES.pop(chat_id, None)
+    _publish_runtime_metrics()
     logger.debug("Sender loop for chat_id=%s finished due to inactivity.", chat_id)
 
 

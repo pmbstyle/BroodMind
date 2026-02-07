@@ -39,6 +39,7 @@ class TaskRequest(BaseModel):
     tools: list[str] | None = None  # Override default tools if needed
     model: str | None = None  # Override model for this task
     timeout_seconds: int | None = None  # Override default timeout
+    run_id: str | None = None  # Optional caller-provided execution id
     correlation_id: str | None = None
 
 

@@ -107,6 +107,12 @@ If you need clarification from the Queen, include:
         # Handle OpenAI-style tool_calls
         tool_calls = response.get("tool_calls", [])
         if tool_calls:
+            content = response.get("content", "")
+            assistant_msg: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
+            if content:
+                assistant_msg["content"] = content
+            messages.append(assistant_msg)
+
             # Process tool calls
             for tool_call in tool_calls:
                 function = tool_call.get("function", {})
@@ -120,16 +126,16 @@ If you need clarification from the Queen, include:
                 tool_result = await _execute_tool(tool_name, tool_input, base_dir, worker)
                 tools_used.append(tool_name)
 
-                # Add assistant message with tool call
-                messages.append({
-                    "role": "assistant",
-                    "tool_calls": [tool_call],
-                })
                 # Add tool result message
+                tool_result_text = (
+                    tool_result
+                    if isinstance(tool_result, str)
+                    else json.dumps(tool_result, ensure_ascii=False)
+                )
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.get("id", ""),
-                    "content": json.dumps(tool_result) if not isinstance(tool_result, str) else tool_result,
+                    "content": tool_result_text,
                 })
         else:
             # No tool calls, check if this is a completion
@@ -213,7 +219,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, base_dir: Path, worker
         # Tool handlers expect (args, ctx) where ctx is a dict
         # Filesystem tools need base_dir in context, others don't
         # worker instance is needed for intent requests
-        ctx = {"base_dir": str(base_dir), "worker": worker}
+        ctx = {"base_dir": base_dir, "worker": worker}
 
         # Check if handler is async or sync
         import asyncio

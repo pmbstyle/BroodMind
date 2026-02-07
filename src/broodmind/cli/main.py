@@ -15,6 +15,7 @@ from broodmind.cli.branding import print_banner
 from broodmind.config.settings import Settings, load_settings
 from broodmind.gateway.app import build_app
 from broodmind.logging_config import configure_logging
+from broodmind.runtime_metrics import read_metrics_snapshot
 from broodmind.state import is_pid_running, read_status, write_start_status
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.telegram.bot import run_bot
@@ -242,6 +243,35 @@ def status() -> None:
     grid.add_row("Process ID:", str(pid) if pid else "[dim]N/A[/dim]")
     grid.add_row("Last Heartbeat:", str(last_message) if last_message else "[dim]Never[/dim]")
     grid.add_row("Configuration:", "[green]Valid[/green]" if config_ok else "[red]Invalid[/red]")
+
+    metrics = read_metrics_snapshot(settings.state_dir)
+    queen_metrics = metrics.get("queen", {}) if isinstance(metrics, dict) else {}
+    telegram_metrics = metrics.get("telegram", {}) if isinstance(metrics, dict) else {}
+    exec_metrics = metrics.get("exec_run", {}) if isinstance(metrics, dict) else {}
+    if metrics:
+        grid.add_row(
+            "Queen Queues:",
+            (
+                f"followup={queen_metrics.get('followup_queues', 0)} "
+                f"internal={queen_metrics.get('internal_queues', 0)}"
+            ),
+        )
+        grid.add_row(
+            "Telegram Queues:",
+            (
+                f"queues={telegram_metrics.get('chat_queues', 0)} "
+                f"send_tasks={telegram_metrics.get('send_tasks', 0)}"
+            ),
+        )
+        grid.add_row(
+            "Exec Sessions:",
+            (
+                f"running={exec_metrics.get('background_sessions_running', 0)} "
+                f"total={exec_metrics.get('background_sessions_total', 0)}"
+            ),
+        )
+    else:
+        grid.add_row("Runtime Metrics:", "[dim]No telemetry snapshot yet[/dim]")
 
     console.print(Panel(
         grid,

@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from broodmind.queen.core import Queen
+from broodmind.queen.core import Queen, QueenReply
 from broodmind.telegram.approvals import ApprovalManager
 
 
@@ -53,6 +53,7 @@ def register_ws_routes(app: FastAPI) -> None:
             runtime=app.state.runtime,
             approvals=ApprovalManager(bot=None),
             memory=app.state.memory,
+            canon=app.state.canon,
         )
         async def _internal_send(chat_id: int, text: str) -> None:
             await socket.send_json({"type": "message", "text": text, "chat_id": chat_id})
@@ -97,4 +98,6 @@ async def _handle_message(
         )
     except Exception as exc:
         response = f"Error: {exc}"
-    await socket.send_json({"type": "message", "text": response})
+
+    text_out = response.immediate if isinstance(response, QueenReply) else str(response)
+    await socket.send_json({"type": "message", "text": text_out, "chat_id": chat_id})

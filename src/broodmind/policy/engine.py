@@ -47,6 +47,7 @@ class PolicyEngine:
         return Permit(
             id=str(uuid4()),
             intent_id="auto", # Placeholder if not linked to a persisted intent record yet
+            intent_type=intent.type,
             worker_id=worker_id,
             payload_hash=payload_hash,
             expires_at=utc_now() + timedelta(minutes=5),

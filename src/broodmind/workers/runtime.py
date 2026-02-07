@@ -54,7 +54,7 @@ class WorkerRuntime:
             return WorkerResult(summary="Permission denied for worker task")
 
         # Create worker spec
-        worker_id = str(uuid.uuid4())
+        worker_id = task_request.run_id or str(uuid.uuid4())
         spec = WorkerSpec(
             id=worker_id,
             task=task_request.task,
@@ -65,6 +65,7 @@ class WorkerRuntime:
             granted_capabilities=[c.model_dump() for c in granted],
             timeout_seconds=task_request.timeout_seconds or template.default_timeout_seconds,
             max_thinking_steps=template.max_thinking_steps,
+            run_id=task_request.run_id or worker_id,
             lifecycle="ephemeral",
             correlation_id=task_request.correlation_id,
         )
@@ -228,33 +229,63 @@ class WorkerRuntime:
                 logger.debug("Worker %s: %s", spec.id, payload.get("message"))
                 return None
             if msg_type == "intent_request":
+                from broodmind.intents.registry import IntentValidationError, validate_intent
                 from broodmind.intents.types import IntentRequest
-                from broodmind.policy.permits import PermitRecord
+                from broodmind.store.models import IntentRecord, PermitRecord
 
                 try:
                     req_data = payload.get("intent")
                     request = IntentRequest.model_validate(req_data)
+                    action_intent = validate_intent(
+                        request=request,
+                        worker_id=spec.id,
+                        intent_id=str(uuid.uuid4()),
+                    )
+                    await asyncio.to_thread(
+                        self.store.save_intent,
+                        IntentRecord(
+                            id=action_intent.id,
+                            worker_id=action_intent.worker_id,
+                            type=action_intent.type,
+                            payload=action_intent.payload,
+                            payload_hash=action_intent.payload_hash,
+                            risk=action_intent.risk,
+                            requires_approval=action_intent.requires_approval,
+                            status="pending",
+                            created_at=utc_now(),
+                        ),
+                    )
 
                     # Check if approval is needed
                     # Note: For now, we only support auto-approved intents in this runtime loop
-                    approval_req = self.policy.check_intent(request.intent)
+                    approval_req = self.policy.check_intent(action_intent)
 
                     if approval_req.requires_approval:
-                         # TODO: Implement user approval flow via Queen
+                        # TODO: Implement user approval flow via Queen
+                        await asyncio.to_thread(
+                            self.store.update_intent_status,
+                            action_intent.id,
+                            "requires_approval",
+                        )
                         response = {
                             "type": "permit_denied",
                             "reason": f"Intent requires approval (not implemented): {approval_req.reason}",
                         }
                     else:
                         # Auto-approve
-                        permit = self.policy.issue_permit(request.intent, spec.id)
+                        permit = self.policy.issue_permit(action_intent, spec.id)
+                        await asyncio.to_thread(
+                            self.store.update_intent_status,
+                            action_intent.id,
+                            "approved",
+                        )
                         # Save permit to store (for audit/verification)
                         await asyncio.to_thread(
                             self.store.create_permit,
                             PermitRecord(
                                 id=permit.id,
-                                intent_id="auto-approved", # No intent record for now
-                                intent_type=request.type,
+                                intent_id=action_intent.id,
+                                intent_type=action_intent.type,
                                 worker_id=spec.id,
                                 payload_hash=permit.payload_hash,
                                 expires_at=permit.expires_at,
@@ -265,6 +296,9 @@ class WorkerRuntime:
 
                     # Send response back to worker
                     await self._write_to_worker(process, response)
+                except IntentValidationError as exc:
+                    error_resp = {"type": "permit_denied", "reason": f"Intent validation failed: {exc}"}
+                    await self._write_to_worker(process, error_resp)
 
                 except Exception as exc:
                     logger.exception("Failed to process intent request")

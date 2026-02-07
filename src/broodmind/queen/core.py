@@ -18,6 +18,7 @@ from broodmind.queen.prompt_builder import (
     build_bootstrap_context_prompt,
     build_queen_prompt,
 )
+from broodmind.runtime_metrics import update_component_gauges
 from broodmind.store.base import Store
 from broodmind.telegram.approvals import ApprovalManager
 from broodmind.tools.registry import ToolSpec, filter_tools
@@ -31,11 +32,27 @@ _FOLLOWUP_QUEUES: dict[int, asyncio.Queue] = {}
 _FOLLOWUP_TASKS: dict[int, asyncio.Task] = {}
 _INTERNAL_QUEUES: dict[int, asyncio.Queue] = {}
 _INTERNAL_TASKS: dict[int, asyncio.Task] = {}
+_QUEUE_IDLE_TIMEOUT_SECONDS = 300.0
+
+
+def _publish_runtime_metrics() -> None:
+    update_component_gauges(
+        "queen",
+        {
+            "followup_queues": len(_FOLLOWUP_QUEUES),
+            "followup_tasks": len(_FOLLOWUP_TASKS),
+            "internal_queues": len(_INTERNAL_QUEUES),
+            "internal_tasks": len(_INTERNAL_TASKS),
+        },
+    )
 
 
 async def _followup_worker(chat_id: int, queue: asyncio.Queue) -> None:
     while True:
-        future, coro = await queue.get()
+        try:
+            future, coro = await asyncio.wait_for(queue.get(), timeout=_QUEUE_IDLE_TIMEOUT_SECONDS)
+        except TimeoutError:
+            break
         try:
             result = await coro
             if not future.cancelled():
@@ -45,6 +62,10 @@ async def _followup_worker(chat_id: int, queue: asyncio.Queue) -> None:
                 future.set_exception(exc)
         finally:
             queue.task_done()
+    _FOLLOWUP_TASKS.pop(chat_id, None)
+    if queue.empty():
+        _FOLLOWUP_QUEUES.pop(chat_id, None)
+    _publish_runtime_metrics()
 
 
 def _enqueue_followup(chat_id: int, coro) -> asyncio.Future[str]:
@@ -54,6 +75,7 @@ def _enqueue_followup(chat_id: int, coro) -> asyncio.Future[str]:
         _FOLLOWUP_QUEUES[chat_id] = queue
     if chat_id not in _FOLLOWUP_TASKS or _FOLLOWUP_TASKS[chat_id].done():
         _FOLLOWUP_TASKS[chat_id] = asyncio.create_task(_followup_worker(chat_id, queue))
+    _publish_runtime_metrics()
     loop = asyncio.get_running_loop()
     future: asyncio.Future[str] = loop.create_future()
     queue.put_nowait((future, coro))
@@ -67,7 +89,10 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
     The queen decides what to communicate based on worker results.
     """
     while True:
-        task_text, result = await queue.get()
+        try:
+            task_text, result = await asyncio.wait_for(queue.get(), timeout=_QUEUE_IDLE_TIMEOUT_SECONDS)
+        except TimeoutError:
+            break
         try:
             # Add worker result to memory for context, but don't auto-send
             if result.summary:
@@ -87,6 +112,10 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
             logger.exception("Failed to process internal worker result")
         finally:
             queue.task_done()
+    _INTERNAL_TASKS.pop(chat_id, None)
+    if queue.empty():
+        _INTERNAL_QUEUES.pop(chat_id, None)
+    _publish_runtime_metrics()
 
 
 def _enqueue_internal_result(queen: Queen, chat_id: int, task_text: str, result: WorkerResult) -> None:
@@ -97,6 +126,7 @@ def _enqueue_internal_result(queen: Queen, chat_id: int, task_text: str, result:
     if chat_id not in _INTERNAL_TASKS or _INTERNAL_TASKS[chat_id].done():
         _INTERNAL_TASKS[chat_id] = asyncio.create_task(_internal_worker(queen, chat_id, queue))
     queue.put_nowait((task_text, result))
+    _publish_runtime_metrics()
 
 
 @dataclass
@@ -211,17 +241,22 @@ class Queen:
         tools: list[str] | None,
         model: str | None,
         timeout_seconds: int | None,
-    ) -> str:
+    ) -> dict[str, Any]:
         from broodmind.logging_config import correlation_id_var
 
         # Create a task signature for duplicate detection
         task_signature = f"{worker_id}:{task[:100]}"  # First 100 chars is enough to detect duplicates
         if task_signature in self._recent_tasks:
             logger.warning("Duplicate worker task detected, skipping", worker_id=worker_id, task_prefix=task[:50])
-            # Return a fake run_id but don't actually start the worker
-            return f"skipped-duplicate-{uuid4().hex[:8]}"
+            skipped_id = f"skipped-duplicate-{uuid4().hex[:8]}"
+            return {
+                "status": "skipped_duplicate",
+                "run_id": skipped_id,
+                "worker_id": None,
+            }
 
         self._recent_tasks.add(task_signature)
+        run_id = str(uuid4())
         task_request = TaskRequest(
             worker_id=worker_id,
             task=task,
@@ -229,9 +264,9 @@ class Queen:
             tools=tools,
             model=model,
             timeout_seconds=timeout_seconds,
+            run_id=run_id,
             correlation_id=correlation_id_var.get(),
         )
-        run_id = str(uuid4())
         async def _runner() -> None:
             try:
                 result = await self.runtime.run_task(task_request)
@@ -239,7 +274,7 @@ class Queen:
                 result = WorkerResult(summary=f"Worker error: {exc}", output={"error": str(exc)})
             _enqueue_internal_result(self, chat_id, task, result)
         asyncio.create_task(_runner())
-        return run_id
+        return {"status": "started", "run_id": run_id, "worker_id": run_id}
 
 
 @dataclass
@@ -274,11 +309,22 @@ async def _route_or_reply(queen: Queen, provider: InferenceProvider, memory: Mem
             content_raw = result.get("content", "")
             tool_calls = result.get("tool_calls") or []
             if tool_calls:
+                assistant_msg: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
+                if content_raw:
+                    assistant_msg["content"] = content_raw
+                messages.append(assistant_msg)
                 for call in tool_calls:
                     tool_result = await _handle_queen_tool_call(call, queen_tools, ctx)
-                    messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": tool_result})
-                    if "error" in tool_result.lower() or "failed" in tool_result.lower():
-                        last_error = tool_result
+                    tool_result_text = (
+                        tool_result
+                        if isinstance(tool_result, str)
+                        else json.dumps(tool_result, ensure_ascii=False)
+                    )
+                    messages.append(
+                        {"role": "tool", "tool_call_id": call.get("id"), "content": tool_result_text}
+                    )
+                    if "error" in tool_result_text.lower() or "failed" in tool_result_text.lower():
+                        last_error = tool_result_text
                 if not last_error:
                     last_error = "No tool call completed. Use a tool to make progress."
                 continue
