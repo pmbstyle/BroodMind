@@ -72,9 +72,10 @@ def is_pid_running(pid: int | None) -> bool:
 def list_broodmind_runtime_pids() -> list[int]:
     """Return running PIDs that look like `broodmind start` runtime processes."""
     current_pid = os.getpid()
+    excluded = _current_process_ancestry()
     pids: list[int] = []
     for pid, cmdline in _iter_process_cmdlines():
-        if pid == current_pid:
+        if pid == current_pid or pid in excluded:
             continue
         if _looks_like_broodmind_runtime_cmd(cmdline):
             pids.append(pid)
@@ -119,9 +120,12 @@ def _is_pid_running_impl(pid: int) -> bool:
 
 def _looks_like_broodmind_runtime_cmd(cmdline: str) -> bool:
     lowered = cmdline.lower()
+    # Ignore command wrappers like `uv run broodmind start` that invoke this CLI.
+    if "uv run broodmind start" in lowered and "--foreground" not in lowered:
+        return False
     if "broodmind.cli start" in lowered:
         return True
-    if " broodmind start" in f" {lowered}":
+    if " broodmind start --foreground" in f" {lowered}":
         return True
     if " -m broodmind.cli start" in lowered:
         return True
@@ -183,3 +187,41 @@ def _iter_process_cmdlines_ps() -> list[tuple[int, str]]:
         cmdline = parts[1] if len(parts) > 1 else ""
         rows.append((pid, cmdline))
     return rows
+
+
+def _current_process_ancestry() -> set[int]:
+    import platform
+
+    if platform.system() != "Linux":
+        parent = os.getppid()
+        return {parent} if parent > 0 else set()
+
+    lineage: set[int] = set()
+    pid = os.getpid()
+    for _ in range(16):
+        ppid = _read_linux_ppid(pid)
+        if ppid <= 0 or ppid in lineage:
+            break
+        lineage.add(ppid)
+        pid = ppid
+    return lineage
+
+
+def _read_linux_ppid(pid: int) -> int:
+    stat_path = Path(f"/proc/{pid}/stat")
+    try:
+        content = stat_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return 0
+    # Format: pid (comm) state ppid ...
+    right_paren = content.rfind(")")
+    if right_paren == -1:
+        return 0
+    tail = content[right_paren + 1 :].strip()
+    parts = tail.split()
+    if len(parts) < 3:
+        return 0
+    try:
+        return int(parts[1])
+    except ValueError:
+        return 0
