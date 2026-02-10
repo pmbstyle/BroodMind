@@ -96,6 +96,11 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
         except TimeoutError:
             break
         try:
+            logger.info(
+                "Processing internal worker result",
+                chat_id=chat_id,
+                summary_len=len(result.summary or ""),
+            )
             # Add worker result to memory for context, but don't auto-send
             if result.summary:
                 await queen.memory.add_message(
@@ -116,9 +121,19 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
                 )
             # Deliver a queen-authored follow-up instead of leaking raw worker payloads.
             if queen.internal_send:
-                final_text = await _compose_worker_followup_message(queen, task_text, result)
+                try:
+                    final_text = await asyncio.wait_for(
+                        _compose_worker_followup_message(queen, task_text, result),
+                        timeout=25.0,
+                    )
+                except TimeoutError:
+                    logger.warning("Worker follow-up composition timed out; using fallback")
+                    final_text = _format_worker_completion_message(result)
                 if final_text:
                     await queen.internal_send(chat_id, final_text)
+                    logger.info("Internal worker follow-up sent", chat_id=chat_id, text_len=len(final_text))
+                else:
+                    logger.info("Internal worker follow-up skipped (empty message)", chat_id=chat_id)
             logger.debug("Worker result processed", summary_len=len(result.summary or ""))
         except Exception:
             logger.exception("Failed to process internal worker result")
@@ -138,6 +153,7 @@ def _enqueue_internal_result(queen: Queen, chat_id: int, task_text: str, result:
     if chat_id not in _INTERNAL_TASKS or _INTERNAL_TASKS[chat_id].done():
         _INTERNAL_TASKS[chat_id] = asyncio.create_task(_internal_worker(queen, chat_id, queue))
     queue.put_nowait((task_text, result))
+    logger.info("Queued internal worker result", chat_id=chat_id, queue_size=queue.qsize())
     _publish_runtime_metrics()
 
 

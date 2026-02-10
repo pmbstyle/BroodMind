@@ -29,6 +29,7 @@ _CHAT_LAST_PROGRESS: dict[int, tuple[str, float]] = {}
 _WORKER_CB_PREFIX = "worker:"
 _WORKER_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$")
 _TELEGRAM_PARSE_MODE: str | None = None
+_MDV2_SPECIAL_CHARS = set("_*[]()~`>#+-=|{}.!\\")
 
 
 def _publish_runtime_metrics() -> None:
@@ -230,11 +231,14 @@ async def _send_chunked(bot: Bot, chat_id: int, text: str, limit: int = 4000) ->
 
 async def _send_message_safe(bot: Bot, chat_id: int, text: str) -> None:
     parse_mode = _TELEGRAM_PARSE_MODE
+    outbound = text
+    if parse_mode == "MarkdownV2":
+        outbound = _prepare_markdown_v2(text)
     if not parse_mode:
         await bot.send_message(chat_id, text)
         return
     try:
-        await bot.send_message(chat_id, text, parse_mode=parse_mode)
+        await bot.send_message(chat_id, outbound, parse_mode=parse_mode)
     except TelegramBadRequest as exc:
         # Formatting mismatch should not drop the message for the user.
         logger.warning(
@@ -359,6 +363,50 @@ def _normalize_parse_mode(raw: str | None) -> str | None:
         return "Markdown"
     logger.warning("Unknown BROODMIND_TELEGRAM_PARSE_MODE value; using plain text (value=%s)", value)
     return None
+
+
+def _prepare_markdown_v2(text: str) -> str:
+    """Best-effort MarkdownV2 sanitizer that preserves common markdown entities."""
+    source = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    protected: list[str] = []
+
+    def _stash(match: re.Match[str]) -> str:
+        token = f"\u0000BMMD{len(protected)}\u0000"
+        value = match.group(0)
+        if value.startswith("**") and value.endswith("**") and len(value) >= 4:
+            # Convert common markdown bold to Telegram MarkdownV2 bold.
+            value = f"*{value[2:-2]}*"
+        protected.append(value)
+        return token
+
+    patterns = [
+        r"```[\s\S]*?```",             # fenced code blocks
+        r"`[^`\n]+`",                  # inline code
+        r"\[[^\]\n]+\]\([^)]+\)",      # links
+        r"\|\|[^|\n]+\|\|",            # spoilers
+        r"__[^_\n]+__",                # underline
+        r"\*\*[^*\n]+\*\*",            # markdown bold (**...**)
+        r"\*[^*\n]+\*",                # bold (*...*)
+        r"_[^_\n]+_",                  # italic
+        r"~[^~\n]+~",                  # strikethrough
+    ]
+    for pattern in patterns:
+        source = re.sub(pattern, _stash, source)
+
+    escaped = _escape_markdown_v2_plain(source)
+    for idx, fragment in enumerate(protected):
+        escaped = escaped.replace(f"\u0000BMMD{idx}\u0000", fragment)
+    return escaped
+
+
+def _escape_markdown_v2_plain(text: str) -> str:
+    parts: list[str] = []
+    for ch in text:
+        if ch in _MDV2_SPECIAL_CHARS:
+            parts.append(f"\\{ch}")
+        else:
+            parts.append(ch)
+    return "".join(parts)
 
 
 def _worker_controls_keyboard(worker_id: str, *, can_stop: bool) -> InlineKeyboardMarkup:
