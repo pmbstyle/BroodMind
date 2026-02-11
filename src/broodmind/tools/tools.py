@@ -139,11 +139,16 @@ def get_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="web_fetch",
-            description="Fetch a URL and return a JSON payload with status_code, content_type, and snippet.",
+            description="Make an HTTP request and return a JSON payload with status_code, content_type, and snippet.",
             parameters={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "URL to fetch (http/https only)."},
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method.",
+                        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                    },
                     "max_chars": {
                         "type": "integer",
                         "description": "Max characters of content to return (200-200000).",
@@ -151,6 +156,17 @@ def get_tools() -> list[ToolSpec]:
                     "headers": {
                         "type": "object",
                         "description": "Optional dictionary of custom request headers (e.g. for API tokens).",
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Optional query string parameters.",
+                    },
+                    "json": {
+                        "type": "object",
+                        "description": "Optional JSON request body.",
+                    },
+                    "body": {
+                        "description": "Optional raw request body (string) or object/list.",
                     },
                 },
                 "required": ["url"],

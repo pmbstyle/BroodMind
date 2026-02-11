@@ -3,11 +3,13 @@ from __future__ import annotations
 import os
 from html.parser import HTMLParser
 from typing import Any
+import json as pyjson
 from urllib.parse import urlparse
 
 import httpx
 
 DEFAULT_MAX_CHARS = 20000
+ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -44,6 +46,9 @@ def web_fetch(args: dict[str, Any]) -> str:
         return "web_fetch error: url is required."
     if not _is_safe_url(url):
         return "web_fetch error: url not allowed."
+    method = str(args.get("method", "GET")).strip().upper()
+    if method not in ALLOWED_METHODS:
+        return "web_fetch error: unsupported method. Allowed: GET, POST, PUT, PATCH, DELETE."
     max_chars_raw = args.get("max_chars", DEFAULT_MAX_CHARS)
     try:
         max_chars = int(max_chars_raw)
@@ -55,10 +60,15 @@ def web_fetch(args: dict[str, Any]) -> str:
     custom_headers = args.get("headers")
     if not isinstance(custom_headers, dict):
         custom_headers = {}
+    params = args.get("params")
+    if not isinstance(params, dict):
+        params = None
+    json_body = args.get("json")
+    body = args.get("body")
 
-    # Try Firecrawl first if configured
+    # Try Firecrawl first if configured for HTML GET fetches
     firecrawl_key = os.getenv("FIRECRAWL_API_KEY")
-    if firecrawl_key:
+    if firecrawl_key and method == "GET" and json_body is None and body is None:
         try:
             return _fetch_firecrawl(url, firecrawl_key, max_chars, custom_headers)
         except Exception:
@@ -75,7 +85,17 @@ def web_fetch(args: dict[str, Any]) -> str:
 
     try:
         with httpx.Client(timeout=20.0, headers=headers) as client:
-            resp = client.get(url)
+            request_kwargs: dict[str, Any] = {"params": params}
+            if json_body is not None:
+                request_kwargs["json"] = json_body
+            elif body is not None:
+                if isinstance(body, (dict, list)):
+                    request_kwargs["content"] = pyjson.dumps(body, ensure_ascii=False)
+                    if "Content-Type" not in headers and "content-type" not in headers:
+                        headers["Content-Type"] = "application/json"
+                else:
+                    request_kwargs["content"] = str(body)
+            resp = client.request(method, url, **request_kwargs)
         content = resp.text
         # Extract readable text if HTML
         content_type = (resp.headers.get("content-type") or "").lower()
@@ -91,6 +111,7 @@ def web_fetch(args: dict[str, Any]) -> str:
         snippet = text[:max_chars]
         payload = {
             "url": url,
+            "method": method,
             "status_code": resp.status_code,
             "content_type": resp.headers.get("content-type"),
             "snippet": snippet,

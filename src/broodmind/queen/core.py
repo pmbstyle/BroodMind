@@ -119,34 +119,38 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
                     f"Worker error: {output_error}",
                     {"worker_result": True, "task": task_text, "chat_id": chat_id}
                 )
-            # Always route worker result back through Queen decision logic.
-            # User delivery is a separate concern from internal decision-making.
-            try:
-                final_text = await asyncio.wait_for(
-                    _route_worker_result_back_to_queen(queen, chat_id, task_text, result),
-                    timeout=45.0,
-                )
-            except TimeoutError:
-                logger.warning("Worker-result routing timed out", chat_id=chat_id)
-                final_text = "NO_USER_RESPONSE"
-
-            if _should_send_worker_followup(final_text):
-                if queen.internal_send:
-                    await queen.internal_send(chat_id, final_text)
-                    logger.info("Internal worker follow-up sent", chat_id=chat_id, text_len=len(final_text))
-                    await queen.memory.add_message(
-                        "assistant",
-                        final_text,
-                        {"chat_id": chat_id, "worker_followup": True},
-                    )
-                else:
-                    logger.info(
-                        "Worker follow-up produced but no sender attached",
-                        chat_id=chat_id,
-                        text_len=len(final_text),
-                    )
+            # System/internal chat (chat_id <= 0) should never emit user-facing follow-ups.
+            if chat_id <= 0:
+                logger.info("Skipping user follow-up for internal chat", chat_id=chat_id)
             else:
-                logger.info("Internal worker follow-up skipped", chat_id=chat_id, reason="no_user_response")
+                # Always route worker result back through Queen decision logic.
+                # User delivery is a separate concern from internal decision-making.
+                try:
+                    final_text = await asyncio.wait_for(
+                        _route_worker_result_back_to_queen(queen, chat_id, task_text, result),
+                        timeout=45.0,
+                    )
+                except TimeoutError:
+                    logger.warning("Worker-result routing timed out", chat_id=chat_id)
+                    final_text = "NO_USER_RESPONSE"
+
+                if _should_send_worker_followup(final_text):
+                    if queen.internal_send:
+                        await queen.internal_send(chat_id, final_text)
+                        logger.info("Internal worker follow-up sent", chat_id=chat_id, text_len=len(final_text))
+                        await queen.memory.add_message(
+                            "assistant",
+                            final_text,
+                            {"chat_id": chat_id, "worker_followup": True},
+                        )
+                    else:
+                        logger.info(
+                            "Worker follow-up produced but no sender attached",
+                            chat_id=chat_id,
+                            text_len=len(final_text),
+                        )
+                else:
+                    logger.info("Internal worker follow-up skipped", chat_id=chat_id, reason="no_user_response")
             logger.debug("Worker result processed", summary_len=len(result.summary or ""))
         except Exception:
             logger.exception("Failed to process internal worker result")
@@ -245,10 +249,10 @@ class Queen:
                 self, self.provider, self.memory, wake_up_prompt, system_chat_id, bootstrap_context.content
             )
             logger.info("Queen wake up complete", result_preview=f"{result[:60]}..." if result else "empty")
-            # Only send result if we have valid chat IDs (chat_id=0 is invalid)
-            if self.internal_send and result and chat_ids:
+            # Send deterministic ready note; avoid leaking internal bootstrap model output.
+            if self.internal_send and chat_ids:
                 try:
-                    await self.internal_send(system_chat_id, result)
+                    await self.internal_send(system_chat_id, "Queen initialized and ready.")
                     logger.info("Queen ready message sent")
                 except Exception as e:
                     logger.warning("Failed to send queen ready message", error=e)
