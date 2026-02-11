@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import uuid
-from typing import Any
+from typing import Any, NamedTuple
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest
@@ -18,8 +18,15 @@ from broodmind.state import update_last_message
 from broodmind.telegram.approvals import ApprovalManager
 
 logger = logging.getLogger(__name__)
+
+
+class QueuedMessage(NamedTuple):
+    text: str
+    reply_to_message_id: int | None = None
+
+
 _CHAT_LOCKS: dict[int, asyncio.Lock] = {}
-_CHAT_QUEUES: dict[int, asyncio.Queue[str]] = {}
+_CHAT_QUEUES: dict[int, asyncio.Queue[QueuedMessage]] = {}
 _CHAT_SEND_TASKS: dict[int, asyncio.Task] = {}
 _SEND_IDLE_TIMEOUT_SECONDS = 300.0
 _TELEGRAM_PARSE_MODE: str | None = None
@@ -88,11 +95,12 @@ def register_handlers(
             if isinstance(reply, QueenReply):
                 update_last_message(settings)
                 if reply.immediate:
-                    await _enqueue_send(message.bot, message.chat.id, reply.immediate)
+                    # Reply with quote/reply to the current message
+                    await _enqueue_send(message.bot, message.chat.id, reply.immediate, reply_to_message_id=message.message_id)
                 return
 
         update_last_message(settings)
-        await _enqueue_send(message.bot, message.chat.id, str(reply))
+        await _enqueue_send(message.bot, message.chat.id, str(reply), reply_to_message_id=message.message_id)
 
     @dp.callback_query()
     async def handle_callback(query: CallbackQuery) -> None:
@@ -112,22 +120,25 @@ def register_handlers(
                 await query.message.edit_reply_markup(reply_markup=None)
 
 
-async def _send_chunked(bot: Bot, chat_id: int, text: str, limit: int = 4000) -> None:
+async def _send_chunked(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None, limit: int = 4000) -> None:
     chunks = _chunk_text(text, limit)
-    for chunk in chunks:
-        await _send_message_safe(bot, chat_id, chunk)
+    for i, chunk in enumerate(chunks):
+        # Only the first chunk should be a reply to the original message
+        rid = reply_to_message_id if i == 0 else None
+        await _send_message_safe(bot, chat_id, chunk, reply_to_message_id=rid)
 
 
-async def _send_message_safe(bot: Bot, chat_id: int, text: str) -> None:
+async def _send_message_safe(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None) -> None:
     parse_mode = _TELEGRAM_PARSE_MODE
     outbound = text
     if parse_mode == "MarkdownV2":
         outbound = _prepare_markdown_v2(text)
-    if not parse_mode:
-        await bot.send_message(chat_id, text)
-        return
+    
     try:
-        await bot.send_message(chat_id, outbound, parse_mode=parse_mode)
+        if not parse_mode:
+            await bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+        else:
+            await bot.send_message(chat_id, outbound, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
     except TelegramBadRequest as exc:
         # Formatting mismatch should not drop the message for the user.
         logger.warning(
@@ -135,10 +146,10 @@ async def _send_message_safe(bot: Bot, chat_id: int, text: str) -> None:
             parse_mode,
             exc,
         )
-        await bot.send_message(chat_id, text)
+        await bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
 
 
-async def _enqueue_send(bot: Bot, chat_id: int, text: str) -> None:
+async def _enqueue_send(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None) -> None:
     queue = _CHAT_QUEUES.get(chat_id)
     if not queue:
         queue = asyncio.Queue()
@@ -149,20 +160,20 @@ async def _enqueue_send(bot: Bot, chat_id: int, text: str) -> None:
         _CHAT_SEND_TASKS[chat_id] = asyncio.create_task(_sender_loop(bot, chat_id, queue))
     _publish_runtime_metrics()
 
-    await queue.put(text)
+    await queue.put(QueuedMessage(text=text, reply_to_message_id=reply_to_message_id))
 
 
-async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[str]) -> None:
+async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[QueuedMessage]) -> None:
     while True:
         try:
             # Wait for a new message, but with a timeout.
-            text = await asyncio.wait_for(queue.get(), timeout=_SEND_IDLE_TIMEOUT_SECONDS)
+            msg = await asyncio.wait_for(queue.get(), timeout=_SEND_IDLE_TIMEOUT_SECONDS)
         except TimeoutError:
             # Queue has been empty for the timeout duration, so this worker can exit.
             break
 
         try:
-            await _send_chunked(bot, chat_id, text)
+            await _send_chunked(bot, chat_id, msg.text, reply_to_message_id=msg.reply_to_message_id)
         except Exception:
             logger.exception("Failed to send queued message")
         finally:
@@ -222,36 +233,94 @@ def _normalize_parse_mode(raw: str | None) -> str | None:
 
 
 def _prepare_markdown_v2(text: str) -> str:
-    """Best-effort MarkdownV2 sanitizer that preserves common markdown entities."""
+    """Robust MarkdownV2 sanitizer that preserves markdown entities while escaping correctly."""
     source = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    
+    # Simple state-based parser or regex-with-intelligent-escaping
+    # We'll use the "stash" approach but with recursive escaping for specific parts.
+    
     protected: list[str] = []
 
-    def _stash(match: re.Match[str]) -> str:
-        token = f"\u0000BMMD{len(protected)}\u0000"
-        value = match.group(0)
-        if value.startswith("**") and value.endswith("**") and len(value) >= 4:
-            # Convert common markdown bold to Telegram MarkdownV2 bold.
-            value = f"*{value[2:-2]}*"
-        protected.append(value)
-        return token
+    def _escape_code(t: str) -> str:
+        # Inside pre and code entities, all '`' and '\' characters must be escaped with a preceding '\' character.
+        return t.replace('\\', '\\\\').replace('`', '\\`')
 
+    def _escape_link_url(t: str) -> str:
+        # Inside (...) part of inline link, all ')' and '\' must be escaped with a preceding '\' character.
+        return t.replace('\\', '\\\\').replace(')', '\\)')
+
+    def _stash(match: re.Match[str]) -> str:
+        full = match.group(0)
+        
+        if full.startswith("```"):
+            # Fenced code block
+            # Match: ```[lang]\n[code]```
+            m = re.match(r"(```[a-zA-Z0-9]*\n?)([\s\S]*?)(```)", full)
+            if m:
+                prefix, code, suffix = m.groups()
+                # Do NOT escape special chars in prefix/suffix, but escape code content
+                val = f"{prefix}{_escape_code(code)}{suffix}"
+                protected.append(val)
+                return f"\u0000BMMD{len(protected)-1}\u0000"
+        
+        if full.startswith("`"):
+            # Inline code
+            m = re.match(r"(`)([^`\n]+)(`)", full)
+            if m:
+                prefix, code, suffix = m.groups()
+                val = f"{prefix}{_escape_code(code)}{suffix}"
+                protected.append(val)
+                return f"\u0000BMMD{len(protected)-1}\u0000"
+
+        if full.startswith("["):
+            # Link
+            m = re.match(r"(\[)([^\]\n]+)(\]\()([^)]+)(\))", full)
+            if m:
+                # [text](url)
+                # We should escape 'text' using plain escape rules? 
+                # Actually, 'text' can have other formatting inside.
+                # But for simplicity, we treat it as plain text here or recursively escape it.
+                # Telegram allows formatting inside links.
+                p1, text_part, p2, url_part, p3 = m.groups()
+                # We escape the URL part specially
+                val = f"{p1}{text_part}{p2}{_escape_link_url(url_part)}{p3}"
+                protected.append(val)
+                return f"\u0000BMMD{len(protected)-1}\u0000"
+
+        # For simple tags like *bold*, _italic_, etc.
+        # We need to ensure we don't have special chars inside them that should be escaped if they ARE NOT formatting.
+        # But wait, MarkdownV2 doesn't allow escaping inside entities easily.
+        # For now, we just protect them and hope for the best.
+        
+        val = full
+        if full.startswith("**") and full.endswith("**") and len(full) >= 4:
+            val = f"*{full[2:-2]}*"
+            
+        protected.append(val)
+        return f"\u0000BMMD{len(protected)-1}\u0000"
+
+    # Sequence of patterns to stash, from most specific to least
     patterns = [
-        r"```[\s\S]*?```",             # fenced code blocks
-        r"`[^`\n]+`",                  # inline code
-        r"\[[^\]\n]+\]\([^)]+\)",      # links
-        r"\|\|[^|\n]+\|\|",            # spoilers
-        r"__[^_\n]+__",                # underline
-        r"\*\*[^*\n]+\*\*",            # markdown bold (**...**)
-        r"\*[^*\n]+\*",                # bold (*...*)
-        r"_[^_\n]+_",                  # italic
-        r"~[^~\n]+~",                  # strikethrough
+        r"```[a-zA-Z0-9]*\n?[\s\S]*?```", # fenced code blocks
+        r"`[^`\n]+`",                    # inline code
+        r"\[[^\]\n]+\]\([^)]+\)",        # links
+        r"\|\|[^|\n]+\|\|",              # spoilers
+        r"__[^_\n]+__",                  # underline
+        r"\*\*[^*\n]+\*\*",              # markdown bold (**...**)
+        r"\*[^*\n]+\*",                  # bold (*...*)
+        r"_[^_\n]+_",                    # italic
+        r"~[^~\n]+~",                    # strikethrough
     ]
+    
     for pattern in patterns:
         source = re.sub(pattern, _stash, source)
 
     escaped = _escape_markdown_v2_plain(source)
+    
+    # Restore protected fragments
     for idx, fragment in enumerate(protected):
         escaped = escaped.replace(f"\u0000BMMD{idx}\u0000", fragment)
+        
     return escaped
 
 
