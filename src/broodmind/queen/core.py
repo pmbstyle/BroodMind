@@ -446,11 +446,21 @@ async def _route_worker_result_back_to_queen(
         worker_result_prompt,
         chat_id,
         bootstrap_context.content,
+        internal_followup=True,
     )
     return _normalize_plain_text(reply_text)
 
 
-async def _route_or_reply(queen: Queen, provider: InferenceProvider, memory: MemoryService, user_text: str, chat_id: int, bootstrap_context: str) -> str:
+async def _route_or_reply(
+    queen: Queen,
+    provider: InferenceProvider,
+    memory: MemoryService,
+    user_text: str,
+    chat_id: int,
+    bootstrap_context: str,
+    *,
+    internal_followup: bool = False,
+) -> str:
     messages = await build_queen_prompt(
         store=queen.store, memory=memory, canon=queen.canon, user_text=user_text, chat_id=chat_id, bootstrap_context=bootstrap_context
     )
@@ -489,6 +499,8 @@ async def _route_or_reply(queen: Queen, provider: InferenceProvider, memory: Mem
                 logger.debug("Queen output", output=content_raw)
             return _normalize_plain_text(content_raw)
         if had_tool_calls:
+            if internal_followup:
+                return "NO_USER_RESPONSE"
             return "Task accepted. I am processing it."
         if last_error and _looks_like_tool_error(last_error):
             return "I couldn't complete that request. The tooling failed and needs correction."
