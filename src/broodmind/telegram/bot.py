@@ -89,12 +89,12 @@ async def _heartbeat_poker(queen: Queen, interval_seconds: int, chat_id: int):
             if isinstance(reply, QueenReply):
                 text = (reply.immediate or "").strip()
                 if text.upper() == "HEARTBEAT_OK":
-                    logger.debug("Heartbeat acknowledged", chat_id=chat_id)
+                    logger.debug("Heartbeat acknowledged (chat_id=%s)", chat_id)
                 elif text:
                     logger.info(
-                        "Heartbeat produced non-ACK text (suppressed from chat)",
-                        chat_id=chat_id,
-                        preview=text[:200],
+                        "Heartbeat produced non-ACK text (suppressed from chat, chat_id=%s, preview=%s)",
+                        chat_id,
+                        text[:200],
                     )
         except Exception:
             logger.exception("Internal heartbeat failed")
