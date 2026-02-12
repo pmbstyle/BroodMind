@@ -19,3 +19,4 @@
 /.claude
 /tests/__pycache__
 /src/broodmind/worker_sdk/__pycache__
+/src/broodmind/browser/__pycache__

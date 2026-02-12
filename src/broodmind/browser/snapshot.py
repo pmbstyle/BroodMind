@@ -41,8 +41,8 @@ async def capture_aria_snapshot(page: Page) -> SnapshotResult:
     ref_counter = 1
     
     for line in lines:
-        # Match pattern: "  - role "name"" or "  - role"
-        match = re.match(r"^(\s*-\s*)(\w+)(?:\s+"([^"]*)")?(.*)$", line)
+        # Match pattern: "  - role \"name\"" or "  - role"
+        match = re.match(r'^(\s*-\s*)(\w+)(?:\s+"([^"]*)")?(.*)$', line)
         if not match:
             result_lines.append(line)
             continue
@@ -80,7 +80,6 @@ async def capture_aria_snapshot(page: Page) -> SnapshotResult:
             result_lines.append(line)
             
     return {
-        "snapshot": "
-".join(result_lines),
+        "snapshot": "\n".join(result_lines),
         "refs": refs
     }
