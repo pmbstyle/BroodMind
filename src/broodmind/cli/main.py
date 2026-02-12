@@ -10,6 +10,7 @@ from pathlib import Path
 import typer
 from rich.align import Align
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
@@ -611,38 +612,49 @@ def build_worker_image(tag: str = "broodmind-worker:latest") -> None:
 
 @app.command("dashboard")
 def dashboard(
-    watch: bool = typer.Option(False, "--watch", "-w", help="Continuously refresh dashboard"),
-    interval: float = typer.Option(2.0, "--interval", "-i", help="Refresh interval in seconds for --watch"),
+    watch: bool = typer.Option(True, "--watch/--once", "-w/-o", help="Continuously refresh dashboard (default) or show once"),
+    interval: float = typer.Option(2.0, "--interval", "-i", help="Refresh interval in seconds for live mode"),
     last: int = typer.Option(8, "--last", help="Number of recent workers to show"),
     json_output: bool = typer.Option(False, "--json", help="Print JSON snapshot instead of dashboard view"),
 ) -> None:
-    """Show a live-style runtime dashboard (system, queen, workers, control channel)."""
+    """Show a live runtime dashboard (system, queen, workers, control channel)."""
     settings = load_settings()
     last = max(1, min(50, last))
-    interval = max(0.5, min(30.0, interval))
+    refresh_interval = max(0.5, min(30.0, interval))
 
-    if json_output and watch:
-        console.print("[red]--json cannot be used with --watch[/red]")
-        raise typer.Exit(code=1)
+    # JSON output always implies --once
+    if json_output:
+        watch = False
 
-    def _render_once() -> None:
-        snapshot = _build_dashboard_snapshot(settings, last)
-        if json_output:
-            console.print(json.dumps(snapshot, ensure_ascii=False, indent=2))
-            return
-        _print_dashboard(snapshot)
+    # Initialize store once for reuse
+    store = SQLiteStore(settings)
 
     if not watch:
-        _render_once()
+        snapshot = _build_dashboard_snapshot(settings, last, store=store)
+        if json_output:
+            console.print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+        else:
+            _print_dashboard(snapshot)
         return
 
+    # Live watch mode
     try:
-        while True:
-            console.clear()
-            _render_once()
-            time.sleep(interval)
+        with Live(
+            _build_dashboard_renderable(_build_dashboard_snapshot(settings, last, store=store)),
+            console=console,
+            refresh_per_second=1/refresh_interval,
+            screen=True
+        ) as live:
+            while True:
+                time.sleep(refresh_interval)
+                try:
+                    snapshot = _build_dashboard_snapshot(settings, last, store=store)
+                    live.update(_build_dashboard_renderable(snapshot))
+                except Exception as e:
+                    # Log error internally but keep the dashboard alive
+                    logger.debug(f"Dashboard refresh error: {e}")
     except KeyboardInterrupt:
-        console.print("\n[dim]Dashboard watch stopped.[/dim]")
+        pass
 
 
 @app.command("sync-worker-templates")
@@ -665,7 +677,7 @@ app.add_typer(memory_app, name="memory")
 app.add_typer(config_app, name="config")
 
 
-def _build_dashboard_snapshot(settings: Settings, last: int) -> dict:
+def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore | None = None) -> dict:
     status_data = read_status(settings) or {}
     pid = status_data.get("pid")
     running = is_pid_running(pid)
@@ -674,7 +686,9 @@ def _build_dashboard_snapshot(settings: Settings, last: int) -> dict:
     telegram_metrics = metrics.get("telegram", {}) if isinstance(metrics, dict) else {}
     exec_metrics = metrics.get("exec_run", {}) if isinstance(metrics, dict) else {}
 
-    store = SQLiteStore(settings)
+    if store is None:
+        store = SQLiteStore(settings)
+    
     workers = store.list_workers()
     now = _now_utc()
     cutoff = now.timestamp() - 24 * 60 * 60
@@ -752,16 +766,18 @@ def _build_dashboard_snapshot(settings: Settings, last: int) -> dict:
     }
 
 
-def _print_dashboard(snapshot: dict) -> None:
+def _build_dashboard_renderable(snapshot: dict) -> Align:
     system = snapshot["system"]
     queen = snapshot["queen"]
     queues = snapshot["queues"]
     workers = snapshot["workers"]
     control = snapshot["control"]
 
-    console.print("\n")
+    layout = Table.grid(padding=(1, 0))
+    layout.add_column()
+
     title = "[bold bright_blue]BROODMIND LIVE DASHBOARD[/bold bright_blue]"
-    console.print(Align.center(Panel(title, border_style="bright_blue", expand=False, padding=(0, 10))))
+    layout.add_row(Align.center(Panel(title, border_style="bright_blue", expand=False, padding=(0, 10))))
 
     sys_state = "[bright_green]RUNNING[/bright_green]" if system["running"] else "[bright_red]STOPPED[/bright_red]"
     queen_color = (
@@ -776,7 +792,7 @@ def _print_dashboard(snapshot: dict) -> None:
     top.add_row("System", f"{sys_state} [dim]|[/dim] PID {system['pid'] or 'N/A'} [dim]|[/dim] Uptime {system['uptime']}")
     top.add_row("Queen", f"[{queen_color}]{queen['state'].upper()}[/{queen_color}] [dim]|[/dim] Heartbeat {system['last_heartbeat'] or 'Never'}")
     
-    console.print(Align.center(Panel(top, border_style="blue", title="[bold white]Runtime[/bold white]", expand=False, padding=(1, 4))))
+    layout.add_row(Align.center(Panel(top, border_style="blue", title="[bold white]Runtime[/bold white]", expand=False, padding=(1, 4))))
 
     q_table = Table.grid(padding=(0, 4))
     q_table.add_column(style="bold cyan", justify="right")
@@ -799,7 +815,7 @@ def _print_dashboard(snapshot: dict) -> None:
         Panel(q_table, border_style="blue", title="[bold white]Queues[/bold white]", padding=(1, 2)),
         Panel(w_table, border_style="blue", title="[bold white]Workers[/bold white]", padding=(1, 2))
     )
-    console.print(Align.center(detail_grid))
+    layout.add_row(Align.center(detail_grid))
 
     recent = Table(border_style="blue", show_header=True, header_style="bold cyan", expand=False)
     recent.add_column("Worker ID", style="dim", width=12)
@@ -817,7 +833,7 @@ def _print_dashboard(snapshot: dict) -> None:
             str(row["updated_at"])[:19].replace("T", " "),
         )
     
-    console.print(Align.center(Panel(recent, title="[bold white]Recent Activity[/bold white]", border_style="blue", expand=False)))
+    layout.add_row(Align.center(Panel(recent, title="[bold white]Recent Activity[/bold white]", border_style="blue", expand=False)))
 
     cgrid = Table.grid(padding=(0, 4))
     cgrid.add_column(style="bold cyan", justify="right")
@@ -836,8 +852,13 @@ def _print_dashboard(snapshot: dict) -> None:
     else:
         cgrid.add_row("Last Ack", "[dim]none[/dim]")
     
-    console.print(Align.center(Panel(cgrid, border_style="blue", title="[bold white]Control Channel[/bold white]", expand=False, padding=(1, 4))))
-    console.print("\n")
+    layout.add_row(Align.center(Panel(cgrid, border_style="blue", title="[bold white]Control Channel[/bold white]", expand=False, padding=(1, 4))))
+    
+    return Align.center(layout)
+
+
+def _print_dashboard(snapshot: dict) -> None:
+    console.print(_build_dashboard_renderable(snapshot))
 
 
 def _read_jsonl(path: Path) -> list[dict]:
