@@ -190,6 +190,7 @@ class Queen:
     canon: CanonService
     internal_send: callable | None = None
     internal_progress_send: callable | None = None
+    internal_typing_control: callable | None = None
     _cleanup_task: asyncio.Task | None = None
     _recent_tasks: set[str] = None  # Track tasks in current conversation to detect duplicates
     _approval_requesters: dict[int, Callable[[Any], Awaitable[bool]]] | None = None
@@ -199,6 +200,14 @@ class Queen:
             self._recent_tasks = set()
         if self._approval_requesters is None:
             self._approval_requesters = {}
+
+    async def set_typing(self, chat_id: int, active: bool):
+        """Toggle typing indicator for a specific chat."""
+        if self.internal_typing_control:
+            try:
+                await self.internal_typing_control(chat_id, active)
+            except Exception:
+                logger.debug("Failed to set typing status", chat_id=chat_id, active=active, exc_info=True)
 
     async def _periodic_cleanup(self, interval_seconds: int):
         while True:
@@ -273,6 +282,7 @@ class Queen:
         text: str,
         chat_id: int,
         approval_requester=None,
+        show_typing: bool = True,
     ) -> QueenReply:
         # Clear recent tasks at the start of each new user message
         self._recent_tasks.clear()
@@ -286,7 +296,7 @@ class Queen:
             files_summary = ", ".join([f"{name} ({size} chars)" for name, size in bootstrap_context.files])
             logger.debug("Queen bootstrap files", files=files_summary, hash=bootstrap_context.hash)
         reply_text = await route_or_reply(
-            self, self.provider, self.memory, text, chat_id, bootstrap_context.content
+            self, self.provider, self.memory, text, chat_id, bootstrap_context.content, show_typing=show_typing
         )
         logger.info("Queen response ready")
         await self.memory.add_message("assistant", reply_text, {"chat_id": chat_id})

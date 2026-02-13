@@ -30,87 +30,96 @@ async def route_or_reply(
     bootstrap_context: str,
     *,
     internal_followup: bool = False,
+    show_typing: bool = True,
 ) -> str:
-    """Core routing logic: decide whether to use tools or reply to user."""
-    messages = await build_queen_prompt(
-        store=queen.store, 
-        memory=memory, 
-        canon=queen.canon, 
-        user_text=user_text, 
-        chat_id=chat_id, 
-        bootstrap_context=bootstrap_context
-    )
-    _log_system_prompt(messages, "route")
+    \"\"\"Core routing logic: decide whether to use tools or reply to user.\"\"\"
+    # Internal chat_id (<= 0) should not trigger typing indicators.
+    if chat_id > 0 and show_typing:
+        await queen.set_typing(chat_id, True)
     
-    queen_tools, ctx = _get_queen_tools(queen, chat_id)
-    tool_capable = getattr(provider, "complete_with_tools", None)
-    
-    if callable(tool_capable):
-        tools = [spec.to_openai_tool() for spec in queen_tools]
-        last_error: str | None = None
-        had_tool_calls = False
-        max_attempts = 10
+    try:
+        messages = await build_queen_prompt(
+            store=queen.store, 
+            memory=memory, 
+            canon=queen.canon, 
+            user_text=user_text, 
+            chat_id=chat_id, 
+            bootstrap_context=bootstrap_context
+        )
+        _log_system_prompt(messages, "route")
         
-        for _ in range(max_attempts):
-            result = await provider.complete_with_tools(messages, tools=tools, tool_choice="auto")
-            content_raw = result.get("content", "")
-            tool_calls = result.get("tool_calls") or []
+        queen_tools, ctx = _get_queen_tools(queen, chat_id)
+        tool_capable = getattr(provider, "complete_with_tools", None)
+        
+        if callable(tool_capable):
+            tools = [spec.to_openai_tool() for spec in queen_tools]
+            last_error: str | None = None
+            had_tool_calls = False
+            max_attempts = 10
             
-            if tool_calls:
-                had_tool_calls = True
-                assistant_msg: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
-                if content_raw:
-                    assistant_msg["content"] = content_raw
-                messages.append(assistant_msg)
+            for _ in range(max_attempts):
+                result = await provider.complete_with_tools(messages, tools=tools, tool_choice="auto")
+                content_raw = result.get("content", "")
+                tool_calls = result.get("tool_calls") or []
                 
-                for call in tool_calls:
-                    tool_result = await _handle_queen_tool_call(call, queen_tools, ctx)
-                    tool_result_text = (
-                        tool_result
-                        if isinstance(tool_result, str)
-                        else json.dumps(tool_result, ensure_ascii=False)
+                if tool_calls:
+                    had_tool_calls = True
+                    assistant_msg: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
+                    if content_raw:
+                        assistant_msg["content"] = content_raw
+                    messages.append(assistant_msg)
+                    
+                    for call in tool_calls:
+                        tool_result = await _handle_queen_tool_call(call, queen_tools, ctx)
+                        tool_result_text = (
+                            tool_result
+                            if isinstance(tool_result, str)
+                            else json.dumps(tool_result, ensure_ascii=False)
+                        )
+                        messages.append(
+                            {"role": "tool", "tool_call_id": call.get("id"), "content": tool_result_text}
+                        )
+                        if "error" in tool_result_text.lower() or "failed" in tool_result_text.lower():
+                            last_error = tool_result_text
+                    continue
+                
+                if content_raw:
+                    logger.debug("Queen output", output=content_raw)
+                return normalize_plain_text(content_raw)
+                
+            if had_tool_calls:
+                if internal_followup:
+                    return "NO_USER_RESPONSE"
+                # Force a final response without tools to explain progress.
+                messages.append(
+                    Message(
+                        role="system",
+                        content="You have reached the tool call limit for this turn. Summarize what you have initiated and let the user know you are processing their request.",
                     )
-                    messages.append(
-                        {"role": "tool", "tool_call_id": call.get("id"), "content": tool_result_text}
+                )
+                final_resp = await provider.complete(messages)
+                return normalize_plain_text(final_resp)
+                
+            if last_error and _looks_like_tool_error(last_error):
+                if internal_followup:
+                    return "NO_USER_RESPONSE"
+                messages.append(
+                    Message(
+                        role="system",
+                        content=f"A tool call failed: {last_error}. Explain the problem to the user naturally and ask for guidance if needed.",
                     )
-                    if "error" in tool_result_text.lower() or "failed" in tool_result_text.lower():
-                        last_error = tool_result_text
-                continue
-            
-            if content_raw:
-                logger.debug("Queen output", output=content_raw)
-            return normalize_plain_text(content_raw)
-            
-        if had_tool_calls:
-            if internal_followup:
-                return "NO_USER_RESPONSE"
-            # Force a final response without tools to explain progress.
-            messages.append(
-                Message(
-                    role="system",
-                    content="You have reached the tool call limit for this turn. Summarize what you have initiated and let the user know you are processing their request.",
                 )
-            )
-            final_resp = await provider.complete(messages)
-            return normalize_plain_text(final_resp)
+                final_resp = await provider.complete(messages)
+                return normalize_plain_text(final_resp)
+                
+            return ""
             
-        if last_error and _looks_like_tool_error(last_error):
-            if internal_followup:
-                return "NO_USER_RESPONSE"
-            messages.append(
-                Message(
-                    role="system",
-                    content=f"A tool call failed: {last_error}. Explain the problem to the user naturally and ask for guidance if needed.",
-                )
-            )
-            final_resp = await provider.complete(messages)
-            return normalize_plain_text(final_resp)
-            
-        return ""
-        
-    response_raw = await provider.complete(messages)
-    logger.debug("Queen output", output=response_raw)
-    return normalize_plain_text(response_raw)
+        response_raw = await provider.complete(messages)
+        logger.debug("Queen output", output=response_raw)
+        return normalize_plain_text(response_raw)
+    finally:
+        if chat_id > 0:
+            await queen.set_typing(chat_id, False)
 
 
 async def route_worker_result_back_to_queen(

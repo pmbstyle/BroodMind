@@ -225,7 +225,7 @@ class WorkerRuntime:
             if payload is None:
                 text_line = line.decode("utf-8", errors="replace").strip()
                 if text_line:
-                    logger.error("Worker output (non-JSON): %s", text_line)
+                    self._log_non_json_output(text_line)
                 invalid_lines += 1
                 if invalid_lines >= max_invalid_lines:
                     logger.error("Worker emitted too many invalid lines")
@@ -462,6 +462,27 @@ class WorkerRuntime:
                 logger.info("WorkerRuntime cleaned up worker dir: %s", worker_dir)
         except Exception as exc:
             logger.warning("WorkerRuntime cleanup failed: %s", exc)
+
+    def _log_non_json_output(self, text: str) -> None:
+        """Log non-JSON output from worker intelligently."""
+        import re
+        # Strip ANSI escape sequences (color codes)
+        ansi_escape = re.compile(r'\x1b\[[0-9;]*[mK]')
+        clean_text = ansi_escape.sub('', text)
+        
+        # Keywords that suggest an actual error
+        error_keywords = {"error", "exception", "failed", "traceback", "critical"}
+        lower_text = clean_text.lower()
+        
+        if any(kw in lower_text for kw in error_keywords):
+            logger.error("Worker output (error?): %s", clean_text)
+        elif "info" in lower_text:
+            logger.info("Worker output: %s", clean_text)
+        elif "debug" in lower_text:
+            logger.debug("Worker output: %s", clean_text)
+        else:
+            # Default to debug for unknown non-JSON output to avoid log noise
+            logger.debug("Worker output (non-JSON): %s", clean_text)
 
 
 

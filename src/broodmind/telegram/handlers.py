@@ -29,6 +29,10 @@ class QueuedMessage(NamedTuple):
 _CHAT_LOCKS: dict[int, asyncio.Lock] = {}
 _CHAT_QUEUES: dict[int, asyncio.Queue[QueuedMessage]] = {}
 _CHAT_SEND_TASKS: dict[int, asyncio.Task] = {}
+_TYPING_TASKS: dict[int, asyncio.Task] = {}
+_TYPING_STOP_EVENTS: dict[int, asyncio.Event] = {}
+_TYPING_REFS: dict[int, int] = {}
+_TYPING_LOCK: asyncio.Lock | None = None
 _SEND_IDLE_TIMEOUT_SECONDS = 300.0
 _TELEGRAM_PARSE_MODE: str | None = None
 _MDV2_SPECIAL_CHARS = set("_*[]()~`>#+-=|{}.!\\")
@@ -41,6 +45,7 @@ def _publish_runtime_metrics() -> None:
             "chat_locks": len(_CHAT_LOCKS),
             "chat_queues": len(_CHAT_QUEUES),
             "send_tasks": len(_CHAT_SEND_TASKS),
+            "typing_tasks": len(_TYPING_TASKS),
         },
     )
 
@@ -48,11 +53,14 @@ def _publish_runtime_metrics() -> None:
 def register_handlers(
     dp: Dispatcher, queen: Queen, approvals: ApprovalManager, settings: Settings, bot: Bot
 ) -> None:
-    global _TELEGRAM_PARSE_MODE
+    global _TELEGRAM_PARSE_MODE, _TYPING_LOCK
     _TELEGRAM_PARSE_MODE = _normalize_parse_mode(settings.telegram_parse_mode)
+    if _TYPING_LOCK is None:
+        _TYPING_LOCK = asyncio.Lock()
 
     async def _internal_send(chat_id: int, text: str) -> None:
         await _enqueue_send(bot, chat_id, text)
+
     async def _internal_progress_send(
         chat_id: int,
         state: str,
@@ -63,8 +71,32 @@ def register_handlers(
         # User-facing updates are handled by the Queen after worker completion or via her immediate replies.
         logger.info("Worker progress event", chat_id=chat_id, state=state, text=text)
 
+    async def _internal_typing_control(chat_id: int, active: bool) -> None:
+        async with _TYPING_LOCK:
+            if active:
+                count = _TYPING_REFS.get(chat_id, 0) + 1
+                _TYPING_REFS[chat_id] = count
+                if count == 1:
+                    stop_event = asyncio.Event()
+                    _TYPING_STOP_EVENTS[chat_id] = stop_event
+                    _TYPING_TASKS[chat_id] = asyncio.create_task(_typing_loop_by_id(bot, chat_id, stop_event))
+            else:
+                count = _TYPING_REFS.get(chat_id, 0) - 1
+                if count <= 0:
+                    _TYPING_REFS.pop(chat_id, None)
+                    stop_event = _TYPING_STOP_EVENTS.pop(chat_id, None)
+                    if stop_event:
+                        stop_event.set()
+                    task = _TYPING_TASKS.pop(chat_id, None)
+                    if task and not task.done():
+                        task.cancel()
+                else:
+                    _TYPING_REFS[chat_id] = count
+        _publish_runtime_metrics()
+
     queen.internal_send = _internal_send
     queen.internal_progress_send = _internal_progress_send
+    queen.internal_typing_control = _internal_typing_control
 
     @dp.message()
     async def handle_message(message: Message) -> None:
@@ -78,20 +110,13 @@ def register_handlers(
         lock = _CHAT_LOCKS.setdefault(message.chat.id, asyncio.Lock())
         _publish_runtime_metrics()
         async with lock:
-            typing_stop = asyncio.Event()
-            typing_task = asyncio.create_task(_typing_loop(message, typing_stop))
             try:
                 reply = await queen.handle_message(message.text, message.chat.id)
             except Exception:
                 logger.exception("Failed to handle message")
                 # Avoid leaking technical error details to the user.
                 # The Queen's internal failure logs will capture the detail.
-                typing_stop.set()
                 return
-            finally:
-                typing_stop.set()
-                if not typing_task.done():
-                    typing_task.cancel()
 
             if isinstance(reply, QueenReply):
                 update_last_message(settings)
@@ -190,16 +215,16 @@ async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[QueuedMessag
     logger.debug("Sender loop for chat_id=%s finished due to inactivity.", chat_id)
 
 
-async def _typing_loop(message: Message, stop: asyncio.Event) -> None:
+async def _typing_loop_by_id(bot: Bot, chat_id: int, stop: asyncio.Event) -> None:
     try:
         while not stop.is_set():
-            await message.bot.send_chat_action(message.chat.id, action="typing")
+            await bot.send_chat_action(chat_id, action="typing")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=4.0)
             except TimeoutError:
                 continue
     except Exception:
-        logger.debug("Typing indicator failed", exc_info=True)
+        logger.debug("Typing indicator failed", chat_id=chat_id, exc_info=True)
 
 
 def _chunk_text(text: str, limit: int) -> list[str]:
@@ -235,287 +260,75 @@ def _normalize_parse_mode(raw: str | None) -> str | None:
 
 
 def _prepare_markdown_v2(text: str) -> str:
-
-
-    """Robust MarkdownV2 sanitizer that preserves markdown entities while escaping correctly."""
-
-
+    \"\"\"Robust MarkdownV2 sanitizer that preserves common markdown entities while escaping correctly.\"\"\"
     source = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-
-
     
-
-
+    # Characters that must be escaped outside entities
+    # _ * [ ] ( ) ~ ` > # + - = | { } . !
+    # We use a strategy of:
+    # 1. Stash entities we want to keep (code blocks, inline code, bold, italic, links)
+    # 2. Escape everything else
+    # 3. Restore stashed entities
+    
     protected: list[str] = []
 
-
-
-
-
-    def _escape_code(t: str) -> str:
-
-
-        # In pre and code entities, all '`' and '\' characters must be escaped.
-
-
-        return t.replace('\\', '\\\\').replace('`', '\\`')
-
-
-
-
-
-    def _escape_link_url(t: str) -> str:
-
-
-        # Inside (...) part of inline link, all ')' and '\' must be escaped.
-
-
-        return t.replace('\\', '\\\\').replace(')', '\\)')
-
-
-
-
-
-    def _escape_general(t: str) -> str:
-
-
-        # General escaping for MarkdownV2 reserved characters
-
-
-        res = t
-
-
-        for ch in _MDV2_SPECIAL_CHARS:
-
-
-            res = res.replace(ch, f"\\{ch}")
-
-
-        return res
-
-
-
-
-
     def _stash(match: re.Match[str]) -> str:
-
-
         full = match.group(0)
-
-
-        
-
-
-        if full.startswith("```"):
-
-
-            m = re.match(r"(```[a-zA-Z0-9]*\n?)([\s\S]*?)(```)", full)
-
-
-            if m:
-
-
-                prefix, code, suffix = m.groups()
-
-
-                val = f"{prefix}{_escape_code(code)}{suffix}"
-
-
-                protected.append(val)
-
-
-                return f"\u0000BMMD{len(protected)-1}\u0000"
-
-
-        
-
-
-        if full.startswith("`"):
-
-
-            m = re.match(r"(`)([^`\n]+)(`)", full)
-
-
-            if m:
-
-
-                prefix, code, suffix = m.groups()
-
-
-                val = f"{prefix}{_escape_code(code)}{suffix}"
-
-
-                protected.append(val)
-
-
-                return f"\u0000BMMD{len(protected)-1}\u0000"
-
-
-
-
-
-        if full.startswith("["):
-
-
-            # Handle links with potentially nested parentheses in URL
-
-
-            # We look for [text](url) where url is balanced or ends at first space/newline/paren
-
-
-            m = re.match(r"(\[)([\s\S]+?)(\]\()([\s\S]+?)(\))", full)
-
-
-            if m:
-
-
-                p1, text_part, p2, url_part, p3 = m.groups()
-
-
-                # Recursively escape text part if it's not already handled? 
-
-
-                # For now, just escape it as general text to be safe, or leave it if it might have formatting.
-
-
-                # Actually, text_part can contain *bold* etc. 
-
-
-                # This is tricky. Let's just escape the URL part and protect the whole thing.
-
-
-                val = f"{p1}{text_part}{p2}{_escape_link_url(url_part)}{p3}"
-
-
-                protected.append(val)
-
-
-                return f"\u0000BMMD{len(protected)-1}\u0000"
-
-
-
-
-
-        # Emphasis markers: **bold**, *italic*, __underline__, ||spoiler||, ~strikethrough~
-
-
-        val = full
-
-
-        if full.startswith("**") and full.endswith("**") and len(full) >= 4:
-
-
-            # Convert **bold** to *bold* for Telegram
-
-
-            val = f"*{_escape_general(full[2:-2])}*"
-
-
-        elif full.startswith("*") and full.endswith("*") and len(full) >= 2:
-
-
-            val = f"_{_escape_general(full[1:-1])}_" # Italic
-
-
-        elif full.startswith("__") and full.endswith("__") and len(full) >= 4:
-
-
-            val = f"___{_escape_general(full[2:-2])}___" # Underline
-
-
-        elif full.startswith("||") and full.endswith("||") and len(full) >= 4:
-
-
-            val = f"||{_escape_general(full[2:-2])}||"
-
-
-        elif full.startswith("~") and full.endswith("~") and len(full) >= 2:
-
-
-            val = f"~{_escape_general(full[1:-1])}~"
-
-
-            
-
-
-        protected.append(val)
-
-
+        protected.append(full)
         return f"\u0000BMMD{len(protected)-1}\u0000"
 
-
-
-
-
-    # Sequence of patterns to stash.
-
-
-    # Note: We use non-greedy matching and multiline support where appropriate.
-
-
+    # Sequence of patterns to stash - careful with order
     patterns = [
-
-
-        r"```[a-zA-Z0-9]*\n?[\s\S]*?```", # fenced code blocks
-
-
+        r"```[\s\S]*?```",               # fenced code blocks
         r"`[^`\n]+`",                    # inline code
-
-
-        r"\[[\s\S]+?\]\([\s\S]+?\)",     # links (greedy enough to find the end paren)
-
-
+        r"\[[^\]]+\]\([^\)]+\)",         # links
+        r"\*\*[\s\S]+?\*\*",             # bold (standard)
+        r"__[\s\S]+?__",                 # underline (standard)
+        r"\*[\s\S]+?\*",                 # italic/bold (telegram)
+        r"_[\s\S]+?_",                   # italic (telegram)
         r"\|\|[\s\S]+?\|\|",             # spoilers
-
-
-        r"__[\s\S]+?__",                 # underline
-
-
-        r"\*\*[\s\S]+?\*\*",             # markdown bold
-
-
-        r"\*[\s\S]+?\*",                 # bold/italic
-
-
         r"~[\s\S]+?~",                   # strikethrough
-
-
     ]
-
-
     
-
-
     for pattern in patterns:
-
-
         source = re.sub(pattern, _stash, source)
 
-
-
-
-
-    # Escape all remaining special characters
-
-
+    # Escape all remaining special characters in the 'plain' parts
     escaped = _escape_markdown_v2_plain(source)
-
-
     
-
-
-    # Restore protected fragments
-
-
+    # Restore protected fragments and convert standard MD to Telegram MD if needed
     for idx, fragment in enumerate(protected):
-
-
-        escaped = escaped.replace(f"\u0000BMMD{idx}\u0000", fragment)
-
-
+        placeholder = f"\u0000BMMD{idx}\u0000"
         
-
-
+        # Convert **bold** to *bold* for Telegram MarkdownV2
+        if fragment.startswith("**") and fragment.endswith("**"):
+            inner = fragment[2:-2]
+            # Must still escape reserved chars inside the bold entity if they are not other entities
+            # But for simplicity, we'll just escape everything inside
+            fragment = f"*{_escape_markdown_v2_plain(inner)}*"
+        elif fragment.startswith("__") and fragment.endswith("__"):
+            inner = fragment[2:-2]
+            fragment = f"___{_escape_markdown_v2_plain(inner)}___"
+        elif fragment.startswith("`") or fragment.startswith("```"):
+            # Inside code entities, only ` and \ must be escaped
+            fragment = fragment.replace("\\", "\\\\").replace("`", "\\`").replace("\u0000", "")
+        elif fragment.startswith("["):
+            # Link [text](url)
+            m = re.match(r"\[([\s\S]+)\]\(([\s\S]+)\)", fragment)
+            if m:
+                link_text, link_url = m.groups()
+                # URL needs ), (, and \ escaped in MarkdownV2
+                link_url = link_url.replace("\\", "\\\\").replace(")", "\\)").replace("(", "\\(")
+                fragment = f"[{_escape_markdown_v2_plain(link_text)}]({link_url})"
+        elif fragment.startswith("||") and fragment.endswith("||"):
+            inner = fragment[2:-2]
+            fragment = f"||{_escape_markdown_v2_plain(inner)}||"
+        elif fragment.startswith("~") and fragment.endswith("~"):
+            inner = fragment[2:-2]
+            fragment = f"~{_escape_markdown_v2_plain(inner)}~"
+        
+        escaped = escaped.replace(placeholder, fragment)
+        
     return escaped
 
 
