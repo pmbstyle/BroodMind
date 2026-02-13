@@ -208,9 +208,9 @@ async def build_queen_prompt(
 
     canon_context = await asyncio.to_thread(canon.get_tier1_context)
 
-    memory_context = await memory.get_context(user_text)
+    memory_context = await memory.get_context(user_text, exclude_chat_id=chat_id)
 
-    recent_history = await memory.get_recent_history(chat_id, limit=8)
+    recent_history = await memory.get_recent_history(chat_id, limit=20)
     if recent_history and recent_history[-1][0] == "user" and recent_history[-1][1] == user_text:
         recent_history = recent_history[:-1]
 

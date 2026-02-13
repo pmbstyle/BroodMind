@@ -45,7 +45,7 @@ class MemoryService:
         )
         await asyncio.to_thread(self.store.add_memory_entry, entry)
 
-    async def get_context(self, query: str) -> list[str]:
+    async def get_context(self, query: str, exclude_chat_id: int | None = None) -> list[str]:
         if self.embeddings is None:
             return []
         trimmed = query.strip()
@@ -60,6 +60,13 @@ class MemoryService:
         for entry in candidates:
             if not entry.embedding:
                 continue
+            
+            # Skip entries from the current chat to avoid duplication with recent history
+            if exclude_chat_id is not None:
+                entry_chat_id = entry.metadata.get("chat_id")
+                if entry_chat_id == exclude_chat_id:
+                    continue
+
             score = _cosine_similarity(query_embedding, entry.embedding)
             if score >= self.min_score:
                 scored.append((score, entry))
