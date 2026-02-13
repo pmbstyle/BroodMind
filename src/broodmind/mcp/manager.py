@@ -8,13 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-from broodmind.tools.registry import ToolSpec
-
-logger = structlog.get_logger(__name__)
-
 @dataclass
 class MCPServerConfig:
     id: str
@@ -22,6 +15,13 @@ class MCPServerConfig:
     command: str
     args: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+from broodmind.tools.registry import ToolSpec
+
+logger = structlog.get_logger(__name__)
 
 class MCPManager:
     def __init__(self, workspace_dir: Path):
