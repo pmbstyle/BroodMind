@@ -12,12 +12,15 @@ from typing import Any, Dict, List, Optional
 class MCPServerConfig:
     id: str
     name: str
-    command: str
+    command: Optional[str] = None
     args: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
+    url: Optional[str] = None
+    headers: Dict[str, str] = field(default_factory=dict)
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.sse import sse_client
 
 from broodmind.tools.registry import ToolSpec
 
@@ -27,7 +30,6 @@ class MCPManager:
     def __init__(self, workspace_dir: Path):
         self.workspace_dir = workspace_dir
         self.sessions: Dict[str, ClientSession] = {}
-        self.server_params: Dict[str, StdioServerParameters] = {}
         self._exit_stacks: Dict[str, Any] = {}
         self._tools: Dict[str, List[ToolSpec]] = {}
         self.config_path = workspace_dir / "mcp_servers.json"
@@ -41,10 +43,17 @@ class MCPManager:
                 mcp_cfg = MCPServerConfig(
                     id=server_id,
                     name=cfg.get("name", server_id),
-                    command=cfg["command"],
+                    command=cfg.get("command"),
                     args=cfg.get("args", []),
-                    env=cfg.get("env", {})
+                    env=cfg.get("env", {}),
+                    url=cfg.get("url"),
+                    headers=cfg.get("headers", {})
                 )
+                # Support different type names for SSE
+                if cfg.get("type") in ("streamable-http", "sse", "http") and not mcp_cfg.url:
+                    # If type is SSE but url is missing, maybe it's in another field or we should warn
+                    pass
+
                 try:
                     await self.connect_server(mcp_cfg)
                 except Exception:
@@ -52,28 +61,31 @@ class MCPManager:
         except Exception:
             logger.exception("Failed to load MCP config")
 
-    def _save_config(self):
-        # Implementation could be added here to persist connections
-        pass
-
     async def connect_server(self, config: MCPServerConfig) -> List[ToolSpec]:
         if config.id in self.sessions:
             return self._tools.get(config.id, [])
 
-        logger.info("Connecting to MCP server", server_id=config.id, command=config.command)
-        
-        params = StdioServerParameters(
-            command=config.command,
-            args=config.args,
-            env={**config.env, "PATH": os.environ.get("PATH", "")} if config.env else None
-        )
-        
         from contextlib import AsyncExitStack
         exit_stack = AsyncExitStack()
         self._exit_stacks[config.id] = exit_stack
         
         try:
-            read_stream, write_stream = await exit_stack.enter_async_context(stdio_client(params))
+            if config.url:
+                logger.info("Connecting to MCP SSE server", server_id=config.id, url=config.url)
+                read_stream, write_stream = await exit_stack.enter_async_context(
+                    sse_client(url=config.url, headers=config.headers)
+                )
+            elif config.command:
+                logger.info("Connecting to MCP stdio server", server_id=config.id, command=config.command)
+                params = StdioServerParameters(
+                    command=config.command,
+                    args=config.args,
+                    env={**config.env, "PATH": os.environ.get("PATH", "")} if config.env else None
+                )
+                read_stream, write_stream = await exit_stack.enter_async_context(stdio_client(params))
+            else:
+                raise ValueError(f"MCP server {config.id} must have 'url' or 'command'.")
+
             session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
             
             await session.initialize()
@@ -86,7 +98,7 @@ class MCPManager:
             for tool in mcp_tools.tools:
                 spec = ToolSpec(
                     name=f"mcp_{config.id}_{tool.name}",
-                    description=f"[MCP:{config.name}] {tool.description}",
+                    description=f"[MCP Tool: {tool.name} from {config.name}] {tool.description}. Call this tool directly by using the name '{f'mcp_{config.id}_{tool.name}'}' in your tool call block.",
                     parameters=tool.inputSchema,
                     permission="mcp_exec",
                     handler=self._generate_handler(config.id, tool.name),
@@ -106,11 +118,8 @@ class MCPManager:
 
     def _generate_handler(self, server_id: str, tool_name: str):
         async def handler(args: Dict[str, Any], ctx: Dict[str, Any]) -> Any:
-            # Check if we are in a worker context
             worker = ctx.get("worker")
             if worker:
-                # In worker context, we must use call_mcp_tool to call the MCP tool
-                # because the session is in the main process.
                 logger.info("Worker requesting MCP tool call", server_id=server_id, tool=tool_name)
                 try:
                     result = await worker.call_mcp_tool(server_id, tool_name, args)
