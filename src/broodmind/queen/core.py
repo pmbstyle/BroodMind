@@ -134,7 +134,7 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
                 try:
                     final_text = await asyncio.wait_for(
                         route_worker_result_back_to_queen(queen, chat_id, task_text, result),
-                        timeout=45.0,
+                        timeout=180.0,
                     )
                 except TimeoutError:
                     logger.warning("Worker-result routing timed out", chat_id=chat_id)

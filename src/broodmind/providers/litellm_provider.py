@@ -40,7 +40,7 @@ class LiteLLMProvider:
                 self._model = f"openrouter/{model_name}"
             self._api_base = settings.openrouter_base_url.rstrip("/")
             self._api_key = settings.openrouter_api_key
-            logger.info("LiteLLM configured for OpenRouter: model=%s", self._model)
+            logger.info("LiteLLM configured for OpenRouter: model=%s, base_url=%s", self._model, self._api_base)
         else:
             # Use z.ai (custom OpenAI-compatible endpoint)
             model_name = model or settings.zai_model
@@ -51,7 +51,7 @@ class LiteLLMProvider:
                 self._model = f"openai/{model_name}"
             self._api_base = settings.zai_base_url.rstrip("/")
             self._api_key = settings.zai_api_key
-            logger.info("LiteLLM configured for z.ai: model=%s", self._model)
+            logger.info("LiteLLM configured for z.ai: model=%s, base_url=%s", self._model, self._api_base)
 
         # Parse fallbacks from JSON string if provided
         self._fallbacks: list[dict[str, Any]] | None = None

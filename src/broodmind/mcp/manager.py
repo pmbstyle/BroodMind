@@ -6,7 +6,7 @@ import os
 import structlog
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 @dataclass
 class MCPServerConfig:
@@ -30,7 +30,10 @@ class MCPManager:
     def __init__(self, workspace_dir: Path):
         self.workspace_dir = workspace_dir
         self.sessions: Dict[str, ClientSession] = {}
-        self._exit_stacks: Dict[str, Any] = {}
+        # Stores the background task that keeps the session alive
+        self._tasks: Dict[str, asyncio.Task] = {}
+        # Communication queues for disconnect signals
+        self._stop_events: Dict[str, asyncio.Event] = {}
         self._tools: Dict[str, List[ToolSpec]] = {}
         self.config_path = workspace_dir / "mcp_servers.json"
 
@@ -49,9 +52,9 @@ class MCPManager:
                     url=cfg.get("url"),
                     headers=cfg.get("headers", {})
                 )
-                # Support different type names for SSE
+                # Support common SSE synonyms
                 if cfg.get("type") in ("streamable-http", "sse", "http") and not mcp_cfg.url:
-                    # If type is SSE but url is missing, maybe it's in another field or we should warn
+                    # Logic to infer URL if type is set but url is in another field
                     pass
 
                 try:
@@ -66,56 +69,60 @@ class MCPManager:
             logger.info("MCP server already connected", server_id=config.id)
             return self._tools.get(config.id, [])
 
+        # Create an event to signal connection readiness and an event for stopping
+        ready_event = asyncio.Event()
+        stop_event = asyncio.Event()
+        self._stop_events[config.id] = stop_event
+        
+        # Start background task to manage the lifecycle
+        task = asyncio.create_task(self._run_server_lifecycle(config, ready_event, stop_event))
+        self._tasks[config.id] = task
+        
+        # Wait for the session to be initialized or task to fail
+        try:
+            await asyncio.wait_for(ready_event.wait(), timeout=45.0)
+            return self._tools.get(config.id, [])
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.error("Failed to connect to MCP server (wait timeout or error)", server_id=config.id, error=str(e))
+            await self.disconnect_server(config.id)
+            if isinstance(e, asyncio.TimeoutError):
+                raise RuntimeError(f"Connection to MCP server '{config.id}' timed out after 45s.") from e
+            raise
+
+    async def _run_server_lifecycle(self, config: MCPServerConfig, ready_event: asyncio.Event, stop_event: asyncio.Event):
+        """Manages the lifetime of a single MCP server connection."""
         from contextlib import AsyncExitStack
         exit_stack = AsyncExitStack()
-        self._exit_stacks[config.id] = exit_stack
         
         try:
             if config.url:
-                logger.info("Connecting to MCP SSE server", server_id=config.id, url=config.url)
-                # Ensure headers are a dict
-                headers = config.headers if isinstance(config.headers, dict) else {}
-                
-                try:
-                    read_stream, write_stream = await exit_stack.enter_async_context(
-                        sse_client(url=config.url, headers=headers)
-                    )
-                except Exception as e:
-                    logger.error("Failed to establish SSE transport", server_id=config.id, error=str(e))
-                    raise
+                logger.info("Establishing MCP SSE transport", server_id=config.id, url=config.url)
+                read_stream, write_stream = await exit_stack.enter_async_context(
+                    sse_client(url=config.url, headers=config.headers)
+                )
             elif config.command:
-                logger.info("Connecting to MCP stdio server", server_id=config.id, command=config.command)
+                logger.info("Establishing MCP stdio transport", server_id=config.id, command=config.command)
                 params = StdioServerParameters(
                     command=config.command,
                     args=config.args,
                     env={**config.env, "PATH": os.environ.get("PATH", "")} if config.env else None
                 )
-                try:
-                    read_stream, write_stream = await exit_stack.enter_async_context(stdio_client(params))
-                except Exception as e:
-                    logger.error("Failed to establish stdio transport", server_id=config.id, error=str(e))
-                    raise
+                read_stream, write_stream = await exit_stack.enter_async_context(stdio_client(params))
             else:
                 raise ValueError(f"MCP server {config.id} must have 'url' or 'command'.")
 
             logger.info("Initializing MCP session", server_id=config.id)
             session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
             
-            # Use a timeout for initialization to avoid hanging
-            try:
-                await asyncio.wait_for(session.initialize(), timeout=30.0)
-            except asyncio.TimeoutError:
-                logger.error("MCP session initialization timed out", server_id=config.id)
-                raise
-            
+            await session.initialize()
             self.sessions[config.id] = session
             
             # Fetch tools
-            logger.info("Fetching MCP tools", server_id=config.id)
-            mcp_tools = await session.list_tools()
+            logger.info("Fetching tools from MCP server", server_id=config.id)
+            mcp_tools_list = await session.list_tools()
             
             specs = []
-            for tool in mcp_tools.tools:
+            for tool in mcp_tools_list.tools:
                 spec = ToolSpec(
                     name=f"mcp_{config.id}_{tool.name}",
                     description=f"[MCP Tool: {tool.name} from {config.name}] {tool.description}. Call this tool directly by using the name '{f'mcp_{config.id}_{tool.name}'}' in your tool call block.",
@@ -127,23 +134,32 @@ class MCPManager:
                 specs.append(spec)
             
             self._tools[config.id] = specs
-            logger.info("Connected to MCP server", server_id=config.id, tool_count=len(specs))
-            return specs
+            logger.info("MCP server connected and tools ready", server_id=config.id, tool_count=len(specs))
+            
+            # Signal that we are ready
+            ready_event.set()
+            
+            # Keep alive until signaled to stop
+            await stop_event.wait()
+            logger.info("Shutting down MCP server session (signaled)", server_id=config.id)
             
         except Exception as e:
-            # If any step fails, we must close the exit stack to release resources/streams
-            error_msg = str(e)
+            logger.exception("MCP server lifecycle error", server_id=config.id)
+            if not ready_event.is_set():
+                # Task failed before becoming ready - signal the waiter with an error if possible
+                # But here we just let the waiter catch the fact that ready_event was never set.
+                pass
+        finally:
+            # Clean up
+            self.sessions.pop(config.id, None)
+            self._tools.pop(config.id, None)
+            self._tasks.pop(config.id, None)
+            self._stop_events.pop(config.id, None)
             
-            # Handle ExceptionGroup (Python 3.11+) which is common with TaskGroups/anyio
-            if hasattr(e, "exceptions") and isinstance(e, BaseExceptionGroup):
-                error_msg = f"ExceptionGroup: {', '.join(str(ex) for ex in e.exceptions)}"
-                logger.error("MCP connection failed with multiple errors", server_id=config.id, errors=[str(ex) for ex in e.exceptions])
-
-            logger.exception("Failed to connect to MCP server", server_id=config.id, error_type=type(e).__name__, message=error_msg)
-            
+            # Closing the stack will close the context managers (stdio/sse clients)
+            # This happens in the same task that created them, which anyio requires.
             await exit_stack.aclose()
-            self._exit_stacks.pop(config.id, None)
-            raise RuntimeError(f"MCP Connection Error ({config.id}): {error_msg}") from e
+            logger.info("MCP server resources released", server_id=config.id)
 
     def _generate_handler(self, server_id: str, tool_name: str):
         async def handler(args: Dict[str, Any], ctx: Dict[str, Any]) -> Any:
@@ -171,11 +187,18 @@ class MCPManager:
         return handler
 
     async def disconnect_server(self, server_id: str):
-        if server_id in self._exit_stacks:
-            await self._exit_stacks[server_id].aclose()
-            self._exit_stacks.pop(server_id, None)
-            self.sessions.pop(server_id, None)
-            self._tools.pop(server_id, None)
+        event = self._stop_events.get(server_id)
+        if event:
+            event.set()
+        
+        task = self._tasks.get(server_id)
+        if task:
+            try:
+                # Wait for cleanup to finish
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                if not task.done():
+                    task.cancel()
             logger.info("Disconnected MCP server", server_id=server_id)
 
     def get_all_tools(self) -> List[ToolSpec]:
@@ -185,5 +208,6 @@ class MCPManager:
         return all_specs
 
     async def shutdown(self):
-        for server_id in list(self._exit_stacks.keys()):
+        # Trigger all stop events
+        for server_id in list(self._stop_events.keys()):
             await self.disconnect_server(server_id)

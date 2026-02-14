@@ -11,6 +11,7 @@ logger = structlog.get_logger(__name__)
 
 async def mcp_connect(args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
     """Connect to a new MCP server."""
+    logger.info("mcp_connect tool called", arguments=args)
     queen = ctx.get("queen")
     if not queen or not queen.mcp_manager:
         return "Error: MCP Manager not initialized."
@@ -25,6 +26,10 @@ async def mcp_connect(args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
 
     if not server_id or (not command and not url):
         return "Error: 'id' and either 'command' or 'url' are required."
+
+    # Helpful hint for local development confusion
+    if url and "localhost" in url.lower() and "http://localhost:3000" in url.lower():
+        logger.warning("Queen is attempting to connect to what looks like a default localhost URL. This might be a mistake if the server is external.")
 
     config = MCPServerConfig(
         id=server_id,
@@ -46,8 +51,8 @@ async def mcp_connect(args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
             "tools_added": tool_names
         }, indent=2)
     except Exception as e:
-        logger.error("Dynamic MCP connection failed", server_id=server_id, error=str(e))
-        return f"Failed to connect to MCP server '{server_id}': {e}"
+        logger.error("Dynamic MCP connection failed", server_id=server_id, error=str(e), exc_info=True)
+        return f"Failed to connect to MCP server '{server_id}': {e}. Please check the URL/command and ensure the server is reachable."
 
 async def mcp_disconnect(args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
     """Disconnect from an MCP server."""
