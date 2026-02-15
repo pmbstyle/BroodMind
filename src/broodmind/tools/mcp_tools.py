@@ -122,14 +122,14 @@ def get_mcp_mgmt_tools() -> list[ToolSpec]:
     return [
         ToolSpec(
             name="mcp_connect",
-            description="Connect to an external MCP server. Use 'url' for HTTP/SSE servers. Use 'command' for local stdio servers. IMPORTANT: For most community servers, use 'command': 'npx' and 'args': ['-y', '@modelcontextprotocol/server-xxx', '--opt', 'val'].",
+            description="Connect to an external MCP server. Use 'url' for HTTP/SSE servers. Use 'command' for local stdio servers. IMPORTANT: For most community servers, use 'command': 'npx' and 'args': ['-y', '@modelcontextprotocol/server-everything', '--opt', 'val'].",
             parameters={
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "Unique ID for this server (e.g. 'sqlite')."},
                     "name": {"type": "string", "description": "Human-readable name."},
                     "command": {"type": "string", "description": "Command to run for stdio servers (e.g. 'npx', 'python', 'node')."},
-                    "args": {"type": "array", "items": {"type": "string"}, "description": "Arguments for the command (e.g. ['-y', '@modelcontextprotocol/server-fetch'])."},
+                    "args": {"type": "array", "items": {"type": "string"}, "description": "Arguments for the command (e.g. ['-y', '@modelcontextprotocol/server-everything'])."},
                     "env": {"type": "object", "description": "Environment variables for stdio (e.g. API keys)."},
                     "url": {"type": "string", "description": "URL for SSE (HTTP) servers (e.g. 'https://api.z.ai/api/mcp/web_search_prime/mcp')."},
                     "headers": {"type": "object", "description": "HTTP headers for SSE servers (e.g. {'Authorization': 'Bearer ...'})."},

@@ -98,14 +98,18 @@ class LiteLLMProvider:
             logger.debug("LiteLLM payload: %s", _truncate(payload_str))
 
         try:
+            request_kwargs = _build_request_kwargs(
+                kwargs,
+                temperature=float(kwargs.get("temperature", 0.3)),
+                timeout=self._settings.litellm_timeout,
+                fallbacks=self._fallbacks,
+            )
             response = await acompletion(
                 model=self._model,
                 messages=serialized_messages,
                 api_base=self._api_base,
                 api_key=self._api_key,
-                temperature=float(kwargs.get("temperature", 0.3)),
-                timeout=self._settings.litellm_timeout,
-                fallbacks=self._fallbacks,
+                **request_kwargs,
             )
             content = _extract_content(response)
             logger.debug("LiteLLM response: %s", _truncate(content))
@@ -154,6 +158,12 @@ class LiteLLMProvider:
             logger.debug("LiteLLM payload (tools): %s", _truncate(payload_str))
 
         try:
+            request_kwargs = _build_request_kwargs(
+                kwargs,
+                temperature=float(kwargs.get("temperature", 0.3)),
+                timeout=self._settings.litellm_timeout,
+                fallbacks=self._fallbacks,
+            )
             response = await acompletion(
                 model=self._model,
                 messages=serialized_messages,
@@ -161,13 +171,12 @@ class LiteLLMProvider:
                 tool_choice=tool_choice,
                 api_base=self._api_base,
                 api_key=self._api_key,
-                temperature=float(kwargs.get("temperature", 0.3)),
-                timeout=self._settings.litellm_timeout,
-                fallbacks=self._fallbacks,
+                **request_kwargs,
             )
 
             content = _extract_content(response)
             tool_calls = _extract_tool_calls(response)
+            usage = _extract_usage(response)
 
             if content:
                 logger.debug("LiteLLM response (tools) content: %s", _truncate(content))
@@ -180,7 +189,7 @@ class LiteLLMProvider:
                         _truncate(json.dumps(tool_calls, ensure_ascii=False)),
                     )
 
-            return {"content": content, "tool_calls": tool_calls}
+            return {"content": content, "tool_calls": tool_calls, "usage": usage}
         except Exception as exc:
             err_str = str(exc)
             if "finish_reason" in err_str and "abort" in err_str:
@@ -266,3 +275,50 @@ def _truncate(text: str) -> str:
     if len(text) <= _LOG_MAX_CHARS:
         return text
     return text[:_LOG_MAX_CHARS] + f"...[truncated {len(text)} bytes]"
+
+
+def _extract_usage(response: Any) -> dict[str, int]:
+    """Extract token usage if available."""
+    try:
+        usage_obj = None
+        if hasattr(response, "usage"):
+            usage_obj = response.usage
+        elif isinstance(response, dict):
+            usage_obj = response.get("usage")
+        if not usage_obj:
+            return {}
+        if isinstance(usage_obj, dict):
+            return {
+                k: int(v)
+                for k, v in usage_obj.items()
+                if isinstance(k, str) and isinstance(v, (int, float))
+            }
+        result: dict[str, int] = {}
+        for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = getattr(usage_obj, field, None)
+            if isinstance(value, (int, float)):
+                result[field] = int(value)
+        return result
+    except Exception:
+        return {}
+
+
+def _build_request_kwargs(kwargs: dict[str, object], **defaults: object) -> dict[str, object]:
+    request_kwargs: dict[str, object] = {
+        "temperature": defaults["temperature"],
+        "timeout": defaults["timeout"],
+        "fallbacks": defaults["fallbacks"],
+    }
+    passthrough_keys = (
+        "response_format",
+        "max_tokens",
+        "top_p",
+        "seed",
+        "stop",
+        "presence_penalty",
+        "frequency_penalty",
+    )
+    for key in passthrough_keys:
+        if key in kwargs and kwargs[key] is not None:
+            request_kwargs[key] = kwargs[key]
+    return request_kwargs

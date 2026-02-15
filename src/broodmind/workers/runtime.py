@@ -67,21 +67,29 @@ class WorkerRuntime:
         requested_tool_names = task_request.tools or template.available_tools
         
         mcp_tools_data = []
+        known_server_ids = list(self.mcp_manager.sessions.keys()) if self.mcp_manager else []
         for tool_name in requested_tool_names:
             if tool_name.startswith("mcp_"):
                 # Find the tool spec
                 spec_found = next((t for t in all_tools if t.name == tool_name), None)
                 if spec_found:
+                    server_id, remote_tool_name = _extract_mcp_tool_identity(
+                        spec_found.name, known_server_ids
+                    )
                     # We need to serialize the ToolSpec. 
                     # ToolSpec is a dataclass, we can convert it to dict.
                     # But the 'handler' is not serializable. That's fine, the worker will use its own proxy handler.
-                    mcp_tools_data.append({
-                        "name": spec_found.name,
-                        "description": spec_found.description,
-                        "parameters": spec_found.parameters,
-                        "permission": spec_found.permission,
-                        "is_async": spec_found.is_async
-                    })
+                    mcp_tools_data.append(
+                        {
+                            "name": spec_found.name,
+                            "description": spec_found.description,
+                            "parameters": spec_found.parameters,
+                            "permission": spec_found.permission,
+                            "is_async": spec_found.is_async,
+                            "server_id": server_id,
+                            "remote_tool_name": remote_tool_name,
+                        }
+                    )
 
         # Create worker spec
         worker_id = task_request.run_id or str(uuid.uuid4())
@@ -179,6 +187,7 @@ class WorkerRuntime:
         except TimeoutError:
             logger.error("Worker %s timed out", spec.id)
             process.kill()
+            await process.wait()
             await asyncio.to_thread(self.store.update_worker_status, spec.id, "failed")
             await asyncio.to_thread(self.store.update_worker_result, spec.id, error="Worker timed out")
             await self._append_audit(
@@ -240,22 +249,26 @@ class WorkerRuntime:
     ) -> WorkerResult:
         """Read worker output."""
         invalid_lines = 0
+        consecutive_invalid_lines = 0
         max_invalid_lines = 50
+        max_buffer_bytes = 256 * 1024
         assert process.stdout is not None
         buffer = b""
 
         async def _handle_line(line: bytes) -> WorkerResult | None:
-            nonlocal invalid_lines
+            nonlocal invalid_lines, consecutive_invalid_lines
             payload = _safe_parse_json(line)
             if payload is None:
                 text_line = line.decode("utf-8", errors="replace").strip()
                 if text_line:
                     self._log_non_json_output(text_line)
                 invalid_lines += 1
-                if invalid_lines >= max_invalid_lines:
+                consecutive_invalid_lines += 1
+                if consecutive_invalid_lines >= max_invalid_lines:
                     logger.error("Worker emitted too many invalid lines")
                     process.kill()
                 return None
+            consecutive_invalid_lines = 0
 
             msg_type = payload.get("type")
             if msg_type == "log":
@@ -455,12 +468,19 @@ class WorkerRuntime:
             if not chunk:
                 break
             buffer += chunk
+            if len(buffer) > max_buffer_bytes and b"\n" not in buffer:
+                logger.warning("Worker output buffer exceeded %s bytes without newline", max_buffer_bytes)
+                await _handle_line(buffer)
+                buffer = b""
+                if consecutive_invalid_lines >= max_invalid_lines:
+                    break
+                continue
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
                 result = await _handle_line(line)
                 if result is not None:
                     return result
-                if invalid_lines >= max_invalid_lines:
+                if consecutive_invalid_lines >= max_invalid_lines:
                     buffer = b""
                     break
         if buffer.strip():
@@ -548,3 +568,23 @@ def _pythonpath() -> str:
     import sys
 
     return os.pathsep.join([p for p in sys.path if p])
+
+
+def _extract_mcp_tool_identity(tool_name: str, server_ids: list[str]) -> tuple[str | None, str | None]:
+    """Best-effort extraction of MCP server and remote tool names from generated tool names."""
+    if not tool_name.startswith("mcp_"):
+        return None, None
+    # Preferred path: longest matching normalized server id prefix.
+    normalized = sorted(((sid.replace("-", "_"), sid) for sid in server_ids), key=lambda x: len(x[0]), reverse=True)
+    for safe_id, original_id in normalized:
+        prefix = f"mcp_{safe_id}_"
+        if tool_name.startswith(prefix):
+            remote_safe_name = tool_name[len(prefix):]
+            remote_tool_name = remote_safe_name.replace("_", "-")
+            return original_id, remote_tool_name
+
+    # Legacy fallback if server list is unavailable.
+    parts = tool_name.split("_")
+    if len(parts) < 3:
+        return None, None
+    return parts[1], "_".join(parts[2:])

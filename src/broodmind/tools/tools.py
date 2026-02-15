@@ -38,9 +38,9 @@ from broodmind.tools.worker_tools import get_worker_tools
 from broodmind.tools.mcp_tools import get_mcp_mgmt_tools
 
 from broodmind.utils import utc_now
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 def get_tools(mcp_manager=None) -> list[ToolSpec]:
     tools = [
