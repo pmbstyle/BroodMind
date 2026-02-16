@@ -297,7 +297,9 @@ def _prepare_markdown_v2(text: str) -> str:
     escaped = _escape_markdown_v2_plain(source)
     
     # Restore protected fragments and convert standard MD to Telegram MD if needed
-    for idx, fragment in enumerate(protected):
+    # We iterate in reverse to handle nested entities correctly
+    for idx in range(len(protected) - 1, -1, -1):
+        fragment = protected[idx]
         placeholder = f"\u0000BMMD{idx}\u0000"
         
         # Convert **bold** to *bold* for Telegram MarkdownV2
