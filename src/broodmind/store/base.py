@@ -24,6 +24,7 @@ class Store(Protocol):
         summary: str | None = None,
         output: dict[str, Any] | None = None,
         error: str | None = None,
+        tools_used: list[str] | None = None,
     ) -> None: ...
 
     def get_worker(self, worker_id: str) -> WorkerRecord | None: ...

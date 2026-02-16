@@ -459,6 +459,7 @@ class WorkerRuntime:
                     summary=result.summary,
                     output=result.output,
                     error=None,
+                    tools_used=result.tools_used,
                 )
                 return result
             return None

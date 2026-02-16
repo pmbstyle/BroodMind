@@ -108,7 +108,8 @@ class SQLiteStore(Store):
                 updated_at TEXT NOT NULL,
                 summary TEXT,
                 output_json TEXT,
-                error TEXT
+                error TEXT,
+                tools_used_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS intents (
@@ -328,12 +329,17 @@ class SQLiteStore(Store):
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN tools_used_json TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def create_worker(self, record: WorkerRecord) -> None:
         self._conn.execute(
             """
-            INSERT INTO workers (id, status, task, granted_caps_json, created_at, updated_at, summary, output_json, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO workers (id, status, task, granted_caps_json, created_at, updated_at, summary, output_json, error, tools_used_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
@@ -345,6 +351,7 @@ class SQLiteStore(Store):
                 record.summary,
                 json.dumps(record.output) if record.output else None,
                 record.error,
+                json.dumps(record.tools_used) if record.tools_used else None,
             ),
         )
         self._conn.commit()
@@ -362,6 +369,7 @@ class SQLiteStore(Store):
         summary: str | None = None,
         output: dict[str, Any] | None = None,
         error: str | None = None,
+        tools_used: list[str] | None = None,
     ) -> None:
         updates = ["updated_at = ?"]
         params = [utc_now().isoformat()]
@@ -375,6 +383,9 @@ class SQLiteStore(Store):
         if error is not None:
             updates.append("error = ?")
             params.append(error)
+        if tools_used is not None:
+            updates.append("tools_used_json = ?")
+            params.append(json.dumps(tools_used))
 
         params.append(worker_id)
         self._conn.execute(
@@ -858,6 +869,7 @@ class SQLiteStore(Store):
             summary=_row_get(row, "summary"),
             output=_loads_json(row["output_json"]) if "output_json" in row and row["output_json"] else None,
             error=_row_get(row, "error"),
+            tools_used=_loads_json(_row_get(row, "tools_used_json", "[]")),
         )
 
     def _row_to_permit(self, row: sqlite3.Row) -> PermitRecord:

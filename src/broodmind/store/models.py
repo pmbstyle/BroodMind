@@ -19,6 +19,7 @@ class WorkerRecord(BaseModel):
     summary: str | None = None
     output: dict[str, Any] | None = None
     error: str | None = None
+    tools_used: list[str] = Field(default_factory=list)
 
 
 class IntentRecord(BaseModel):
