@@ -729,9 +729,9 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
     recent_logs = []
     if log_path.exists():
         try:
-            # Get last 8 lines
+            # Get last 12 lines
             all_lines = log_path.read_text(encoding="utf-8").splitlines()
-            for line in all_lines[-8:]:
+            for line in all_lines[-12:]:
                 try:
                     data = json.loads(line)
                     event = data.get("event", "")
@@ -807,11 +807,15 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
     if console.size.width < 120:
         compact = True
 
-    sys_badge = _status_badge("running" if system["running"] else "stopped")
-    queen_badge = _status_badge(queen["state"])
+    def _fmt_status(label: str, status: str) -> str:
+        icon = _status_icon(status)
+        return f"[dim]{label}:[/dim] {icon} [dim]({status})[/dim]"
+
+    sys_status = "running" if system["running"] else "stopped"
     header_text = (
         f"[bold bright_cyan]BROODMIND DASHBOARD[/bold bright_cyan]   "
-        f"{sys_badge}   {queen_badge}   "
+        f"{_fmt_status('Sys', sys_status)}   "
+        f"{_fmt_status('Queen', queen['state'])}   "
         f"[dim]PID[/dim] {system['pid'] or 'N/A'}   "
         f"[dim]Uptime[/dim] {system['uptime']}"
     )
@@ -864,24 +868,39 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
     logs_panel = Panel(log_grid, title="[bold white]Recent Events[/bold white]", border_style="bright_black")
 
     recent = Table(show_header=True, header_style="bold cyan", expand=True)
-    recent.add_column("ID", style="dim", width=12, no_wrap=True)
-    recent.add_column("Status", width=12, no_wrap=True)
+    recent.add_column("ID", style="dim", width=8, no_wrap=True)
+    recent.add_column("S", width=3, justify="center", no_wrap=True)
     recent.add_column("Age", width=8, justify="right", no_wrap=True)
     recent.add_column("Task", overflow="ellipsis")
     recent.add_column("Current Activity", style="italic", width=25, overflow="ellipsis")
     if not compact:
-        recent.add_column("Updated (UTC)", style="dim", width=19, no_wrap=True)
+        recent.add_column("Updated (UTC)", style="dim", width=12, no_wrap=True)
 
     for row in workers["recent"]:
-        updated_at = str(row["updated_at"])
+        updated_at_str = str(row["updated_at"])
         last_tool = row.get("tools_used", [])[-1] if row.get("tools_used") else "-"
+        
+        # Format worker ID: first set before first dash OR name truncated to 8
+        wid = str(row["id"])
+        if "-" in wid:
+            display_id = wid.split("-")[0]
+        else:
+            display_id = _truncate(wid, 8)
+
+        # Updated (UTC) format: month/day hour:minute
+        try:
+            dt = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+            ts_display = dt.strftime("%m/%d %H:%M")
+        except Exception:
+            ts_display = updated_at_str[:19].replace("T", " ")
+
         recent.add_row(
-            str(row["id"])[:12],
-            _status_badge(str(row["status"])),
-            _age_human(updated_at),
+            display_id,
+            _status_icon(str(row["status"])),
+            _age_human(updated_at_str),
             _truncate(str(row["task"]), 60 if compact else 80),
             str(last_tool),
-            *([updated_at[:19].replace("T", " ")] if not compact else []),
+            *([ts_display] if not compact else []),
         )
     workers_panel = Panel(recent, title=f"[bold white]Recent Workers ({len(workers['recent'])})[/bold white]", border_style="blue")
 
@@ -969,15 +988,17 @@ def _uptime_human(started_at: str | None) -> str:
         return "N/A"
 
 
-def _status_badge(status: str) -> str:
+def _status_icon(status: str) -> str:
     s = (status or "").strip().lower()
-    if s in {"running", "completed", "ok", "idle"}:
-        color = "bright_green"
-    elif s in {"thinking", "tooling", "started", "stopped"}:
-        color = "yellow"
-    else:
-        color = "bright_red"
-    return f"[{color}][ {s.upper() or 'UNKNOWN'} ][/{color}]"
+    if s in {"completed", "ok"}:
+        return "[bright_green]✔[/bright_green]"
+    if s in {"running", "started"}:
+        return "[bright_green]▶[/bright_green]"
+    if s in {"thinking", "tooling", "idle"}:
+        return "[yellow]●[/yellow]"
+    if s in {"stopped"}:
+        return "[yellow]■[/yellow]"
+    return "[bright_red]✘[/bright_red]"
 
 
 def _age_human(ts: str | None) -> str:
