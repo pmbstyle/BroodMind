@@ -197,6 +197,7 @@ class Queen:
     internal_progress_send: callable | None = None
     internal_typing_control: callable | None = None
     _cleanup_task: asyncio.Task | None = None
+    _metrics_task: asyncio.Task | None = None
     _recent_tasks: set[str] = None  # Track tasks in current conversation to detect duplicates
     _approval_requesters: dict[int, Callable[[Any], Awaitable[bool]]] | None = None
 
@@ -224,10 +225,31 @@ class Queen:
             except Exception:
                 logger.exception("Periodic worker cleanup failed")
 
+    async def _periodic_metrics_publish(self, interval_seconds: int):
+        from broodmind.runtime_metrics import update_component_gauges
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                mcp_status = {}
+                if self.mcp_manager:
+                    mcp_status = self.mcp_manager.get_server_statuses()
+                
+                update_component_gauges(
+                    "connectivity",
+                    {
+                        "mcp_servers": mcp_status
+                    }
+                )
+            except Exception:
+                logger.debug("Failed to publish periodic metrics", exc_info=True)
+
     def start_background_tasks(self, cleanup_interval_seconds: int = 3600):
         if self._cleanup_task is None or self._cleanup_task.done():
             self._cleanup_task = asyncio.create_task(self._periodic_cleanup(cleanup_interval_seconds))
             logger.info("Started periodic worker cleanup task")
+        if self._metrics_task is None or self._metrics_task.done():
+            self._metrics_task = asyncio.create_task(self._periodic_metrics_publish(10))
+            logger.info("Started periodic metrics publishing task")
 
     async def stop_background_tasks(self):
         if self._cleanup_task and not self._cleanup_task.done():
@@ -236,6 +258,13 @@ class Queen:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 logger.info("Stopped periodic worker cleanup task")
+        
+        if self._metrics_task and not self._metrics_task.done():
+            self._metrics_task.cancel()
+            try:
+                await self._metrics_task
+            except asyncio.CancelledError:
+                logger.info("Stopped periodic metrics publishing task")
         
         # Shutdown MCP sessions
         if self.mcp_manager:

@@ -688,6 +688,7 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
     queen_metrics = metrics.get("queen", {}) if isinstance(metrics, dict) else {}
     telegram_metrics = metrics.get("telegram", {}) if isinstance(metrics, dict) else {}
     exec_metrics = metrics.get("exec_run", {}) if isinstance(metrics, dict) else {}
+    connectivity_metrics = metrics.get("connectivity", {}) if isinstance(metrics, dict) else {}
 
     if store is None:
         store = SQLiteStore(settings)
@@ -723,6 +724,26 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
     pending_requests = [r for r in requests if str(r.get("request_id", "")) not in acked_ids]
     last_ack = acks[-1] if acks else None
 
+    # Fetch recent log lines for real-time visibility
+    log_path = settings.state_dir / "logs" / "broodmind.log"
+    recent_logs = []
+    if log_path.exists():
+        try:
+            # Get last 8 lines
+            all_lines = log_path.read_text(encoding="utf-8").splitlines()
+            for line in all_lines[-8:]:
+                try:
+                    data = json.loads(line)
+                    event = data.get("event", "")
+                    level = data.get("level", "info")
+                    # Simplified log entry for dashboard
+                    recent_logs.append({"event": event, "level": level})
+                except Exception:
+                    if line.strip():
+                        recent_logs.append({"event": line.strip()[:100], "level": "info"})
+        except Exception:
+            pass
+
     return {
         "system": {
             "running": running,
@@ -738,6 +759,10 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
             "followup_tasks": int(queen_metrics.get("followup_tasks", 0) or 0),
             "internal_tasks": int(queen_metrics.get("internal_tasks", 0) or 0),
         },
+        "connectivity": {
+            "mcp_servers": connectivity_metrics.get("mcp_servers", {})
+        },
+        "logs": recent_logs,
         "queues": {
             "telegram_send_tasks": int(telegram_metrics.get("send_tasks", 0) or 0),
             "telegram_queues": int(telegram_metrics.get("chat_queues", 0) or 0),
@@ -758,6 +783,7 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
                     "updated_at": w.updated_at.isoformat(),
                     "summary": w.summary or "",
                     "error": w.error or "",
+                    "tools_used": w.tools_used or [],
                 }
                 for w in workers[:last]
             ],
@@ -775,6 +801,8 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
     queues = snapshot["queues"]
     workers = snapshot["workers"]
     control = snapshot["control"]
+    connectivity = snapshot.get("connectivity", {})
+    logs = snapshot.get("logs", [])
 
     if console.size.width < 120:
         compact = True
@@ -809,21 +837,50 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
     )
     health_panel = Panel(health, title="[bold white]Runtime Health[/bold white]", border_style="blue")
 
+    # MCP Connectivity Panel
+    mcp_grid = Table.grid(padding=(0, 1))
+    mcp_grid.add_column(style="bold white")
+    mcp_grid.add_column()
+    mcp_servers = connectivity.get("mcp_servers", {})
+    if not mcp_servers:
+        mcp_grid.add_row("[dim]No servers configured[/dim]")
+    else:
+        for s_id, s_data in mcp_servers.items():
+            status = s_data.get("status", "unknown")
+            color = "bright_green" if status == "connected" else "bright_red" if status == "error" else "yellow"
+            mcp_grid.add_row(f"{s_data.get('name', s_id)}:", f"[{color}]{status.upper()}[/{color}] [dim]({s_data.get('tool_count', 0)} tools)[/dim]")
+    connectivity_panel = Panel(mcp_grid, title="[bold white]MCP Connectivity[/bold white]", border_style="cyan")
+
+    # Recent Logs Panel
+    log_grid = Table.grid(padding=(0, 1))
+    log_grid.add_column()
+    if not logs:
+        log_grid.add_row("[dim]No recent logs[/dim]")
+    else:
+        for entry in logs:
+            lvl = entry.get("level", "info").lower()
+            color = "red" if lvl in ("error", "critical") else "yellow" if lvl == "warning" else "white"
+            log_grid.add_row(f"[{color}]•[/{color}] {entry.get('event', '')[:80]}")
+    logs_panel = Panel(log_grid, title="[bold white]Recent Events[/bold white]", border_style="bright_black")
+
     recent = Table(show_header=True, header_style="bold cyan", expand=True)
     recent.add_column("ID", style="dim", width=12, no_wrap=True)
     recent.add_column("Status", width=12, no_wrap=True)
     recent.add_column("Age", width=8, justify="right", no_wrap=True)
     recent.add_column("Task", overflow="ellipsis")
+    recent.add_column("Current Activity", style="italic", width=25, overflow="ellipsis")
     if not compact:
         recent.add_column("Updated (UTC)", style="dim", width=19, no_wrap=True)
 
     for row in workers["recent"]:
         updated_at = str(row["updated_at"])
+        last_tool = row.get("tools_used", [])[-1] if row.get("tools_used") else "-"
         recent.add_row(
             str(row["id"])[:12],
             _status_badge(str(row["status"])),
             _age_human(updated_at),
-            _truncate(str(row["task"]), 72 if compact else 96),
+            _truncate(str(row["task"]), 60 if compact else 80),
+            str(last_tool),
             *([updated_at[:19].replace("T", " ")] if not compact else []),
         )
     workers_panel = Panel(recent, title=f"[bold white]Recent Workers ({len(workers['recent'])})[/bold white]", border_style="blue")
@@ -851,7 +908,8 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
     if compact:
         root["body"].split_column(
             Layout(health_panel, size=8),
-            Layout(alerts_panel, size=7),
+            Layout(connectivity_panel, size=6),
+            Layout(logs_panel, size=10),
             Layout(workers_panel),
         )
     else:
@@ -860,8 +918,10 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
             Layout(name="side", ratio=2),
         )
         root["body"]["side"].split_column(
-            Layout(health_panel, ratio=2),
-            Layout(alerts_panel, ratio=1),
+            Layout(health_panel, size=7),
+            Layout(connectivity_panel, size=8),
+            Layout(alerts_panel, size=6),
+            Layout(logs_panel),
         )
 
     return Align.center(root)

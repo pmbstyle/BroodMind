@@ -17,6 +17,7 @@ class MCPServerConfig:
     env: Dict[str, str] = field(default_factory=dict)
     url: Optional[str] = None
     headers: Dict[str, str] = field(default_factory=dict)
+    last_error: Optional[str] = None
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -35,6 +36,7 @@ class MCPManager:
         # Communication queues for disconnect signals
         self._stop_events: Dict[str, asyncio.Event] = {}
         self._tools: Dict[str, List[ToolSpec]] = {}
+        self._server_configs: Dict[str, MCPServerConfig] = {}
         self.config_path = workspace_dir / "mcp_servers.json"
 
     async def load_and_connect_all(self):
@@ -65,6 +67,7 @@ class MCPManager:
             logger.exception("Failed to load MCP config")
 
     async def connect_server(self, config: MCPServerConfig) -> List[ToolSpec]:
+        self._server_configs[config.id] = config
         if config.id in self.sessions:
             logger.info("MCP server already connected", server_id=config.id)
             return self._tools.get(config.id, [])
@@ -90,23 +93,30 @@ class MCPManager:
             # Check if we timed out
             if not done:
                 for p in pending: p.cancel()
+                config.last_error = "Connection timed out after 45s"
                 raise RuntimeError(f"Connection to MCP server '{config.id}' timed out after 45s.")
 
             if ready_event.is_set():
                 # Success!
+                config.last_error = None
                 return self._tools.get(config.id, [])
             
             # If the task finished but ready_event is not set, it failed
             if task in done:
                 exc = task.exception()
                 if exc:
+                    config.last_error = str(exc)
                     raise exc
+                config.last_error = "Exited unexpectedly"
                 raise RuntimeError(f"MCP server task '{config.id}' exited unexpectedly.")
             
+            config.last_error = "Failed (unknown state)"
             raise RuntimeError(f"Connection to MCP server '{config.id}' failed (unknown state).")
 
         except Exception as e:
             logger.error("Failed to connect to MCP server", server_id=config.id, error=str(e))
+            if not config.last_error:
+                config.last_error = str(e)
             await self.disconnect_server(config.id)
             if isinstance(e, RuntimeError) and "timed out" in str(e):
                 raise
@@ -239,3 +249,16 @@ class MCPManager:
         # Trigger all stop events
         for server_id in list(self._stop_events.keys()):
             await self.disconnect_server(server_id)
+
+    def get_server_statuses(self) -> Dict[str, Dict[str, Any]]:
+        statuses = {}
+        for server_id, config in self._server_configs.items():
+            is_connected = server_id in self.sessions
+            tools = self._tools.get(server_id, [])
+            statuses[server_id] = {
+                "name": config.name,
+                "status": "connected" if is_connected else ("error" if config.last_error else "disconnected"),
+                "tool_count": len(tools),
+                "error": config.last_error
+            }
+        return statuses
