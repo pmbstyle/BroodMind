@@ -693,16 +693,23 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
     if store is None:
         store = SQLiteStore(settings)
     
-    workers = store.list_workers()
+    # Use active workers for health metrics to avoid stale 'running' states
+    active_workers = store.get_active_workers(older_than_minutes=5)
+    all_recent_workers = store.list_workers()
+    
     now = _now_utc()
     cutoff = now.timestamp() - 24 * 60 * 60
 
     by_status: dict[str, int] = {}
     spawned_24h = 0
-    for worker in workers:
-        by_status[worker.status] = by_status.get(worker.status, 0) + 1
+    # Process all workers for 24h stats
+    for worker in all_recent_workers:
         if worker.created_at.timestamp() >= cutoff:
             spawned_24h += 1
+            
+    # Process only active/recent workers for status counts
+    for worker in active_workers:
+        by_status[worker.status] = by_status.get(worker.status, 0) + 1
 
     running_workers = by_status.get("running", 0) + by_status.get("started", 0)
     failed_workers = by_status.get("failed", 0)
@@ -711,9 +718,9 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
 
     followup_q = int(queen_metrics.get("followup_queues", 0) or 0)
     internal_q = int(queen_metrics.get("internal_queues", 0) or 0)
-    if running_workers > 0:
-        queen_state = "tooling"
-    elif (followup_q + internal_q) > 0:
+    thinking_count = int(queen_metrics.get("thinking_count", 0) or 0)
+
+    if thinking_count > 0 or (followup_q + internal_q) > 0:
         queen_state = "thinking"
     else:
         queen_state = "idle"
@@ -785,7 +792,7 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
                     "error": w.error or "",
                     "tools_used": w.tools_used or [],
                 }
-                for w in workers[:last]
+                for w in all_recent_workers[:last]
             ],
         },
         "control": {
@@ -812,10 +819,13 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
         return f"[dim]{label}:[/dim] {icon} [dim]({status})[/dim]"
 
     sys_status = "running" if system["running"] else "stopped"
+    worker_status = "running" if workers["running"] > 0 else "idle"
+    
     header_text = (
         f"[bold bright_cyan]BROODMIND DASHBOARD[/bold bright_cyan]   "
         f"{_fmt_status('Sys', sys_status)}   "
         f"{_fmt_status('Queen', queen['state'])}   "
+        f"{_fmt_status('Workers', worker_status)}   "
         f"[dim]PID[/dim] {system['pid'] or 'N/A'}   "
         f"[dim]Uptime[/dim] {system['uptime']}"
     )

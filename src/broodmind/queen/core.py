@@ -44,7 +44,7 @@ _INTERNAL_TASKS: dict[int, asyncio.Task] = {}
 _QUEUE_IDLE_TIMEOUT_SECONDS = 300.0
 
 
-def _publish_runtime_metrics() -> None:
+def _publish_runtime_metrics(thinking_count: int = 0) -> None:
     update_component_gauges(
         "queen",
         {
@@ -52,6 +52,7 @@ def _publish_runtime_metrics() -> None:
             "followup_tasks": len(_FOLLOWUP_TASKS),
             "internal_queues": len(_INTERNAL_QUEUES),
             "internal_tasks": len(_INTERNAL_TASKS),
+            "thinking_count": thinking_count,
         },
     )
 
@@ -199,12 +200,22 @@ class Queen:
     _metrics_task: asyncio.Task | None = None
     _recent_tasks: set[str] = None  # Track tasks in current conversation to detect duplicates
     _approval_requesters: dict[int, Callable[[Any], Awaitable[bool]]] | None = None
+    _thinking_count: int = 0
 
     def __post_init__(self):
         if self._recent_tasks is None:
             self._recent_tasks = set()
         if self._approval_requesters is None:
             self._approval_requesters = {}
+        self._thinking_count = 0
+
+    async def set_thinking(self, active: bool) -> None:
+        """Toggle global thinking indicator."""
+        if active:
+            self._thinking_count += 1
+        else:
+            self._thinking_count = max(0, self._thinking_count - 1)
+        _publish_runtime_metrics(self._thinking_count)
 
     async def set_typing(self, chat_id: int, active: bool):
         """Toggle typing indicator for a specific chat."""

@@ -37,6 +37,7 @@ async def route_or_reply(
     if chat_id > 0 and show_typing:
         await queen.set_typing(chat_id, True)
     
+    await queen.set_thinking(True)
     try:
         messages = await build_queen_prompt(
             store=queen.store, 
@@ -122,6 +123,7 @@ async def route_or_reply(
         logger.exception("Error in route_or_reply")
         raise
     finally:
+        await queen.set_thinking(False)
         if chat_id > 0 and show_typing:
             logger.debug("Toggling typing indicator off", chat_id=chat_id)
             await queen.set_typing(chat_id, False)
