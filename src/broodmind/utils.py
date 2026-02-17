@@ -3,6 +3,33 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 
+import subprocess
+
+import json
+
+def get_tailscale_ips() -> list[str]:
+    """Retrieve all available Tailscale IPs in the tailnet using JSON output."""
+    try:
+        # tailscale status --json provides a detailed list of all nodes and their IPs.
+        out = subprocess.check_output(["tailscale", "status", "--json"], text=True, stderr=subprocess.DEVNULL)
+        data = json.loads(out)
+        ips = []
+        
+        # Add self IPs
+        if "Self" in data and "TailscaleIPs" in data["Self"]:
+            ips.extend(data["Self"]["TailscaleIPs"])
+            
+        # Add peer IPs
+        if "Peer" in data:
+            for peer in data["Peer"].values():
+                if "TailscaleIPs" in peer:
+                    ips.extend(peer["TailscaleIPs"])
+                    
+        return list(set(ips))  # Unique IPs
+    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
 def utc_now() -> datetime:
     return datetime.now(UTC)
 

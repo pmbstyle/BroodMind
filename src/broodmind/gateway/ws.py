@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
+import structlog
 
 from broodmind.queen.core import Queen, QueenReply
-from broodmind.telegram.approvals import ApprovalManager
+from broodmind.utils import get_tailscale_ips
 
+logger = structlog.get_logger(__name__)
 
 @dataclass
 class WsApprovalManager:
-    send: Callable[[dict[str, Any]], Awaitable[None]]
+    send: callable
     timeout_seconds: int = 60
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
 
@@ -44,40 +45,79 @@ class WsApprovalManager:
 def register_ws_routes(app: FastAPI) -> None:
     @app.websocket("/ws")
     async def websocket_endpoint(socket: WebSocket) -> None:
-        await socket.accept()
-        approvals = WsApprovalManager(send=lambda payload: socket.send_json(payload))
-        queen = Queen(
-            provider=app.state.provider,
-            store=app.state.store,
-            policy=app.state.policy,
-            runtime=app.state.runtime,
-            approvals=ApprovalManager(bot=None),
-            memory=app.state.memory,
-            canon=app.state.canon,
-        )
-        async def _internal_send(chat_id: int, text: str) -> None:
-            await socket.send_json({"type": "message", "text": text, "chat_id": chat_id})
+        # 1. IP Validation (Tailscale)
+        client_host = socket.client.host
+        settings = app.state.settings
+        
+        # Merge configured and automatically discovered IPs
+        allowed_ips = [ip.strip() for ip in settings.tailscale_ips.split(",") if ip.strip()]
+        if not allowed_ips:
+            # Fallback: try to discover automatically if nothing is configured
+            allowed_ips = get_tailscale_ips()
+            if allowed_ips:
+                logger.info("Automatically discovered Tailscale IPs", ips=allowed_ips)
+        
+        is_local = client_host in ("127.0.0.1", "::1", "localhost")
+        
+        if allowed_ips and not is_local and client_host not in allowed_ips:
+             logger.warning("Rejected WebSocket connection from unauthorized IP", host=client_host)
+             await socket.close(code=status.WS_1008_POLICY_VIOLATION)
+             return
 
-        queen.internal_send = _internal_send
+        await socket.accept()
+        logger.info("WebSocket connection established", host=client_host)
+
+        queen: Queen = app.state.queen
+        
+        # Define WS-specific output channel
+        async def _ws_send(chat_id: int, text: str) -> None:
+            await socket.send_json({"type": "message", "text": text})
+
+        async def _ws_progress(chat_id: int, state: str, text: str, meta: dict) -> None:
+            await socket.send_json({"type": "progress", "state": state, "text": text, "meta": meta})
+
+        async def _ws_typing(chat_id: int, active: bool) -> None:
+            await socket.send_json({"type": "typing", "active": active})
+
+        # Switch Queen to use WebSocket for output
+        queen.set_output_channel(True, send=_ws_send, progress=_ws_progress, typing=_ws_typing)
+        
+        approvals = WsApprovalManager(send=lambda payload: socket.send_json(payload))
         tasks: set[asyncio.Task] = set()
+        
         try:
             while True:
                 message = await socket.receive_json()
                 msg_type = message.get("type")
+                
                 if msg_type == "message":
-                    task = asyncio.create_task(_handle_message(socket, queen, approvals, message))
+                    # No chat_id needed for WS, use a dummy one (0 or from settings)
+                    dummy_chat_id = 0
+                    if settings.allowed_telegram_chat_ids:
+                         try:
+                            dummy_chat_id = int(settings.allowed_telegram_chat_ids.split(",")[0].strip())
+                         except (ValueError, IndexError):
+                            pass
+
+                    task = asyncio.create_task(_handle_message(socket, queen, approvals, message, dummy_chat_id))
                     tasks.add(task)
                     task.add_done_callback(lambda t: tasks.discard(t))
                     continue
+                
                 if msg_type == "approval_response":
                     approvals.resolve(
                         str(message.get("intent_id")),
                         bool(message.get("approved")),
                     )
                     continue
+                
                 if msg_type == "ping":
                     await socket.send_json({"type": "pong"})
         except WebSocketDisconnect:
+            logger.info("WebSocket disconnected", host=client_host)
+        finally:
+            # Switch back to Telegram when WS closes
+            queen.set_output_channel(False)
             for task in tasks:
                 task.cancel()
 
@@ -87,17 +127,19 @@ async def _handle_message(
     queen: Queen,
     approvals: WsApprovalManager,
     payload: dict[str, Any],
+    chat_id: int,
 ) -> None:
     text = str(payload.get("text", ""))
-    chat_id = int(payload.get("chat_id", 0))
     try:
         response = await queen.handle_message(
             text,
             chat_id,
             approval_requester=approvals.request_approval,
+            is_ws=True,
         )
     except Exception as exc:
+        logger.exception("Queen failed to handle WS message")
         response = f"Error: {exc}"
 
     text_out = response.immediate if isinstance(response, QueenReply) else str(response)
-    await socket.send_json({"type": "message", "text": text_out, "chat_id": chat_id})
+    await socket.send_json({"type": "message", "text": text_out})

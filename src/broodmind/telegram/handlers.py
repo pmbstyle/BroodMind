@@ -98,6 +98,11 @@ def register_handlers(
     queen.internal_progress_send = _internal_progress_send
     queen.internal_typing_control = _internal_typing_control
 
+    # Re-initialize the Queen's default (Telegram) output hooks if needed
+    queen._tg_send = _internal_send
+    queen._tg_progress = _internal_progress_send
+    queen._tg_typing = _internal_typing_control
+
     @dp.message()
     async def handle_message(message: Message) -> None:
         # Generate a unique ID for this request chain

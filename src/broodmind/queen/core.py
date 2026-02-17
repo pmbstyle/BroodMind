@@ -201,6 +201,10 @@ class Queen:
     _recent_tasks: set[str] = None  # Track tasks in current conversation to detect duplicates
     _approval_requesters: dict[int, Callable[[Any], Awaitable[bool]]] | None = None
     _thinking_count: int = 0
+    _ws_active: bool = False
+    _tg_send: callable | None = None
+    _tg_progress: callable | None = None
+    _tg_typing: callable | None = None
 
     def __post_init__(self):
         if self._recent_tasks is None:
@@ -208,6 +212,33 @@ class Queen:
         if self._approval_requesters is None:
             self._approval_requesters = {}
         self._thinking_count = 0
+        self._tg_send = self.internal_send
+        self._tg_progress = self.internal_progress_send
+        self._tg_typing = self.internal_typing_control
+
+    @property
+    def is_ws_active(self) -> bool:
+        return self._ws_active
+
+    def set_output_channel(
+        self,
+        is_ws: bool,
+        send: callable | None = None,
+        progress: callable | None = None,
+        typing: callable | None = None,
+    ) -> None:
+        """Switch between Telegram and WebSocket output channels."""
+        self._ws_active = is_ws
+        if is_ws:
+            self.internal_send = send
+            self.internal_progress_send = progress
+            self.internal_typing_control = typing
+            logger.info("Queen switched to WebSocket output channel")
+        else:
+            self.internal_send = self._tg_send
+            self.internal_progress_send = self._tg_progress
+            self.internal_typing_control = self._tg_typing
+            logger.info("Queen switched to Telegram output channel")
 
     async def set_thinking(self, active: bool) -> None:
         """Toggle global thinking indicator."""
@@ -338,12 +369,20 @@ class Queen:
         chat_id: int,
         approval_requester=None,
         show_typing: bool = True,
+        is_ws: bool = False,
     ) -> QueenReply:
+        if not is_ws and self._ws_active:
+            logger.info("Ignoring Telegram message while WebSocket is active", chat_id=chat_id)
+            return QueenReply(
+                immediate="I'm currently active on WebSocket. Please use the WebSocket client or wait until it's closed.",
+                followup=None,
+            )
+
         # Clear recent tasks at the start of each new user message
         self._recent_tasks.clear()
         if callable(approval_requester):
             self._approval_requesters[chat_id] = approval_requester
-        logger.info("Handling message", chat_id=chat_id)
+        logger.info("Handling message", chat_id=chat_id, is_ws=is_ws)
         logger.debug("Received message text", text_len=len(text), text=text[:500])
         await self.memory.add_message("user", text, {"chat_id": chat_id})
         bootstrap_context = await build_bootstrap_context_prompt(self.store, chat_id)

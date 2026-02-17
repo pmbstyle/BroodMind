@@ -29,8 +29,9 @@ from broodmind.state import (
     write_start_status,
 )
 from broodmind.store.sqlite import SQLiteStore
-from broodmind.telegram.bot import run_bot
+from broodmind.telegram.bot import run_bot, build_dispatcher
 from broodmind.workers.templates import sync_default_templates
+from aiogram import Bot
 
 app = typer.Typer(add_completion=False)
 workers_app = typer.Typer(add_completion=False)
@@ -97,10 +98,30 @@ def start(
     # Use ASCII checkmark [V] instead of unicode checkmark to avoid encoding issues in background processes
     console.print("[bold green][V] BroodMind Queen started.[/bold green]")
     console.print(f"   [dim]Logs directory:[/dim] [cyan]{settings.state_dir / 'logs'}[/cyan]")
+    console.print(f"   [dim]Gateway:[/dim] [cyan]http://{settings.gateway_host}:{settings.gateway_port}[/cyan]")
     console.print("[dim]Press Ctrl+C to stop (if in foreground).[/dim]\n")
 
+    async def run_all():
+        bot_instance = Bot(token=settings.telegram_bot_token)
+        dp, queen = build_dispatcher(settings, bot_instance)
+        
+        # Build and run Gateway alongside bot
+        gateway_app = build_app(settings, queen)
+        import uvicorn
+        config = uvicorn.Config(gateway_app, host=settings.gateway_host, port=settings.gateway_port, log_level="info")
+        server = uvicorn.Server(config)
+        
+        # Background task for uvicorn
+        gateway_task = asyncio.create_task(server.serve())
+        
+        try:
+            await run_bot(settings, existing_queen=queen)
+        finally:
+            server.should_exit = True
+            await gateway_task
+
     try:
-        asyncio.run(run_bot(settings))
+        asyncio.run(run_all())
     except KeyboardInterrupt:
         # Use standard logging here as structlog might be torn down
         logging.getLogger(__name__).info("Shutting down")

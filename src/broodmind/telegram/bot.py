@@ -112,9 +112,19 @@ async def _heartbeat_poker(queen: Queen, interval_seconds: int, chat_id: int):
             logger.exception("Internal heartbeat execution failed")
 
 
-async def run_bot(settings: Settings) -> None:
+async def run_bot(settings: Settings, existing_queen: Queen | None = None) -> None:
     bot = Bot(token=settings.telegram_bot_token)
-    dp, queen = build_dispatcher(settings, bot)
+    if existing_queen:
+        dp = Dispatcher()
+        from broodmind.telegram.approvals import ApprovalManager
+        from broodmind.telegram.handlers import register_handlers
+        approvals = ApprovalManager(bot=bot)
+        # Update queen's approval bot
+        existing_queen.approvals = approvals
+        register_handlers(dp, existing_queen, approvals, settings, bot)
+        queen = existing_queen
+    else:
+        dp, queen = build_dispatcher(settings, bot)
 
     # Parse allowed chat IDs from settings
     allowed_chat_ids = []

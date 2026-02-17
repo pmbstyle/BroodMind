@@ -64,6 +64,7 @@ class Settings(BaseSettings):
 
     gateway_host: str = Field("0.0.0.0", alias="BROODMIND_GATEWAY_HOST")
     gateway_port: int = Field(8000, alias="BROODMIND_GATEWAY_PORT")
+    tailscale_ips: str = Field("", alias="BROODMIND_TAILSCALE_IPS")
 
     worker_launcher: str = Field("same_env", alias="BROODMIND_WORKER_LAUNCHER")
     worker_docker_image: str = Field("broodmind-worker:latest", alias="BROODMIND_WORKER_DOCKER_IMAGE")
