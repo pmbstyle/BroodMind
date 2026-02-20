@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import base64
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -57,21 +59,6 @@ async def route_or_reply(
         logger.info("Queen tools fetched: count=%d", len(queen_tools))
         tool_capable = getattr(provider, "complete_with_tools", None)
         
-        if callable(tool_capable):
-            tools = [spec.to_openai_tool() for spec in queen_tools]
-            last_error: str | None = None
-            had_tool_calls = False
-            max_attempts = 10
-            
-import base64
-import uuid
-# ... (rest of imports)
-
-async def route_or_reply(
-    # ... args ...
-) -> str:
-    # ... (start of function) ...
-    
         if callable(tool_capable):
             tools = [spec.to_openai_tool() for spec in queen_tools]
             last_error: str | None = None
@@ -134,7 +121,6 @@ async def route_or_reply(
                     raise e
                 
                 content_raw = result.get("content", "")
-                # ... (rest of loop)
                 tool_calls = result.get("tool_calls") or []
                 
                 if tool_calls:
