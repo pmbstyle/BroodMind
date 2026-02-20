@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import asyncio
+import base64
+import io
 import re
 import structlog
 import uuid
+import asyncio
 from typing import Any, NamedTuple
 
 import telegramify_markdown
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
 
 from broodmind.config.settings import Settings
 from broodmind.logging_config import correlation_id_var
@@ -27,7 +29,7 @@ class QueuedMessage(NamedTuple):
     text: str
     reply_to_message_id: int | None = None
 
-
+# ... (rest of global vars remain same, just ensuring imports are correct)
 _CHAT_LOCKS: dict[int, asyncio.Lock] = {}
 _CHAT_QUEUES: dict[int, asyncio.Queue[QueuedMessage]] = {}
 _CHAT_SEND_TASKS: dict[int, asyncio.Task] = {}
@@ -185,28 +187,84 @@ def register_handlers(
         correlation_id = f"msg-{uuid.uuid4()}"
         correlation_id_var.set(correlation_id)
 
-        if not message.text:
+        # 1. Extract text and images
+        text = message.text or message.caption or ""
+        images: list[str] = []
+
+        if message.photo:
+            try:
+                # Use the largest available photo size
+                photo = message.photo[-1]
+                logger.debug("Downloading photo", file_id=photo.file_id, width=photo.width, height=photo.height)
+                
+                with io.BytesIO() as buffer:
+                    await bot.download(photo, destination=buffer)
+                    buffer.seek(0)
+                    b64_data = base64.b64encode(buffer.read()).decode("utf-8")
+                    # Assume JPEG for Telegram photos
+                    images.append(f"data:image/jpeg;base64,{b64_data}")
+            except Exception:
+                logger.exception("Failed to process image from Telegram")
+                # Continue processing even if image fails, just treat as text-only (or empty)
+
+        if not text and not images:
             return
-        logger.debug("Incoming message from chat_id=%s", message.chat.id)
+
+        logger.debug("Incoming message", chat_id=message.chat.id, has_images=bool(images))
         lock = _CHAT_LOCKS.setdefault(message.chat.id, asyncio.Lock())
         _publish_runtime_metrics()
+
         async with lock:
+            # 2. Silent Mode Check
+            # If text starts with "! " or "> ", treat as a silent memory entry.
+            if text.startswith("! ") or text.startswith("> "):
+                clean_text = text[2:].strip()
+                if clean_text:
+                    await queen.memory.add_message(
+                        "user", 
+                        f"[SILENT LOG] {clean_text}", 
+                        {"chat_id": message.chat.id, "silent": True, "has_images": bool(images)}
+                    )
+                    # We don't store images deep in memory yet, but we acknowledge receipt.
+                    try:
+                        await message.react([ReactionTypeEmoji(emoji="✍\ufe0f")])
+                    except Exception:
+                        logger.debug("Failed to react to silent message")
+                return
+
+            # 3. Normal Queen Processing
             try:
-                reply = await queen.handle_message(message.text, message.chat.id)
+                reply = await queen.handle_message(text, message.chat.id, images=images)
             except Exception:
                 logger.exception("Failed to handle message")
-                # Avoid leaking technical error details to the user.
-                # The Queen's internal failure logs will capture the detail.
                 return
 
             if isinstance(reply, QueenReply):
                 update_last_message(settings)
-                if reply.immediate and not is_heartbeat_ok(reply.immediate):
+                
+                final_text = reply.immediate or ""
+                
+                # 4. Reaction Parsing
+                # Look for <react>emoji</react> at the start of the message
+                # Regex to match <react>...</react> anywhere, but typically at start.
+                react_match = re.search(r"<react>(.*?)</react>", final_text, re.DOTALL)
+                if react_match:
+                    emoji = react_match.group(1).strip()
+                    # Remove the tag from the text
+                    final_text = final_text.replace(react_match.group(0), "").strip()
+                    if emoji:
+                        try:
+                            await message.react([ReactionTypeEmoji(emoji=emoji)])
+                        except Exception:
+                            logger.warning("Failed to apply reaction", emoji=emoji)
+
+                if final_text and not is_heartbeat_ok(final_text):
                     # Reply with quote/reply to the current message
-                    await _enqueue_send(message.bot, message.chat.id, reply.immediate, reply_to_message_id=message.message_id)
+                    await _enqueue_send(message.bot, message.chat.id, final_text, reply_to_message_id=message.message_id)
                 return
 
         update_last_message(settings)
+        # Fallback for non-QueenReply results (shouldn't happen with current core types, but for safety)
         if reply and not is_heartbeat_ok(str(reply)):
             await _enqueue_send(message.bot, message.chat.id, str(reply), reply_to_message_id=message.message_id)
 

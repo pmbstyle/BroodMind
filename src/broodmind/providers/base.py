@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
 class Message:
     role: str
-    content: str
+    content: str | list[dict[str, Any]]
 
     def to_dict(self) -> dict:
         return {"role": self.role, "content": self.content}

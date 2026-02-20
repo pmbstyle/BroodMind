@@ -382,6 +382,7 @@ class Queen:
         approval_requester=None,
         show_typing: bool = True,
         is_ws: bool = False,
+        images: list[str] | None = None,
     ) -> QueenReply:
         if not is_ws and self._ws_active:
             logger.info("Ignoring Telegram message while WebSocket is active", chat_id=chat_id)
@@ -394,15 +395,15 @@ class Queen:
         self._recent_tasks.clear()
         if callable(approval_requester):
             self._approval_requesters[chat_id] = approval_requester
-        logger.info("Handling message", chat_id=chat_id, is_ws=is_ws)
+        logger.info("Handling message", chat_id=chat_id, is_ws=is_ws, has_images=bool(images))
         logger.debug("Received message text", text_len=len(text), text=text[:500])
-        await self.memory.add_message("user", text, {"chat_id": chat_id})
+        await self.memory.add_message("user", text, {"chat_id": chat_id, "has_images": bool(images)})
         bootstrap_context = await build_bootstrap_context_prompt(self.store, chat_id)
         if bootstrap_context.files:
             files_summary = ", ".join([f"{name} ({size} chars)" for name, size in bootstrap_context.files])
             logger.debug("Queen bootstrap files", files=files_summary, hash=bootstrap_context.hash)
         reply_text = await route_or_reply(
-            self, self.provider, self.memory, text, chat_id, bootstrap_context.content, show_typing=show_typing
+            self, self.provider, self.memory, text, chat_id, bootstrap_context.content, show_typing=show_typing, images=images
         )
         logger.info("Queen response ready")
         await self.memory.add_message("assistant", reply_text, {"chat_id": chat_id})

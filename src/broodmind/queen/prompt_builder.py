@@ -196,6 +196,7 @@ async def build_queen_prompt(
     chat_id: int,
     bootstrap_context: str,
     is_ws: bool = False,
+    images: list[str] | None = None,
 ) -> list[Message]:
     """Assembles all the pieces into the final message list for the LLM."""
 
@@ -246,5 +247,13 @@ async def build_queen_prompt(
     if recent_history:
         for role, content in recent_history:
             messages.append(Message(role=role, content=content))
-    messages.append(Message(role="user", content=user_text))
+    
+    if images:
+        content_blocks = [{"type": "text", "text": user_text}]
+        for img in images:
+            content_blocks.append({"type": "image_url", "image_url": {"url": img}})
+        messages.append(Message(role="user", content=content_blocks))
+    else:
+        messages.append(Message(role="user", content=user_text))
+    
     return messages

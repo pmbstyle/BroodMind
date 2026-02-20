@@ -31,6 +31,7 @@ async def route_or_reply(
     *,
     internal_followup: bool = False,
     show_typing: bool = True,
+    images: list[str] | None = None,
 ) -> str:
     """Core routing logic: decide whether to use tools or reply to user."""
     # Internal chat_id (<= 0) should not trigger typing indicators.
@@ -47,7 +48,8 @@ async def route_or_reply(
             user_text=user_text, 
             chat_id=chat_id, 
             bootstrap_context=bootstrap_context,
-            is_ws=is_ws
+            is_ws=is_ws,
+            images=images
         )
         _log_system_prompt(messages, "route")
         
