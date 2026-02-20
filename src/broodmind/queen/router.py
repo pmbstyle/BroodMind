@@ -64,7 +64,17 @@ async def route_or_reply(
             max_attempts = 10
             
             for _ in range(max_attempts):
-                result = await provider.complete_with_tools(messages, tools=tools, tool_choice="auto")
+                try:
+                    result = await provider.complete_with_tools(messages, tools=tools, tool_choice="auto")
+                except Exception as e:
+                    # If we have images, this might be a multi-modal conflict (e.g. z.ai GLM-4 doesn't support tools + vision).
+                    # Fallback to text-only completion.
+                    if images:
+                        logger.warning("Tool calling failed with images; falling back to standard completion", error=str(e))
+                        response_raw = await provider.complete(messages)
+                        return normalize_plain_text(response_raw)
+                    raise e
+
                 content_raw = result.get("content", "")
                 tool_calls = result.get("tool_calls") or []
                 
