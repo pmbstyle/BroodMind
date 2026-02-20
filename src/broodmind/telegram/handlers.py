@@ -9,6 +9,7 @@ from typing import Any, NamedTuple
 import telegramify_markdown
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
 from broodmind.config.settings import Settings
@@ -17,7 +18,7 @@ from broodmind.queen.core import Queen, QueenReply
 from broodmind.runtime_metrics import update_component_gauges
 from broodmind.state import update_last_message
 from broodmind.telegram.approvals import ApprovalManager
-from broodmind.utils import is_heartbeat_ok
+from broodmind.utils import is_heartbeat_ok, utc_now
 
 logger = structlog.get_logger(__name__)
 
@@ -102,6 +103,81 @@ def register_handlers(
     queen._tg_send = _internal_send
     queen._tg_progress = _internal_progress_send
     queen._tg_typing = _internal_typing_control
+
+    import importlib.metadata
+
+    @dp.message(Command("help"))
+    async def cmd_help(message: Message) -> None:
+        help_text = (
+            "Available commands:\n"
+            "/help - Show this help message\n"
+            "/status - Show system status\n"
+            "/workers - List available worker templates\n"
+            "/memory [limit] - Show memory usage stats\n"
+            "/version - Show bot version"
+        )
+        await message.answer(help_text)
+
+    @dp.message(Command("version"))
+    async def cmd_version(message: Message) -> None:
+        try:
+            version = importlib.metadata.version("broodmind")
+        except importlib.metadata.PackageNotFoundError:
+            version = "0.2.0-dev"
+        await message.answer(f"BroodMind v{version}")
+
+    @dp.message(Command("status"))
+    async def cmd_status(message: Message) -> None:
+        active_workers = await asyncio.to_thread(queen.store.get_active_workers)
+        status_text = (
+            f"**System Status**\n"
+            f"Thinking: {'Yes' if queen._thinking_count > 0 else 'No'}\n"
+            f"Active Workers: {len(active_workers)}\n"
+            f"Current Time: {utc_now().isoformat()}\n"
+        )
+        if active_workers:
+            status_text += "\n**Running Workers:**\n"
+            for w in active_workers:
+                status_text += f"- {w.worker_id} (RunID: {w.run_id})\n"
+        await message.answer(status_text, parse_mode="Markdown")
+
+    @dp.message(Command("workers"))
+    async def cmd_workers(message: Message) -> None:
+        templates = await asyncio.to_thread(queen.store.list_worker_templates)
+        if not templates:
+            await message.answer("No worker templates found.")
+            return
+        
+        text = "**Available Workers:**\n\n"
+        for t in templates:
+            text += f"**{t.worker_id}**\n{t.description or 'No description'}\n\n"
+        await message.answer(text, parse_mode="Markdown")
+
+    @dp.message(Command("memory"))
+    async def cmd_memory(message: Message, command: CommandObject) -> None:
+        limit = 300
+        if command.args and command.args.isdigit():
+            limit = int(command.args)
+            limit = max(50, min(limit, 1000))
+
+        entries = await asyncio.to_thread(queen.store.list_memory_entries, limit=limit)
+        
+        unique_chats = set()
+        role_counts = {}
+        for e in entries:
+            role_counts[e.role] = role_counts.get(e.role, 0) + 1
+            if e.metadata and "chat_id" in e.metadata:
+                unique_chats.add(e.metadata["chat_id"])
+
+        text = (
+            f"**Memory Snapshot** (Sample: {len(entries)})\n"
+            f"Unique Chats: {len(unique_chats)}\n"
+            f"Role Distribution:\n"
+        )
+        for role, count in role_counts.items():
+            text += f"- {role}: {count}\n"
+        
+        await message.answer(text, parse_mode="Markdown")
 
     @dp.message()
     async def handle_message(message: Message) -> None:

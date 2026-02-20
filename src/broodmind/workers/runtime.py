@@ -64,10 +64,12 @@ class WorkerRuntime:
         # Get all tools to find MCP tool definitions
         from broodmind.tools.tools import get_tools
         all_tools = get_tools(mcp_manager=self.mcp_manager)
-        requested_tool_names = task_request.tools or template.available_tools
+        requested_tool_names = list(task_request.tools or template.available_tools)
         
         mcp_tools_data = []
         known_server_ids = list(self.mcp_manager.sessions.keys()) if self.mcp_manager else []
+        
+        # 1. Add explicitly requested MCP tools
         for tool_name in requested_tool_names:
             if tool_name.startswith("mcp_"):
                 # Find the tool spec
@@ -76,9 +78,6 @@ class WorkerRuntime:
                     server_id, remote_tool_name = _extract_mcp_tool_identity(
                         spec_found.name, known_server_ids
                     )
-                    # We need to serialize the ToolSpec. 
-                    # ToolSpec is a dataclass, we can convert it to dict.
-                    # But the 'handler' is not serializable. That's fine, the worker will use its own proxy handler.
                     mcp_tools_data.append(
                         {
                             "name": spec_found.name,
@@ -90,6 +89,32 @@ class WorkerRuntime:
                             "remote_tool_name": remote_tool_name,
                         }
                     )
+
+        # 2. Automatically include ALL global MCP tools if mcp_manager is available
+        if self.mcp_manager:
+            global_mcp_tools = self.mcp_manager.get_all_tools()
+            for g_spec in global_mcp_tools:
+                # Avoid duplicates if already added explicitly
+                if any(m["name"] == g_spec.name for m in mcp_tools_data):
+                    continue
+                
+                server_id, remote_tool_name = _extract_mcp_tool_identity(
+                    g_spec.name, known_server_ids
+                )
+                mcp_tools_data.append(
+                    {
+                        "name": g_spec.name,
+                        "description": g_spec.description,
+                        "parameters": g_spec.parameters,
+                        "permission": g_spec.permission,
+                        "is_async": g_spec.is_async,
+                        "server_id": server_id,
+                        "remote_tool_name": remote_tool_name,
+                    }
+                )
+                # Ensure the name is in available_tools so the agent knows it can call it
+                if g_spec.name not in requested_tool_names:
+                    requested_tool_names.append(g_spec.name)
 
         # Create worker spec
         worker_id = task_request.run_id or str(uuid.uuid4())
