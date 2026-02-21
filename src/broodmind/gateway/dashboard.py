@@ -277,106 +277,237 @@ def _dashboard_html() -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BroodMind Dashboard</title>
+  <title>BroodMind Control Deck</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {
-      --bg0: #0f172a;
-      --bg1: #1e293b;
-      --card: #111827;
-      --text: #e5e7eb;
-      --muted: #94a3b8;
-      --ok: #22c55e;
-      --warn: #f59e0b;
-      --bad: #ef4444;
-      --accent: #38bdf8;
-      --border: #334155;
-      --font: "Segoe UI", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif;
+      --ink: #e5e7eb;
+      --muted: #98a4b8;
+      --paper: #0a0f1b;
+      --panel: rgba(16, 24, 43, 0.78);
+      --line: #25324d;
+      --teal: #2dd4bf;
+      --amber: #f59e0b;
+      --rose: #fb7185;
+      --mint: #34d399;
+      --sky: #38bdf8;
     }
     * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
     body {
+      color: var(--ink);
+      font-family: "Space Grotesk", sans-serif;
+      background:
+        radial-gradient(1000px 600px at 5% -5%, rgba(56, 189, 248, 0.18), transparent 60%),
+        radial-gradient(900px 700px at 100% 0%, rgba(251, 113, 133, 0.14), transparent 55%),
+        linear-gradient(170deg, #070b14, #0a1220 48%, #0b1526);
+    }
+    .noise::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.06;
+      background-image: radial-gradient(#fff 0.4px, transparent 0.5px);
+      background-size: 3px 3px;
+    }
+    .wrap { width: min(1280px, 96vw); margin: 24px auto 40px; }
+    .topbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .headline { display: flex; gap: 12px; align-items: baseline; }
+    .title {
       margin: 0;
-      font-family: var(--font);
-      color: var(--text);
-      background: radial-gradient(circle at 20% 20%, #1d4ed8 0%, transparent 35%), linear-gradient(160deg, var(--bg0), var(--bg1));
-      min-height: 100vh;
+      font-size: clamp(24px, 3.4vw, 38px);
+      line-height: 1;
+      letter-spacing: 0.02em;
     }
-    .shell { max-width: 1200px; margin: 0 auto; padding: 18px; }
-    .top { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .title { font-size: 22px; letter-spacing: 0.5px; }
-    .token-wrap { display: flex; gap: 8px; }
-    input, button {
-      background: #0b1220;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 10px;
-    }
-    button { cursor: pointer; }
-    button:hover { border-color: var(--accent); }
-    .grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 10px; }
-    .card {
-      background: rgba(10, 17, 31, 0.86);
-      border: 1px solid var(--border);
+    .subtitle { color: var(--muted); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+    .input, .btn {
+      border: 1px solid var(--line);
+      background: rgba(7, 13, 23, 0.85);
+      color: var(--ink);
       border-radius: 12px;
-      padding: 12px;
-      backdrop-filter: blur(4px);
+      height: 40px;
+      padding: 0 12px;
+      font-family: inherit;
     }
-    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-    .value { font-size: 22px; font-weight: 600; }
-    .ok { color: var(--ok); }
-    .warn { color: var(--warn); }
-    .bad { color: var(--bad); }
-    .row { margin-top: 12px; display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
-    .mono { font-family: Consolas, "Courier New", monospace; }
+    .input { width: 260px; }
+    .btn {
+      cursor: pointer;
+      font-weight: 600;
+      transition: transform 120ms ease, border-color 120ms ease, background-color 120ms ease;
+    }
+    .btn:hover { transform: translateY(-1px); border-color: var(--sky); }
+    .btn.primary { background: linear-gradient(90deg, #0f766e, #155e75); border-color: transparent; }
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(160px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .kpi {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+      transform: translateY(8px);
+      opacity: 0;
+      animation: lift 420ms ease forwards;
+    }
+    .kpi:nth-child(2) { animation-delay: 80ms; }
+    .kpi:nth-child(3) { animation-delay: 120ms; }
+    .kpi:nth-child(4) { animation-delay: 180ms; }
+    .kpi:nth-child(5) { animation-delay: 240ms; }
+    .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+    .kpi-value { margin-top: 6px; font-size: 28px; font-weight: 700; line-height: 1.1; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .ok { color: var(--mint); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--rose); }
+    .layout {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 10px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+    }
+    .card h3 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+    .chart-wrap { height: 230px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #1f2937; vertical-align: top; }
+    th, td { text-align: left; padding: 9px 6px; border-bottom: 1px solid rgba(37, 50, 77, 0.75); vertical-align: top; }
     th { color: var(--muted); font-weight: 600; }
-    .logs { max-height: 340px; overflow: auto; }
-    .log-line { border-bottom: 1px solid #1f2937; padding: 6px 0; font-size: 13px; }
-    .muted { color: var(--muted); }
-    @media (max-width: 1000px) {
-      .grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
-      .row { grid-template-columns: 1fr; }
+    td strong { font-size: 12px; }
+    .mono { font-family: "JetBrains Mono", monospace; }
+    .workers { max-height: 310px; overflow: auto; }
+    .logs { max-height: 270px; overflow: auto; }
+    .log-line { border-bottom: 1px dashed rgba(37, 50, 77, 0.75); padding: 8px 2px; font-size: 13px; line-height: 1.35; }
+    .meta { margin-top: 10px; color: var(--muted); font-size: 12px; font-family: "JetBrains Mono", monospace; }
+    .err { color: var(--rose); margin-top: 8px; font-size: 13px; min-height: 1.1em; }
+    @keyframes lift { to { transform: translateY(0); opacity: 1; } }
+    @media (max-width: 1060px) {
+      .status-strip { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 580px) {
+      .wrap { width: min(1280px, 94vw); }
+      .controls { width: 100%; }
+      .input { width: 100%; }
+      .btn { flex: 1; }
+      .status-strip { grid-template-columns: 1fr; }
     }
   </style>
 </head>
-<body>
-  <div class="shell">
-    <div class="top">
-      <div class="title">BroodMind Dashboard</div>
-      <div class="token-wrap">
-        <input id="token" type="password" placeholder="Dashboard token (optional)" />
-        <button id="save-token">Save token</button>
-        <button id="refresh">Refresh</button>
+<body class="noise">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="headline">
+        <h1 class="title">BroodMind Control Deck</h1>
+        <span class="subtitle">private tailnet telemetry</span>
+      </div>
+      <div class="controls">
+        <input id="token" class="input" type="password" placeholder="Dashboard token" />
+        <button id="save-token" class="btn">Save Token</button>
+        <button id="refresh" class="btn primary">Refresh</button>
       </div>
     </div>
-    <div class="grid">
-      <div class="card"><div class="label">System</div><div id="system-running" class="value">-</div></div>
-      <div class="card"><div class="label">Queen</div><div id="queen-state" class="value">-</div></div>
-      <div class="card"><div class="label">Workers Running</div><div id="workers-running" class="value">-</div></div>
-      <div class="card"><div class="label">Pending Control</div><div id="control-pending" class="value">-</div></div>
-    </div>
-    <div class="row">
+
+    <section class="status-strip">
+      <article class="kpi">
+        <div class="kpi-label">System</div>
+        <div id="system-running" class="kpi-value">-</div>
+        <div id="chip-channel" class="chip">Channel -</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Queen State</div>
+        <div id="queen-state" class="kpi-value">-</div>
+        <div id="chip-uptime" class="chip">Uptime -</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Workers Running</div>
+        <div id="workers-running" class="kpi-value">0</div>
+        <div id="chip-spawned" class="chip">24h spawned -</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Failures</div>
+        <div id="workers-failed" class="kpi-value">0</div>
+        <div id="chip-completed" class="chip">completed -</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Control Queue</div>
+        <div id="control-pending" class="kpi-value">0</div>
+        <div id="chip-telegram" class="chip">telegram queues -</div>
+      </article>
+    </section>
+
+    <section class="layout">
       <div class="card">
-        <div class="label">Recent Workers</div>
+        <h3>Worker Throughput (rolling)</h3>
+        <div class="chart-wrap"><canvas id="activity-chart"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Recent Events</h3>
+        <div id="logs" class="logs">No data yet.</div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top: 10px;">
+      <h3>Recent Workers</h3>
+      <div class="workers">
         <table>
-          <thead><tr><th>ID</th><th>Status</th><th>Task</th><th>Updated</th></tr></thead>
-          <tbody id="workers-table"><tr><td colspan="4" class="muted">No data</td></tr></tbody>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Status</th>
+              <th>Task</th>
+              <th>Last Tool</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="workers-table"><tr><td colspan="5">No workers yet.</td></tr></tbody>
         </table>
       </div>
-      <div class="card">
-        <div class="label">Recent Events</div>
-        <div id="logs" class="logs muted">No data</div>
-      </div>
-    </div>
-    <div class="muted mono" id="meta" style="margin-top: 10px;">Last refresh: never</div>
+    </section>
+
+    <div class="meta" id="meta">Last refresh: never</div>
+    <div class="err" id="error"></div>
   </div>
+
   <script>
     const tokenInput = document.getElementById("token");
     const saveBtn = document.getElementById("save-token");
     const refreshBtn = document.getElementById("refresh");
     const tokenKey = "broodmind.dashboard.token";
     tokenInput.value = localStorage.getItem(tokenKey) || "";
+
+    const historySize = 30;
+    const history = [];
+    let chart = null;
 
     saveBtn.addEventListener("click", () => {
       localStorage.setItem(tokenKey, tokenInput.value || "");
@@ -389,6 +520,10 @@ def _dashboard_html() -> str:
       return token ? { "x-broodmind-token": token } : {};
     }
 
+    function esc(v) {
+      return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    }
+
     function statusClass(value) {
       const v = String(value || "").toLowerCase();
       if (["running", "idle", "thinking", "connected", "ok", "completed"].includes(v)) return "ok";
@@ -396,47 +531,129 @@ def _dashboard_html() -> str:
       return "bad";
     }
 
-    function setText(id, text, cls) {
+    function setKpi(id, text, cls) {
       const el = document.getElementById(id);
       el.textContent = text;
-      el.className = "value " + (cls || "");
+      el.className = "kpi-value " + (cls || "");
+    }
+
+    function setChip(id, text) {
+      document.getElementById(id).textContent = text;
+    }
+
+    function ensureChart() {
+      if (chart) return chart;
+      const ctx = document.getElementById("activity-chart");
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: "Running workers",
+              data: [],
+              borderColor: "#34d399",
+              backgroundColor: "rgba(52, 211, 153, 0.20)",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 0
+            },
+            {
+              label: "Queue pressure",
+              data: [],
+              borderColor: "#f59e0b",
+              backgroundColor: "rgba(245, 158, 11, 0.14)",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: "#98a4b8", boxWidth: 12 } }
+          },
+          scales: {
+            x: { ticks: { color: "#98a4b8", maxTicksLimit: 6 }, grid: { color: "rgba(37, 50, 77, 0.42)" } },
+            y: { ticks: { color: "#98a4b8" }, grid: { color: "rgba(37, 50, 77, 0.42)" }, beginAtZero: true }
+          }
+        }
+      });
+      return chart;
+    }
+
+    function updateChartPoint(data) {
+      const queuePressure = Number(data.queen.followup_queues || 0) + Number(data.queen.internal_queues || 0);
+      history.push({
+        t: new Date().toLocaleTimeString(),
+        workers: Number(data.workers.running || 0),
+        queues: queuePressure
+      });
+      while (history.length > historySize) history.shift();
+      const c = ensureChart();
+      c.data.labels = history.map((h) => h.t);
+      c.data.datasets[0].data = history.map((h) => h.workers);
+      c.data.datasets[1].data = history.map((h) => h.queues);
+      c.update();
+    }
+
+    function renderWorkers(workers) {
+      const rows = (workers || []).map((w) => {
+        const lastTool = (Array.isArray(w.tools_used) && w.tools_used.length > 0) ? w.tools_used[w.tools_used.length - 1] : "-";
+        return "<tr>" +
+          "<td class='mono'>" + esc(w.id) + "</td>" +
+          "<td class='" + statusClass(w.status) + "'><strong>" + esc(w.status) + "</strong></td>" +
+          "<td>" + esc(w.task) + "</td>" +
+          "<td class='mono'>" + esc(lastTool) + "</td>" +
+          "<td class='mono'>" + esc(w.updated_at) + "</td>" +
+          "</tr>";
+      });
+      document.getElementById("workers-table").innerHTML = rows.length ? rows.join("") : "<tr><td colspan='5'>No workers</td></tr>";
+    }
+
+    function renderLogs(logs) {
+      const html = (logs || []).map((l) => {
+        const level = String(l.level || "info").toLowerCase();
+        const cls = level === "error" ? "bad" : (level === "warning" ? "warn" : "ok");
+        return "<div class='log-line'><span class='" + cls + "'>" + esc(level.toUpperCase()) + "</span> " + esc(l.event || "") + "</div>";
+      });
+      document.getElementById("logs").innerHTML = html.length ? html.join("") : "No logs.";
     }
 
     async function runOnce() {
+      const errorEl = document.getElementById("error");
+      errorEl.textContent = "";
       try {
-        const rsp = await fetch("/api/dashboard/snapshot?last=12", { headers: headers() });
-        if (!rsp.ok) {
-          throw new Error("API " + rsp.status);
-        }
+        const rsp = await fetch("/api/dashboard/snapshot?last=14", { headers: headers() });
+        if (!rsp.ok) throw new Error("API " + rsp.status);
         const data = await rsp.json();
-        setText("system-running", data.system.running ? "RUNNING" : "STOPPED", data.system.running ? "ok" : "bad");
-        setText("queen-state", data.queen.state, statusClass(data.queen.state));
-        setText("workers-running", String(data.workers.running), data.workers.running > 0 ? "ok" : "warn");
-        setText("control-pending", String(data.control.pending_requests), data.control.pending_requests > 0 ? "warn" : "ok");
 
-        const rows = (data.workers.recent || []).map((w) =>
-          "<tr><td class='mono'>" + esc(w.id) + "</td><td>" + esc(w.status) + "</td><td>" + esc(w.task) + "</td><td class='mono'>" + esc(w.updated_at) + "</td></tr>"
-        );
-        document.getElementById("workers-table").innerHTML = rows.length ? rows.join("") : "<tr><td colspan='4' class='muted'>No workers</td></tr>";
+        setKpi("system-running", data.system.running ? "RUNNING" : "STOPPED", data.system.running ? "ok" : "bad");
+        setKpi("queen-state", data.queen.state || "-", statusClass(data.queen.state));
+        setKpi("workers-running", String(data.workers.running || 0), (data.workers.running || 0) > 0 ? "ok" : "warn");
+        setKpi("workers-failed", String(data.workers.failed || 0), (data.workers.failed || 0) > 0 ? "bad" : "ok");
+        setKpi("control-pending", String(data.control.pending_requests || 0), (data.control.pending_requests || 0) > 0 ? "warn" : "ok");
 
-        const logHtml = (data.logs || []).map((l) => {
-          const level = String(l.level || "info").toLowerCase();
-          const color = level === "error" ? "var(--bad)" : (level === "warning" ? "var(--warn)" : "var(--text)");
-          return "<div class='log-line'><span style='color:" + color + ";'>" + esc(level) + "</span> " + esc(l.event || "") + "</div>";
-        });
-        document.getElementById("logs").innerHTML = logHtml.length ? logHtml.join("") : "<div class='muted'>No logs</div>";
+        setChip("chip-channel", "Channel " + (data.system.active_channel || "-"));
+        setChip("chip-uptime", "Uptime " + (data.system.uptime || "N/A"));
+        setChip("chip-spawned", "24h spawned " + String(data.workers.spawned_24h || 0));
+        setChip("chip-completed", "completed " + String(data.workers.completed || 0));
+        setChip("chip-telegram", "telegram queues " + String(data.queues.telegram_queues || 0));
+
+        renderWorkers(data.workers.recent || []);
+        renderLogs(data.logs || []);
+        updateChartPoint(data);
 
         document.getElementById("meta").textContent =
-          "Last refresh: " + new Date().toLocaleString() +
-          " | Channel: " + (data.system.active_channel || "Unknown") +
-          " | Uptime: " + (data.system.uptime || "N/A");
+          "Last refresh " + new Date().toLocaleString() +
+          " | heartbeat " + (data.system.last_heartbeat || "never") +
+          " | pid " + (data.system.pid || "N/A");
       } catch (err) {
-        document.getElementById("meta").textContent = "Dashboard error: " + err;
+        errorEl.textContent = "Dashboard request failed: " + err;
       }
-    }
-
-    function esc(v) {
-      return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
     }
 
     runOnce();
