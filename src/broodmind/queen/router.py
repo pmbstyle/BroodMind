@@ -194,7 +194,7 @@ async def route_or_reply(
                         content="You have reached the tool call limit for this turn. Summarize what you have initiated and let the user know you are processing their request.",
                     )
                 )
-                final_resp = await provider.complete(messages)
+                final_resp = await _complete_text(provider, messages, context="tool_limit_fallback")
                 return await _finalize_response(
                     provider=provider,
                     messages=messages,
@@ -211,7 +211,7 @@ async def route_or_reply(
                         content=f"A tool call failed: {last_error}. Explain the problem to the user naturally and ask for guidance if needed.",
                     )
                 )
-                final_resp = await provider.complete(messages)
+                final_resp = await _complete_text(provider, messages, context="tool_error_fallback")
                 return await _finalize_response(
                     provider=provider,
                     messages=messages,
@@ -221,7 +221,7 @@ async def route_or_reply(
                 
             return ""
             
-        response_raw = await provider.complete(messages)
+        response_raw = await _complete_text(provider, messages, context="plain_completion")
         logger.debug("Queen output", output=response_raw)
         return await _finalize_response(
             provider=provider,
@@ -388,7 +388,7 @@ async def _build_plan(
     )
     planner_messages = list(messages) + [Message(role="system", content=planning_prompt)]
     try:
-        raw = await provider.complete(planner_messages)
+        raw = await _complete_text(provider, planner_messages, context="planner")
     except Exception:
         logger.debug("Planner step skipped due to provider error", exc_info=True)
         return None
@@ -587,3 +587,85 @@ def _build_insufficient_evidence_response(payload: dict[str, Any], candidate: st
         "I may be missing enough evidence to give a confident answer yet. "
         "If you want, I can run an additional targeted check."
     )
+
+
+async def _complete_text(
+    provider: InferenceProvider,
+    messages: list[Message | dict[str, Any]],
+    *,
+    context: str,
+) -> str:
+    sanitized = _sanitize_messages_for_complete(messages)
+    try:
+        return await provider.complete(sanitized)
+    except Exception:
+        logger.debug(
+            "Text completion failed after sanitization",
+            context=context,
+            message_shape=_message_shape(sanitized),
+            exc_info=True,
+        )
+        raise
+
+
+def _sanitize_messages_for_complete(messages: list[Message | dict[str, Any]]) -> list[dict[str, str]]:
+    sanitized: list[dict[str, str]] = []
+    for msg in messages:
+        role: str
+        content: Any
+        if isinstance(msg, Message):
+            role = msg.role
+            content = msg.content
+        else:
+            role = str(msg.get("role", "assistant"))
+            content = msg.get("content", "")
+
+        normalized_role = role if role in {"system", "user", "assistant"} else "assistant"
+        if role == "tool":
+            continue
+
+        normalized_content = _coerce_content_to_text(content)
+        if not normalized_content:
+            continue
+
+        sanitized.append({"role": normalized_role, "content": normalized_content})
+
+    if not sanitized:
+        sanitized.append({"role": "user", "content": "Continue."})
+    return sanitized
+
+
+def _coerce_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type", "")).lower()
+            if item_type == "text":
+                text_val = str(item.get("text", "")).strip()
+                if text_val:
+                    text_parts.append(text_val)
+            elif item_type == "image_url":
+                text_parts.append("[image omitted for text-only completion]")
+        return "\n".join(text_parts).strip()
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except Exception:
+        return str(content or "")
+
+
+def _message_shape(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    shape: list[dict[str, Any]] = []
+    for msg in messages[:24]:
+        content = msg.get("content", "")
+        shape.append(
+            {
+                "role": msg.get("role"),
+                "content_type": type(content).__name__,
+                "content_len": len(content) if isinstance(content, str) else None,
+            }
+        )
+    return shape

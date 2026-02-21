@@ -117,6 +117,10 @@ class LiteLLMProvider:
             return content
         except Exception as exc:
             err_str = str(exc)
+            logger.error(
+                "LiteLLM completion payload shape on error: %s",
+                _summarize_messages(serialized_messages),
+            )
             if "finish_reason" in err_str and "abort" in err_str:
                 logger.error("LLM provider returned invalid 'abort' finish_reason.")
                 raise RuntimeError(
@@ -193,6 +197,11 @@ class LiteLLMProvider:
             return {"content": content, "tool_calls": tool_calls, "usage": usage}
         except Exception as exc:
             err_str = str(exc)
+            logger.error(
+                "LiteLLM completion-with-tools payload shape on error: messages=%s tool_count=%s",
+                _summarize_messages(serialized_messages),
+                len(tools),
+            )
             if "finish_reason" in err_str and "abort" in err_str:
                 logger.error("LLM provider returned invalid 'abort' finish_reason. This is a known compatibility issue with some providers.")
                 raise RuntimeError(
@@ -323,3 +332,18 @@ def _build_request_kwargs(kwargs: dict[str, object], **defaults: object) -> dict
         if key in kwargs and kwargs[key] is not None:
             request_kwargs[key] = kwargs[key]
     return request_kwargs
+
+
+def _summarize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for message in messages[:24]:
+        content = message.get("content")
+        summary.append(
+            {
+                "role": message.get("role"),
+                "content_type": type(content).__name__,
+                "content_len": len(content) if isinstance(content, str) else None,
+                "has_tool_calls": bool(message.get("tool_calls")),
+            }
+        )
+    return summary
