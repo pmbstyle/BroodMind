@@ -454,6 +454,27 @@ class SQLiteStore(Store):
         cursor = self._conn.execute("SELECT * FROM workers ORDER BY created_at DESC")
         return [self._row_to_worker(row) for row in cursor.fetchall()]
 
+    def list_recent_workers(self, limit: int = 100) -> list[WorkerRecord]:
+        safe_limit = max(1, int(limit))
+        cursor = self._conn.execute(
+            "SELECT * FROM workers ORDER BY created_at DESC LIMIT ?",
+            (safe_limit,),
+        )
+        return [self._row_to_worker(row) for row in cursor.fetchall()]
+
+    def count_workers_created_since(self, since: datetime) -> int:
+        cursor = self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM workers WHERE julianday(created_at) >= julianday(?)",
+            (since.isoformat(),),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return 0
+        try:
+            return int(row["cnt"])
+        except Exception:
+            return 0
+
     def save_intent(self, record: IntentRecord) -> None:
         self._conn.execute(
             """

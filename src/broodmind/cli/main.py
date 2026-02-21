@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,7 +30,6 @@ from broodmind.state import (
     write_start_status,
 )
 from broodmind.store.sqlite import SQLiteStore
-from broodmind.telegram.bot import run_bot, build_dispatcher
 from broodmind.workers.templates import sync_default_templates
 from aiogram import Bot
 
@@ -66,6 +66,8 @@ def start(
     foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground mode (showing logs)"),
 ) -> None:
     """Start the BroodMind Queen."""
+    from broodmind.telegram.bot import run_bot, build_dispatcher
+
     try:
         settings = load_settings()
     except Exception as e:
@@ -717,17 +719,20 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
     
     # Use active workers for health metrics to avoid stale 'running' states
     active_workers = store.get_active_workers(older_than_minutes=5)
-    all_recent_workers = store.list_workers()
+    recent_workers = (
+        store.list_recent_workers(max(50, last))
+        if hasattr(store, "list_recent_workers")
+        else store.list_workers()[: max(50, last)]
+    )
     
     now = _now_utc()
     cutoff = now.timestamp() - 24 * 60 * 60
 
     by_status: dict[str, int] = {}
-    spawned_24h = 0
-    # Process all workers for 24h stats
-    for worker in all_recent_workers:
-        if worker.created_at.timestamp() >= cutoff:
-            spawned_24h += 1
+    if hasattr(store, "count_workers_created_since"):
+        spawned_24h = int(store.count_workers_created_since(datetime.fromtimestamp(cutoff, tz=UTC)))
+    else:
+        spawned_24h = sum(1 for worker in recent_workers if worker.created_at.timestamp() >= cutoff)
             
     # Process only active/recent workers for status counts
     for worker in active_workers:
@@ -758,9 +763,7 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
     recent_logs = []
     if log_path.exists():
         try:
-            # Get last 12 lines
-            all_lines = log_path.read_text(encoding="utf-8").splitlines()
-            for line in all_lines[-12:]:
+            for line in _read_last_lines(log_path, max_lines=12):
                 try:
                     data = json.loads(line)
                     event = data.get("event", "")
@@ -815,7 +818,7 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
                     "error": w.error or "",
                     "tools_used": w.tools_used or [],
                 }
-                for w in all_recent_workers[:last]
+                for w in recent_workers[:last]
             ],
         },
         "control": {
@@ -987,10 +990,8 @@ def _print_dashboard(snapshot: dict, compact: bool = False) -> None:
 
 
 def _read_jsonl(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
     out: list[dict] = []
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in _read_last_lines(path, max_lines=250):
         line = line.strip()
         if not line:
             continue
@@ -1001,6 +1002,33 @@ def _read_jsonl(path: Path) -> list[dict]:
         except Exception:
             continue
     return out
+
+
+def _read_last_lines(path: Path, max_lines: int = 200, max_bytes: int = 256 * 1024) -> list[str]:
+    if not path.exists():
+        return []
+    if max_lines <= 0:
+        return []
+    try:
+        size = path.stat().st_size
+    except Exception:
+        return []
+    start = max(0, size - max(1, max_bytes))
+    dq: deque[str] = deque(maxlen=max_lines)
+    try:
+        with path.open("rb") as fh:
+            if start > 0:
+                fh.seek(start)
+                _ = fh.readline()  # drop partial line
+            for raw in fh:
+                try:
+                    decoded = raw.decode("utf-8", errors="ignore").rstrip("\n\r")
+                except Exception:
+                    continue
+                dq.append(decoded)
+    except Exception:
+        return []
+    return list(dq)
 
 
 def _now_utc() -> datetime:
