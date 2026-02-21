@@ -25,6 +25,8 @@ class WorkerTemplate(BaseModel):
     model: str | None = None  # Optional model override for this worker
     max_thinking_steps: int = 10
     default_timeout_seconds: int = 300
+    can_spawn_children: bool = False
+    allowed_child_templates: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -41,6 +43,10 @@ class TaskRequest(BaseModel):
     timeout_seconds: int | None = None  # Override default timeout
     run_id: str | None = None  # Optional caller-provided execution id
     correlation_id: str | None = None
+    parent_worker_id: str | None = None
+    lineage_id: str | None = None
+    root_task_id: str | None = None
+    spawn_depth: int = 0
 
 
 class WorkerSpec(BaseModel):
@@ -48,6 +54,7 @@ class WorkerSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str
+    template_id: str = ""
     task: str
     inputs: dict[str, Any]
     system_prompt: str
@@ -60,6 +67,11 @@ class WorkerSpec(BaseModel):
     run_id: str = ""
     lifecycle: str = "ephemeral"
     correlation_id: str | None = None
+    parent_worker_id: str | None = None
+    lineage_id: str | None = None
+    root_task_id: str | None = None
+    spawn_depth: int = 0
+    effective_permissions: list[str] = Field(default_factory=list)
 
 
 class KnowledgeProposal(BaseModel):

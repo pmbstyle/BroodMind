@@ -20,6 +20,10 @@ class WorkerRecord(BaseModel):
     output: dict[str, Any] | None = None
     error: str | None = None
     tools_used: list[str] = Field(default_factory=list)
+    lineage_id: str | None = None
+    parent_worker_id: str | None = None
+    root_task_id: str | None = None
+    spawn_depth: int = 0
 
 
 class IntentRecord(BaseModel):
@@ -49,6 +53,8 @@ class WorkerTemplateRecord(BaseModel):
     model: str | None = None  # Optional model override
     max_thinking_steps: int = 10
     default_timeout_seconds: int = 300
+    can_spawn_children: bool = False
+    allowed_child_templates: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

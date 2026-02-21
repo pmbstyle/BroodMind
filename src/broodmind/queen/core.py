@@ -10,7 +10,6 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-
 from broodmind.intents.types import ActionIntent
 from broodmind.memory.canon import CanonService
 from broodmind.memory.service import MemoryService
@@ -42,6 +41,17 @@ _FOLLOWUP_TASKS: dict[int, asyncio.Task] = {}
 _INTERNAL_QUEUES: dict[int, asyncio.Queue] = {}
 _INTERNAL_TASKS: dict[int, asyncio.Task] = {}
 _QUEUE_IDLE_TIMEOUT_SECONDS = 300.0
+
+
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, value)
 
 
 def _publish_runtime_metrics(thinking_count: int = 0) -> None:
@@ -219,12 +229,37 @@ class Queen:
     _tg_send: callable | None = None
     _tg_progress: callable | None = None
     _tg_typing: callable | None = None
+    _spawn_limits: dict[str, int] | None = None
+    _worker_children: dict[str, set[str]] | None = None
+    _worker_lineage: dict[str, str] | None = None
+    _worker_depth: dict[str, int] | None = None
+    _lineage_children_total: dict[str, int] | None = None
+    _lineage_children_active: dict[str, set[str]] | None = None
 
     def __post_init__(self):
         if self._recent_tasks is None:
             self._recent_tasks = set()
         if self._approval_requesters is None:
             self._approval_requesters = {}
+        if self._worker_children is None:
+            self._worker_children = {}
+        if self._worker_lineage is None:
+            self._worker_lineage = {}
+        if self._worker_depth is None:
+            self._worker_depth = {}
+        if self._lineage_children_total is None:
+            self._lineage_children_total = {}
+        if self._lineage_children_active is None:
+            self._lineage_children_active = {}
+        if self._spawn_limits is None:
+            max_depth = _env_int("BROODMIND_WORKER_MAX_SPAWN_DEPTH", 2, minimum=0)
+            max_total = _env_int("BROODMIND_WORKER_MAX_CHILDREN_TOTAL", 20, minimum=1)
+            max_concurrent = _env_int("BROODMIND_WORKER_MAX_CHILDREN_CONCURRENT", 10, minimum=1)
+            self._spawn_limits = {
+                "max_depth": max_depth,
+                "max_children_total": max_total,
+                "max_children_concurrent": max_concurrent,
+            }
         self._thinking_count = 0
         self._tg_send = self.internal_send
         self._tg_progress = self.internal_progress_send
@@ -473,12 +508,30 @@ class Queen:
         model: str | None,
         timeout_seconds: int | None,
         scheduled_task_id: str | None = None,
+        parent_worker_id: str | None = None,
+        lineage_id: str | None = None,
+        root_task_id: str | None = None,
+        spawn_depth: int = 0,
     ) -> dict[str, Any]:
         from broodmind.logging_config import correlation_id_var
 
+        if parent_worker_id:
+            violation = self._check_child_spawn_limits(
+                lineage_id=lineage_id,
+                spawn_depth=spawn_depth,
+            )
+            if violation:
+                return {
+                    "status": "rejected",
+                    "reason": violation,
+                    "worker_id": None,
+                    "run_id": None,
+                }
+
         # Create a task signature for duplicate detection
         schedule_sig = scheduled_task_id or "-"
-        task_signature = f"{worker_id}:{schedule_sig}:{task[:100]}"  # Keep duplicate detection strict per schedule/task pair.
+        parent_sig = parent_worker_id or "-"
+        task_signature = f"{worker_id}:{schedule_sig}:{parent_sig}:{task[:100]}"  # Keep duplicate detection strict per schedule/task pair.
         if task_signature in self._recent_tasks:
             logger.warning("Duplicate worker task detected, skipping", worker_id=worker_id, task_prefix=task[:50])
             skipped_id = f"skipped-duplicate-{uuid4().hex[:8]}"
@@ -497,11 +550,26 @@ class Queen:
         self._recent_tasks.add(task_signature)
 
         run_id = str(uuid4())
+        effective_lineage_id = lineage_id or run_id
+        effective_root_task_id = root_task_id or run_id
+        effective_spawn_depth = max(0, int(spawn_depth))
+        self._register_worker_lineage(
+            run_id=run_id,
+            lineage_id=effective_lineage_id,
+            spawn_depth=effective_spawn_depth,
+            parent_worker_id=parent_worker_id,
+        )
         await self._emit_progress(
             chat_id,
             "queued",
             f"Queued worker '{worker_id}' as {run_id}.",
-            {"worker_id": run_id, "worker_template_id": worker_id},
+            {
+                "worker_id": run_id,
+                "worker_template_id": worker_id,
+                "lineage_id": effective_lineage_id,
+                "parent_worker_id": parent_worker_id,
+                "spawn_depth": effective_spawn_depth,
+            },
         )
         task_request = TaskRequest(
             worker_id=worker_id,
@@ -512,6 +580,10 @@ class Queen:
             timeout_seconds=timeout_seconds,
             run_id=run_id,
             correlation_id=correlation_id_var.get(),
+            parent_worker_id=parent_worker_id,
+            lineage_id=effective_lineage_id,
+            root_task_id=effective_root_task_id,
+            spawn_depth=effective_spawn_depth,
         )
 
         requester = self._approval_requesters.get(chat_id)
@@ -522,6 +594,7 @@ class Queen:
             requester = _telegram_requester
 
         async def _runner() -> None:
+            failed = False
             try:
                 await self._emit_progress(
                     chat_id,
@@ -530,8 +603,9 @@ class Queen:
                     {"worker_id": run_id, "worker_template_id": worker_id},
                 )
                 result = await self.runtime.run_task(task_request, approval_requester=requester)
+                worker_record = await asyncio.to_thread(self.store.get_worker, run_id)
+                failed = bool(not worker_record or worker_record.status in {"failed", "stopped"})
                 if scheduled_task_id and self.scheduler:
-                    worker_record = await asyncio.to_thread(self.store.get_worker, run_id)
                     if worker_record and worker_record.status == "completed":
                         self.scheduler.mark_executed(scheduled_task_id)
                         logger.info(
@@ -553,6 +627,7 @@ class Queen:
                     {"worker_id": run_id, "worker_template_id": worker_id},
                 )
             except Exception as exc:
+                failed = True
                 result = WorkerResult(summary=f"Worker error: {exc}", output={"error": str(exc)})
                 await self._emit_progress(
                     chat_id,
@@ -560,15 +635,104 @@ class Queen:
                     f"Worker {run_id} failed: {exc}",
                     {"worker_id": run_id, "worker_template_id": worker_id},
                 )
+            if failed:
+                await self._cleanup_orphan_children(
+                    parent_run_id=run_id,
+                    chat_id=chat_id,
+                    reason="parent_failed",
+                )
+            self._mark_worker_inactive(run_id)
             _enqueue_internal_result(self, chat_id, task, result)
         asyncio.create_task(_runner())
         await self._emit_progress(
             chat_id,
             "worker_started",
             f"Worker started: {run_id}",
-            {"worker_id": run_id, "worker_template_id": worker_id},
+            {
+                "worker_id": run_id,
+                "worker_template_id": worker_id,
+                "lineage_id": effective_lineage_id,
+                "parent_worker_id": parent_worker_id,
+                "spawn_depth": effective_spawn_depth,
+            },
         )
-        return {"status": "started", "run_id": run_id, "worker_id": run_id}
+        return {
+            "status": "started",
+            "run_id": run_id,
+            "worker_id": run_id,
+            "lineage_id": effective_lineage_id,
+            "parent_worker_id": parent_worker_id,
+            "root_task_id": effective_root_task_id,
+            "spawn_depth": effective_spawn_depth,
+        }
+
+    def _check_child_spawn_limits(self, *, lineage_id: str | None, spawn_depth: int) -> str | None:
+        limits = self._spawn_limits or {}
+        max_depth = int(limits.get("max_depth", 0))
+        max_children_total = int(limits.get("max_children_total", 1))
+        max_children_concurrent = int(limits.get("max_children_concurrent", 1))
+
+        if spawn_depth > max_depth:
+            return f"spawn depth {spawn_depth} exceeds max depth {max_depth}"
+
+        if not lineage_id:
+            return None
+
+        total_started = int((self._lineage_children_total or {}).get(lineage_id, 0))
+        if total_started >= max_children_total:
+            return (
+                f"lineage child limit reached ({total_started}/{max_children_total}); "
+                "cannot spawn more child workers"
+            )
+
+        active = len((self._lineage_children_active or {}).get(lineage_id, set()))
+        if active >= max_children_concurrent:
+            return (
+                f"lineage concurrent child limit reached ({active}/{max_children_concurrent}); "
+                "wait for running children to complete"
+            )
+        return None
+
+    def _register_worker_lineage(
+        self,
+        *,
+        run_id: str,
+        lineage_id: str,
+        spawn_depth: int,
+        parent_worker_id: str | None,
+    ) -> None:
+        self._worker_lineage[run_id] = lineage_id
+        self._worker_depth[run_id] = spawn_depth
+        if parent_worker_id:
+            self._worker_children.setdefault(parent_worker_id, set()).add(run_id)
+            self._lineage_children_total[lineage_id] = int(self._lineage_children_total.get(lineage_id, 0)) + 1
+            active = self._lineage_children_active.setdefault(lineage_id, set())
+            active.add(run_id)
+
+    def _mark_worker_inactive(self, run_id: str) -> None:
+        lineage_id = self._worker_lineage.get(run_id)
+        if not lineage_id:
+            return
+        active = self._lineage_children_active.get(lineage_id)
+        if active and run_id in active:
+            active.discard(run_id)
+            if not active:
+                self._lineage_children_active.pop(lineage_id, None)
+
+    async def _cleanup_orphan_children(self, *, parent_run_id: str, chat_id: int, reason: str) -> None:
+        child_ids = sorted(self._worker_children.get(parent_run_id, set()))
+        if not child_ids:
+            return
+        for child_id in child_ids:
+            stopped = await self.runtime.stop_worker(child_id)
+            self._mark_worker_inactive(child_id)
+            if stopped:
+                await self._emit_progress(
+                    chat_id,
+                    "child_stopped",
+                    f"Stopped orphan child worker {child_id} ({reason}).",
+                    {"worker_id": child_id, "reason": reason, "parent_worker_id": parent_run_id},
+                )
 
     async def _emit_progress(
         self,

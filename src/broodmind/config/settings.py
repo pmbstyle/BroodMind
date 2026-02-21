@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     worker_docker_host_workspace: str | None = Field(
         default=None, alias="BROODMIND_WORKER_DOCKER_HOST_WORKSPACE"
     )
+    worker_max_spawn_depth: int = Field(2, alias="BROODMIND_WORKER_MAX_SPAWN_DEPTH")
+    worker_max_children_total: int = Field(20, alias="BROODMIND_WORKER_MAX_CHILDREN_TOTAL")
+    worker_max_children_concurrent: int = Field(10, alias="BROODMIND_WORKER_MAX_CHILDREN_CONCURRENT")
 
     debug_prompts: bool = Field(False, alias="BROODMIND_DEBUG_PROMPTS")
 

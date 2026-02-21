@@ -109,7 +109,11 @@ class SQLiteStore(Store):
                 summary TEXT,
                 output_json TEXT,
                 error TEXT,
-                tools_used_json TEXT
+                tools_used_json TEXT,
+                lineage_id TEXT,
+                parent_worker_id TEXT,
+                root_task_id TEXT,
+                spawn_depth INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS intents (
@@ -334,12 +338,36 @@ class SQLiteStore(Store):
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN lineage_id TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN parent_worker_id TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN root_task_id TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN spawn_depth INTEGER NOT NULL DEFAULT 0")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def create_worker(self, record: WorkerRecord) -> None:
         self._conn.execute(
             """
-            INSERT INTO workers (id, status, task, granted_caps_json, created_at, updated_at, summary, output_json, error, tools_used_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO workers (
+                id, status, task, granted_caps_json, created_at, updated_at,
+                summary, output_json, error, tools_used_json,
+                lineage_id, parent_worker_id, root_task_id, spawn_depth
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
@@ -352,6 +380,10 @@ class SQLiteStore(Store):
                 json.dumps(record.output) if record.output else None,
                 record.error,
                 json.dumps(record.tools_used) if record.tools_used else None,
+                record.lineage_id,
+                record.parent_worker_id,
+                record.root_task_id,
+                int(record.spawn_depth or 0),
             ),
         )
         self._conn.commit()
@@ -891,6 +923,10 @@ class SQLiteStore(Store):
             output=_loads_json(row["output_json"]),
             error=_row_get(row, "error"),
             tools_used=_loads_json(_row_get(row, "tools_used_json"), []),
+            lineage_id=_row_get(row, "lineage_id"),
+            parent_worker_id=_row_get(row, "parent_worker_id"),
+            root_task_id=_row_get(row, "root_task_id"),
+            spawn_depth=int(_row_get(row, "spawn_depth", 0) or 0),
         )
 
     def _row_to_permit(self, row: sqlite3.Row) -> PermitRecord:

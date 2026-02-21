@@ -99,6 +99,7 @@ class WorkerRuntime:
         worker_id = task_request.run_id or str(uuid.uuid4())
         spec = WorkerSpec(
             id=worker_id,
+            template_id=template.id,
             task=task_request.task,
             inputs=task_request.inputs,
             system_prompt=template.system_prompt,
@@ -111,6 +112,11 @@ class WorkerRuntime:
             run_id=task_request.run_id or worker_id,
             lifecycle="ephemeral",
             correlation_id=task_request.correlation_id,
+            parent_worker_id=task_request.parent_worker_id,
+            lineage_id=task_request.lineage_id,
+            root_task_id=task_request.root_task_id,
+            spawn_depth=task_request.spawn_depth,
+            effective_permissions=list(template.required_permissions),
         )
 
         # Run worker
@@ -151,12 +157,22 @@ class WorkerRuntime:
                 granted_caps=spec.granted_capabilities,
                 created_at=now,
                 updated_at=now,
+                lineage_id=spec.lineage_id,
+                parent_worker_id=spec.parent_worker_id,
+                root_task_id=spec.root_task_id,
+                spawn_depth=spec.spawn_depth,
             ),
         )
         await self._append_audit(
             "worker_spawned",
             correlation_id=spec.id,
-            data={"task": spec.task[:200]},
+            data={
+                "task": spec.task[:200],
+                "template_id": spec.template_id,
+                "lineage_id": spec.lineage_id,
+                "parent_worker_id": spec.parent_worker_id,
+                "spawn_depth": spec.spawn_depth,
+            },
         )
 
         # Build environment

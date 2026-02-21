@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from broodmind.tools.registry import ToolSpec
 
@@ -100,6 +100,56 @@ def get_worker_tools() -> list[ToolSpec]:
             },
             permission="worker_manage",
             handler=_tool_start_worker,
+            is_async=True,
+        ),
+        ToolSpec(
+            name="start_child_worker",
+            description="Start a child worker from inside a worker context with lineage tracking and spawn-policy checks.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "worker_id": {
+                        "type": "string",
+                        "description": "Optional worker template ID (e.g., 'web_researcher'). Use 'auto' or omit to route automatically.",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Natural language task description for the child worker.",
+                    },
+                    "inputs": {
+                        "type": "object",
+                        "description": "Task-specific input data.",
+                        "additionalProperties": True,
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Override default tools for this task (optional).",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Override model for this task (optional).",
+                    },
+                    "timeout_seconds": {
+                        "type": "number",
+                        "description": "Override default timeout (optional).",
+                    },
+                    "required_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tool capabilities the selected worker should support.",
+                    },
+                    "required_permissions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional permissions the selected worker should include.",
+                    },
+                },
+                "required": ["task"],
+                "additionalProperties": False,
+            },
+            permission="worker_manage",
+            handler=_tool_start_child_worker,
             is_async=True,
         ),
         ToolSpec(
@@ -285,6 +335,15 @@ def get_worker_tools() -> list[ToolSpec]:
                         "type": "number",
                         "description": "Default timeout in seconds (default: 300).",
                     },
+                    "can_spawn_children": {
+                        "type": "boolean",
+                        "description": "Whether this worker template can spawn child workers.",
+                    },
+                    "allowed_child_templates": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Explicit whitelist of child template IDs this worker may spawn.",
+                    },
                 },
                 "required": ["id", "name", "description", "system_prompt"],
                 "additionalProperties": False,
@@ -318,6 +377,12 @@ def get_worker_tools() -> list[ToolSpec]:
                     "model": {"type": "string", "description": "New model override (optional)."},
                     "max_thinking_steps": {"type": "number", "description": "New max steps (optional)."},
                     "default_timeout_seconds": {"type": "number", "description": "New timeout (optional)."},
+                    "can_spawn_children": {"type": "boolean", "description": "Enable/disable child spawning (optional)."},
+                    "allowed_child_templates": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "New child-template whitelist (optional).",
+                    },
                 },
                 "required": ["id"],
                 "additionalProperties": False,
@@ -359,6 +424,8 @@ def _tool_list_workers(args: dict[str, object], ctx: dict[str, object]) -> str:
             "available_tools": t.available_tools,
             "required_permissions": t.required_permissions,
             "default_timeout_seconds": t.default_timeout_seconds,
+            "can_spawn_children": bool(getattr(t, "can_spawn_children", False)),
+            "allowed_child_templates": list(getattr(t, "allowed_child_templates", [])),
         })
 
     return json.dumps({
@@ -399,6 +466,8 @@ def _tool_create_worker_template(args: dict[str, object], ctx: dict[str, object]
     model = str(args.get("model", "")).strip() or None
     max_thinking_steps = int(args.get("max_thinking_steps")) if args.get("max_thinking_steps") else 10
     default_timeout_seconds = int(args.get("default_timeout_seconds")) if args.get("default_timeout_seconds") else 300
+    can_spawn_children = bool(args.get("can_spawn_children", False))
+    allowed_child_templates = _normalize_str_list(args.get("allowed_child_templates"))
 
     # Build worker.json content
     worker_config = {
@@ -411,6 +480,8 @@ def _tool_create_worker_template(args: dict[str, object], ctx: dict[str, object]
         "model": model,
         "max_thinking_steps": max_thinking_steps,
         "default_timeout_seconds": default_timeout_seconds,
+        "can_spawn_children": can_spawn_children,
+        "allowed_child_templates": allowed_child_templates,
     }
 
     # Write worker.json file
@@ -431,6 +502,8 @@ def _tool_create_worker_template(args: dict[str, object], ctx: dict[str, object]
         "description": description,
         "available_tools": available_tools,
         "required_permissions": required_permissions,
+        "can_spawn_children": can_spawn_children,
+        "allowed_child_templates": allowed_child_templates,
         "message": f"Worker template '{name}' created successfully at workers/{worker_id}/worker.json"
     }, ensure_ascii=False)
 
@@ -475,6 +548,10 @@ def _tool_update_worker_template(args: dict[str, object], ctx: dict[str, object]
         existing_config["max_thinking_steps"] = int(args.get("max_thinking_steps"))
     if args.get("default_timeout_seconds"):
         existing_config["default_timeout_seconds"] = int(args.get("default_timeout_seconds"))
+    if "can_spawn_children" in args:
+        existing_config["can_spawn_children"] = bool(args.get("can_spawn_children"))
+    if isinstance(args.get("allowed_child_templates"), list):
+        existing_config["allowed_child_templates"] = _normalize_str_list(args.get("allowed_child_templates"))
 
     # Write updated worker.json
     try:
@@ -487,6 +564,8 @@ def _tool_update_worker_template(args: dict[str, object], ctx: dict[str, object]
         "worker_id": worker_id,
         "name": existing_config["name"],
         "description": existing_config["description"],
+        "can_spawn_children": bool(existing_config.get("can_spawn_children", False)),
+        "allowed_child_templates": _normalize_str_list(existing_config.get("allowed_child_templates")),
         "message": f"Worker template '{existing_config['name']}' updated successfully at workers/{worker_id}/worker.json"
     }, ensure_ascii=False)
 
@@ -523,9 +602,26 @@ def _tool_delete_worker_template(args: dict[str, object], ctx: dict[str, object]
 
 
 async def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) -> str:
-    """Start a worker task with the specified worker template."""
+    """Start a worker task (queen or worker context)."""
+    return await _start_worker_common(args, ctx, require_worker_context=False)
+
+
+async def _tool_start_child_worker(args: dict[str, object], ctx: dict[str, object]) -> str:
+    """Start a child worker from a worker context only."""
+    return await _start_worker_common(args, ctx, require_worker_context=True)
+
+
+async def _start_worker_common(
+    args: dict[str, object],
+    ctx: dict[str, object],
+    *,
+    require_worker_context: bool,
+) -> str:
     queen: Queen = ctx["queen"]
     chat_id = int(ctx.get("chat_id") or 0)
+    caller_worker = ctx.get("worker")
+    if require_worker_context and caller_worker is None:
+        return "start_child_worker error: this tool can only be called from a worker context."
 
     worker_id = str(args.get("worker_id", "")).strip()
     task = str(args.get("task", "")).strip()
@@ -555,6 +651,17 @@ async def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) ->
     route_reason = str(resolution["router_reason"])
     route_score = float(resolution["router_score"]) if resolution["router_score"] is not None else None
 
+    child_ctx = _extract_child_context(caller_worker)
+    if child_ctx is not None:
+        policy_error = _validate_child_spawn_policy(
+            queen=queen,
+            parent_ctx=child_ctx,
+            child_template=template,
+            explicit_worker_id=worker_id,
+        )
+        if policy_error:
+            return policy_error
+
     launch = await queen._start_worker_async(
         worker_id=worker_id,
         task=task,
@@ -564,6 +671,10 @@ async def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) ->
         model=model,
         timeout_seconds=timeout_seconds,
         scheduled_task_id=scheduled_task_id,
+        parent_worker_id=child_ctx["run_id"] if child_ctx else None,
+        lineage_id=child_ctx["lineage_id"] if child_ctx else None,
+        root_task_id=child_ctx["root_task_id"] if child_ctx else None,
+        spawn_depth=(child_ctx["spawn_depth"] + 1) if child_ctx else 0,
     )
     status = str(launch.get("status", "started"))
     launched_worker_id = launch.get("worker_id")
@@ -587,6 +698,10 @@ async def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) ->
         "worker_id": launched_worker_id,
         "run_id": run_id,
         "scheduled_task_id": scheduled_task_id,
+        "lineage_id": launch.get("lineage_id"),
+        "parent_worker_id": launch.get("parent_worker_id"),
+        "root_task_id": launch.get("root_task_id"),
+        "spawn_depth": launch.get("spawn_depth"),
         "router_used": router_used,
         "router_reason": route_reason,
         "router_score": route_score,
@@ -597,6 +712,8 @@ async def _tool_start_worker(args: dict[str, object], ctx: dict[str, object]) ->
 async def _tool_start_workers_parallel(args: dict[str, object], ctx: dict[str, object]) -> str:
     queen: Queen = ctx["queen"]
     chat_id = int(ctx.get("chat_id") or 0)
+    caller_worker = ctx.get("worker")
+    child_ctx = _extract_child_context(caller_worker)
     tasks = args.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         return "start_workers_parallel error: tasks must be a non-empty array."
@@ -634,6 +751,15 @@ async def _tool_start_workers_parallel(args: dict[str, object], ctx: dict[str, o
 
         selected_worker_id = str(resolution["worker_id"])
         template = resolution["template"]
+        if child_ctx is not None:
+            policy_error = _validate_child_spawn_policy(
+                queen=queen,
+                parent_ctx=child_ctx,
+                child_template=template,
+                explicit_worker_id=selected_worker_id,
+            )
+            if policy_error:
+                return {"index": index, "status": "error", "error": policy_error}
         async with sem:
             launch = await queen._start_worker_async(
                 worker_id=selected_worker_id,
@@ -644,6 +770,10 @@ async def _tool_start_workers_parallel(args: dict[str, object], ctx: dict[str, o
                 model=model,
                 timeout_seconds=timeout_seconds,
                 scheduled_task_id=None,
+                parent_worker_id=child_ctx["run_id"] if child_ctx else None,
+                lineage_id=child_ctx["lineage_id"] if child_ctx else None,
+                root_task_id=child_ctx["root_task_id"] if child_ctx else None,
+                spawn_depth=(child_ctx["spawn_depth"] + 1) if child_ctx else 0,
             )
 
         return {
@@ -656,6 +786,10 @@ async def _tool_start_workers_parallel(args: dict[str, object], ctx: dict[str, o
             "router_used": bool(resolution["router_used"]),
             "router_reason": str(resolution["router_reason"]),
             "router_score": resolution["router_score"],
+            "lineage_id": launch.get("lineage_id"),
+            "parent_worker_id": launch.get("parent_worker_id"),
+            "root_task_id": launch.get("root_task_id"),
+            "spawn_depth": launch.get("spawn_depth"),
         }
 
     launches = await asyncio.gather(*[_launch(item, idx) for idx, item in enumerate(tasks)])
@@ -769,6 +903,10 @@ def _tool_get_worker_status(args: dict[str, object], ctx: dict[str, object]) -> 
         "status": worker.status,
         "worker_id": worker.id,
         "task": worker.task,
+        "lineage_id": worker.lineage_id,
+        "parent_worker_id": worker.parent_worker_id,
+        "root_task_id": worker.root_task_id,
+        "spawn_depth": worker.spawn_depth,
         "created_at": worker.created_at.isoformat(),
         "updated_at": worker.updated_at.isoformat(),
         "summary": worker.summary,
@@ -787,6 +925,10 @@ def _tool_list_active_workers(args: dict[str, object], ctx: dict[str, object]) -
             "worker_id": w.id,
             "status": w.status,
             "task": w.task,
+            "lineage_id": w.lineage_id,
+            "parent_worker_id": w.parent_worker_id,
+            "root_task_id": w.root_task_id,
+            "spawn_depth": w.spawn_depth,
             "created_at": w.created_at.isoformat(),
             "updated_at": w.updated_at.isoformat(),
             "summary": w.summary,
@@ -817,6 +959,10 @@ def _tool_get_worker_result(args: dict[str, object], ctx: dict[str, object]) -> 
         return json.dumps({
             "status": "completed",
             "worker_id": worker.id,
+            "lineage_id": worker.lineage_id,
+            "parent_worker_id": worker.parent_worker_id,
+            "root_task_id": worker.root_task_id,
+            "spawn_depth": worker.spawn_depth,
             "summary": worker.summary,
             "output": worker.output,
         }, ensure_ascii=False)
@@ -824,12 +970,20 @@ def _tool_get_worker_result(args: dict[str, object], ctx: dict[str, object]) -> 
         return json.dumps({
             "status": "failed",
             "worker_id": worker.id,
+            "lineage_id": worker.lineage_id,
+            "parent_worker_id": worker.parent_worker_id,
+            "root_task_id": worker.root_task_id,
+            "spawn_depth": worker.spawn_depth,
             "error": worker.error or "Unknown error",
         }, ensure_ascii=False)
     else:
         return json.dumps({
             "status": worker.status,
             "worker_id": worker.id,
+            "lineage_id": worker.lineage_id,
+            "parent_worker_id": worker.parent_worker_id,
+            "root_task_id": worker.root_task_id,
+            "spawn_depth": worker.spawn_depth,
             "message": f"Worker is still {worker.status}. Result not available yet.",
         }, ensure_ascii=False)
 
@@ -911,6 +1065,68 @@ def _resolve_worker_dir(base_dir: Path, worker_id: str) -> Path | None:
     except ValueError:
         return None
     return candidate
+
+
+def _extract_child_context(worker_obj: object) -> dict[str, Any] | None:
+    if worker_obj is None or not hasattr(worker_obj, "spec"):
+        return None
+    spec = getattr(worker_obj, "spec", None)
+    run_id = str(getattr(spec, "run_id", "") or getattr(spec, "id", "")).strip()
+    if not run_id:
+        return None
+    spawn_depth = int(getattr(spec, "spawn_depth", 0) or 0)
+    lineage_id = str(getattr(spec, "lineage_id", "") or run_id).strip()
+    root_task_id = str(getattr(spec, "root_task_id", "") or run_id).strip()
+    parent_template_id = str(getattr(spec, "template_id", "")).strip()
+    effective_permissions = _normalize_str_list(getattr(spec, "effective_permissions", []))
+    return {
+        "run_id": run_id,
+        "spawn_depth": spawn_depth,
+        "lineage_id": lineage_id,
+        "root_task_id": root_task_id,
+        "template_id": parent_template_id,
+        "effective_permissions": effective_permissions,
+    }
+
+
+def _validate_child_spawn_policy(
+    *,
+    queen: Queen,
+    parent_ctx: dict[str, Any],
+    child_template: object,
+    explicit_worker_id: str,
+) -> str | None:
+    parent_template_id = str(parent_ctx.get("template_id", "")).strip()
+    if not parent_template_id:
+        return "start_child_worker error: parent worker template is unknown; cannot spawn children."
+    parent_template = queen.store.get_worker_template(parent_template_id)
+    if not parent_template:
+        return f"start_child_worker error: parent template '{parent_template_id}' not found."
+
+    can_spawn = bool(getattr(parent_template, "can_spawn_children", False))
+    if not can_spawn:
+        return (
+            f"start_child_worker error: parent template '{parent_template_id}' cannot spawn children "
+            "(set can_spawn_children=true)."
+        )
+
+    allowed = set(_normalize_str_list(getattr(parent_template, "allowed_child_templates", [])))
+    child_template_id = str(getattr(child_template, "id", explicit_worker_id)).strip()
+    if child_template_id not in allowed:
+        return (
+            f"start_child_worker error: child template '{child_template_id}' is not allowed by parent template "
+            f"'{parent_template_id}'."
+        )
+
+    parent_permissions = set(_normalize_str_list(parent_ctx.get("effective_permissions", [])))
+    child_permissions = set(_normalize_str_list(getattr(child_template, "required_permissions", [])))
+    if not child_permissions.issubset(parent_permissions):
+        missing = sorted(child_permissions - parent_permissions)
+        return (
+            "start_child_worker error: child template requests permissions not held by parent "
+            f"({', '.join(missing)})."
+        )
+    return None
 
 
 def _resolve_worker_for_start(

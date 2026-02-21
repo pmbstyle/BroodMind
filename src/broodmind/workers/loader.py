@@ -120,6 +120,14 @@ def _load_worker_template(worker_file: Path) -> WorkerTemplateRecord | None:
         logger.error(f"default_timeout_seconds must be an int in {worker_file}")
         return None
 
+    can_spawn_children = bool(config.get("can_spawn_children", False))
+    allowed_child_templates = config.get("allowed_child_templates", [])
+    if not isinstance(allowed_child_templates, list) or any(
+        not isinstance(item, str) for item in allowed_child_templates
+    ):
+        logger.error(f"allowed_child_templates must be a list of strings in {worker_file}")
+        return None
+
     # Get file modification time for updated_at
     mtime = worker_file.stat().st_mtime
     updated_at = datetime.fromtimestamp(mtime, tz=UTC)
@@ -135,6 +143,8 @@ def _load_worker_template(worker_file: Path) -> WorkerTemplateRecord | None:
         model=config.get("model"),
         max_thinking_steps=config["max_thinking_steps"],
         default_timeout_seconds=config["default_timeout_seconds"],
+        can_spawn_children=can_spawn_children,
+        allowed_child_templates=allowed_child_templates,
         created_at=updated_at,  # Use file mtime for both
         updated_at=updated_at,
     )
