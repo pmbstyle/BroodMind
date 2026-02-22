@@ -209,19 +209,29 @@ class WorkerRuntime:
                     cwd=str(worker_dir),
                     env=env,
                 )
+                attempt_timeout = _attempt_timeout_seconds(
+                    base_timeout=spec.timeout_seconds,
+                    attempt=attempts,
+                    tools=spec.available_tools,
+                )
                 logger.info(
-                    "WorkerRuntime process started: id=%s pid=%s attempt=%s/%s",
+                    "WorkerRuntime process started: id=%s pid=%s attempt=%s/%s timeout_budget=%ss",
                     spec.id,
                     process.pid,
                     attempts,
                     max_attempts,
+                    int(attempt_timeout),
                 )
                 self._running[spec.id] = process
                 await asyncio.to_thread(self.store.update_worker_status, spec.id, "running")
                 await self._append_audit(
                     "worker_started",
                     correlation_id=spec.id,
-                    data={"attempt": attempts, "max_attempts": max_attempts},
+                    data={
+                        "attempt": attempts,
+                        "max_attempts": max_attempts,
+                        "timeout_budget_seconds": int(attempt_timeout),
+                    },
                 )
                 stderr_task: asyncio.Task[None] | None = None
                 if process.stderr is not None:
@@ -230,7 +240,7 @@ class WorkerRuntime:
                 try:
                     result = await asyncio.wait_for(
                         self._read_loop(spec, process, approval_requester=approval_requester),
-                        timeout=spec.timeout_seconds,
+                        timeout=attempt_timeout,
                     )
                     break
                 except Exception as exc:
@@ -799,3 +809,18 @@ def _classify_recoverable_error(exc: Exception) -> tuple[bool, str]:
     if "connection reset" in lowered or "temporarily unavailable" in lowered:
         return True, "transient_io"
     return False, "non_recoverable"
+
+
+def _attempt_timeout_seconds(base_timeout: int, attempt: int, tools: list[str]) -> float:
+    """Compute per-attempt timeout budget with a gentle boost for slow/network-heavy workloads."""
+    timeout = float(max(10, int(base_timeout)))
+    lowered_tools = {str(t).lower() for t in tools}
+    if any(
+        marker in name
+        for name in lowered_tools
+        for marker in ("mcp_", "web_", "browser", "fetch", "search", "crawl")
+    ):
+        timeout *= 1.25
+    if attempt > 1:
+        timeout *= 1.2
+    return min(timeout, 1800.0)
