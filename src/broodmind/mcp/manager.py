@@ -34,6 +34,18 @@ _MCP_PERMANENT_ERROR_THRESHOLD = 2
 _MCP_PERMANENT_ERROR_OPEN_SECONDS = 300.0
 _MCP_TRANSIENT_ERROR_THRESHOLD = 5
 _MCP_TRANSIENT_ERROR_OPEN_SECONDS = 60.0
+_MCP_DEFAULT_TIMEOUT_SECONDS = 120.0
+_MCP_SLOW_TIMEOUT_SECONDS = 300.0
+_MCP_SLOW_TOOL_HINTS = (
+    "search",
+    "fetch",
+    "crawl",
+    "thread",
+    "inbox",
+    "mail",
+    "list_",
+    "query",
+)
 
 class MCPManager:
     def __init__(self, workspace_dir: Path):
@@ -219,35 +231,80 @@ class MCPManager:
             await exit_stack.aclose()
             logger.info("MCP server resources released", server_id=config.id)
 
-    async def call_tool(self, server_id: str, tool_name: str, args: Dict[str, Any]) -> Any:
+    async def call_tool(
+        self,
+        server_id: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        allow_name_fallback: bool = False,
+    ) -> Any:
         session = self.sessions.get(server_id)
         if not session:
             raise RuntimeError(f"MCP session '{server_id}' is not active.")
 
-        state_key = (server_id, tool_name)
-        now = time.monotonic()
-        state = self._tool_failure_state.get(state_key)
-        if state and float(state.get("open_until", 0.0)) > now:
-            remaining = max(1, int(float(state["open_until"]) - now))
-            last_class = str(state.get("classification", "unknown"))
-            raise RuntimeError(
-                f"MCP tool '{tool_name}' on '{server_id}' is temporarily paused for {remaining}s "
-                f"after repeated '{last_class}' failures. Try a fallback path or a different tool."
-            )
+        tool_candidates = [tool_name]
+        alt_name = _alternate_tool_name(tool_name) if allow_name_fallback else None
+        if alt_name:
+            tool_candidates.append(alt_name)
 
-        try:
-            result = await session.call_tool(tool_name, arguments=args)
-            self._tool_failure_state.pop(state_key, None)
-            return result
-        except Exception as exc:
-            error_info = _classify_mcp_call_error(exc)
+        timeout_seconds = _mcp_timeout_seconds(tool_name, args)
+        last_exc: Exception | None = None
+        for index, candidate_name in enumerate(tool_candidates):
+            state_key = (server_id, candidate_name)
+            now = time.monotonic()
+            state = self._tool_failure_state.get(state_key)
+            if state and float(state.get("open_until", 0.0)) > now:
+                remaining = max(1, int(float(state["open_until"]) - now))
+                last_class = str(state.get("classification", "unknown"))
+                raise RuntimeError(
+                    f"MCP tool '{candidate_name}' on '{server_id}' is temporarily paused for {remaining}s "
+                    f"after repeated '{last_class}' failures. Try a fallback path or a different tool."
+                )
+
+            try:
+                result = await asyncio.wait_for(
+                    session.call_tool(candidate_name, arguments=args),
+                    timeout=timeout_seconds,
+                )
+                self._tool_failure_state.pop(state_key, None)
+                if index > 0:
+                    logger.warning(
+                        "MCP tool name fallback succeeded",
+                        server_id=server_id,
+                        requested_tool=tool_name,
+                        resolved_tool=candidate_name,
+                    )
+                return result
+            except asyncio.TimeoutError as exc:
+                last_exc = RuntimeError(
+                    f"MCP call timed out after {int(timeout_seconds)}s for '{candidate_name}' on '{server_id}'."
+                )
+                exc_to_classify: Exception = last_exc
+            except Exception as exc:
+                last_exc = exc
+                exc_to_classify = exc
+                if (
+                    index == 0
+                    and len(tool_candidates) > 1
+                    and _is_tool_not_found_error(exc)
+                ):
+                    logger.warning(
+                        "Retrying MCP call with alternate tool name",
+                        server_id=server_id,
+                        requested_tool=tool_name,
+                        alternate_tool=tool_candidates[1],
+                    )
+                    continue
+
+            error_info = _classify_mcp_call_error(exc_to_classify)
             entry = self._tool_failure_state.get(
                 state_key,
                 {"count": 0, "open_until": 0.0, "classification": error_info["classification"]},
             )
             entry["count"] = int(entry.get("count", 0)) + 1
             entry["classification"] = error_info["classification"]
-            entry["last_error"] = str(exc)
+            entry["last_error"] = str(exc_to_classify)
 
             if error_info["retryable"]:
                 if entry["count"] >= _MCP_TRANSIENT_ERROR_THRESHOLD:
@@ -270,8 +327,12 @@ class MCPManager:
 
             raise RuntimeError(
                 f"[{error_info['classification']}] {error_info['hint']} "
-                f"(server={server_id}, tool={tool_name})"
-            ) from exc
+                f"(server={server_id}, tool={candidate_name})"
+            ) from exc_to_classify
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError(f"MCP call failed for '{tool_name}' on '{server_id}'")
 
     def _generate_handler(self, server_id: str, tool_name: str):
         async def handler(args: Dict[str, Any], ctx: Dict[str, Any]) -> Any:
@@ -423,3 +484,34 @@ def _classify_mcp_call_error(error: Exception) -> dict[str, Any]:
         "retryable": True,
         "hint": "MCP call failed with an unclassified error.",
     }
+
+
+def _alternate_tool_name(tool_name: str) -> str | None:
+    if "_" in tool_name:
+        alt = tool_name.replace("_", "-")
+        return alt if alt != tool_name else None
+    if "-" in tool_name:
+        alt = tool_name.replace("-", "_")
+        return alt if alt != tool_name else None
+    return None
+
+
+def _is_tool_not_found_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return "unknown tool" in text or "not found" in text
+
+
+def _mcp_timeout_seconds(tool_name: str, args: Dict[str, Any]) -> float:
+    if isinstance(args, dict):
+        explicit = args.get("timeout_seconds")
+        if explicit is not None:
+            try:
+                value = float(explicit)
+                if value > 0:
+                    return max(5.0, min(value, 600.0))
+            except Exception:
+                pass
+    lowered = tool_name.lower()
+    if any(hint in lowered for hint in _MCP_SLOW_TOOL_HINTS):
+        return _MCP_SLOW_TIMEOUT_SECONDS
+    return _MCP_DEFAULT_TIMEOUT_SECONDS

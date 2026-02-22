@@ -439,7 +439,12 @@ class WorkerRuntime:
                 
                 try:
                     logger.info("Executing MCP call for worker", worker_id=spec.id, server_id=server_id, tool=tool_name)
-                    result = await _call_mcp_with_name_fallback(session, str(tool_name), args)
+                    result = await self.mcp_manager.call_tool(
+                        str(server_id),
+                        str(tool_name),
+                        args,
+                        allow_name_fallback=True,
+                    )
                     # Convert MCP content objects to something serializable
                     content = [c.model_dump() if hasattr(c, "model_dump") else str(c) for c in result.content]
                     await self._write_to_worker(process, {"type": "mcp_result", "result": content})
