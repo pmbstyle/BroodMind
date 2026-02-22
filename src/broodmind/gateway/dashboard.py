@@ -627,6 +627,21 @@ def _dashboard_html() -> str:
       document.getElementById(id).textContent = text;
     }
 
+    function formatTimestampLocal(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "never";
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return raw;
+      const pad2 = (n) => String(n).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      const mm = pad2(d.getMonth() + 1);
+      const dd = pad2(d.getDate());
+      const hh = pad2(d.getHours());
+      const mi = pad2(d.getMinutes());
+      const ss = pad2(d.getSeconds());
+      return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+    }
+
     function ensureChart() {
       if (chart) return chart;
       const ctx = document.getElementById("activity-chart");
@@ -703,7 +718,7 @@ def _dashboard_html() -> str:
           "<td class='" + statusClass(w.status) + "'><strong>" + esc(w.status) + "</strong></td>" +
           "<td title='" + esc(taskRaw) + "'>" + esc(taskShort) + "</td>" +
           "<td class='mono'>" + esc(lastTool) + "</td>" +
-          "<td class='mono'>" + esc(w.updated_at) + "</td>" +
+          "<td class='mono'>" + esc(formatTimestampLocal(w.updated_at)) + "</td>" +
           "</tr>";
       });
       document.getElementById("workers-table").innerHTML = rows.length ? rows.join("") : "<tr><td colspan='5'>No workers</td></tr>";
@@ -803,7 +818,7 @@ def _dashboard_html() -> str:
 
         document.getElementById("meta").textContent =
           "Last refresh " + new Date().toLocaleString() +
-          " | heartbeat " + (data.system.last_heartbeat || "never") +
+          " | heartbeat " + formatTimestampLocal(data.system.last_heartbeat) +
           " | pid " + (data.system.pid || "N/A");
       } catch (err) {
         errorEl.textContent = "Dashboard request failed: " + err;
