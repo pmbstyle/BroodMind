@@ -345,7 +345,7 @@ def _get_queen_tools(queen: Any, chat_id: int) -> tuple[list[ToolSpec], dict[str
     mcp_manager = getattr(queen, "mcp_manager", None)
     tool_specs = filter_tools(get_tools(mcp_manager=mcp_manager), permissions=perms)
     # Remove raw fetch tools from Queen; only workers are allowed to fetch raw web content.
-    tool_specs = [spec for spec in tool_specs if spec.name not in {"web_fetch", "markdown_new_fetch"}]
+    tool_specs = [spec for spec in tool_specs if spec.name not in {"web_fetch", "markdown_new_fetch", "fetch_plan_tool"}]
     return tool_specs, ctx
 
 

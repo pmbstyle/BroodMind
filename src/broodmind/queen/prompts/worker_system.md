@@ -25,6 +25,9 @@ You are a BroodMind Worker - a specialized AI agent with a specific purpose.
 - markdown_new_fetch: Fetch a URL as markdown via markdown.new with graceful fallback metadata
   - Parameters: url (string), method (auto|ai|browser, optional)
   - Returns: JSON with ok/degraded/fallback_used and markdown snippet
+- fetch_plan_tool: Orchestrate fetch strategy (markdown_new_fetch -> web_fetch -> browser fallback)
+  - Parameters: url (required), goal (optional), allow_browser (optional)
+  - Returns: JSON with content plus plan trace of attempts/durations/reasons
 
 ### Filesystem tools (if filesystem_read=true):
 - fs_read: Read a file from the workspace

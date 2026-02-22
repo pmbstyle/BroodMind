@@ -12,6 +12,7 @@ from broodmind.tools.browser_tools import (
 from broodmind.tools.canon_tools import manage_canon, search_canon
 from broodmind.tools.download_file import download_file
 from broodmind.tools.exec_run import exec_run
+from broodmind.tools.fetch_plan import fetch_plan_tool
 from broodmind.tools.filesystem import fs_delete, fs_list, fs_move, fs_read, fs_write
 from broodmind.tools.llm_task import run_llm_subtask
 from broodmind.tools.ops_tools import (
@@ -276,6 +277,50 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
             },
             permission="network",
             handler=lambda args, ctx: markdown_new_fetch(args),
+            is_async=True,
+        ),
+        ToolSpec(
+            name="fetch_plan_tool",
+            description="Orchestrate URL fetching across markdown_new_fetch, web_fetch, and browser fallback with a traceable execution plan.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to fetch (http/https only)."},
+                    "goal": {
+                        "type": "string",
+                        "description": "Fetch goal profile.",
+                        "enum": ["quick_summary", "structured_extract", "full_content"],
+                    },
+                    "prefer_markdown": {
+                        "type": "boolean",
+                        "description": "Try markdown_new_fetch first (default true).",
+                    },
+                    "allow_browser": {
+                        "type": "boolean",
+                        "description": "Allow browser fallback when direct fetch content is insufficient (default true).",
+                    },
+                    "close_browser": {
+                        "type": "boolean",
+                        "description": "Close browser session after browser fallback attempt (default true).",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Max characters in returned content snippet (200-200000).",
+                    },
+                    "min_content_chars": {
+                        "type": "integer",
+                        "description": "Minimum content threshold for considering an attempt successful.",
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Total time budget across all fetch attempts (5-300).",
+                    },
+                },
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+            permission="network",
+            handler=lambda args, ctx: fetch_plan_tool(args, ctx),
             is_async=True,
         ),
         ToolSpec(
