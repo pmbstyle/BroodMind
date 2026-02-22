@@ -101,6 +101,14 @@ class WorkerRuntime:
         # Global MCP tools are intentionally NOT auto-injected.
         # Workers only receive MCP tools explicitly listed in task_request/tools or template available_tools.
 
+        requested_model = task_request.model or template.model
+        if requested_model:
+            logger.info(
+                "Worker model override ignored; routing to Queen/provider default model",
+                worker_id=task_request.worker_id,
+                requested_model=requested_model,
+            )
+
         # Create worker spec
         worker_id = task_request.run_id or str(uuid.uuid4())
         spec = WorkerSpec(
@@ -111,7 +119,7 @@ class WorkerRuntime:
             system_prompt=template.system_prompt,
             available_tools=requested_tool_names,
             mcp_tools=mcp_tools_data,
-            model=task_request.model or template.model,
+            model=None,
             granted_capabilities=[c.model_dump() for c in granted],
             timeout_seconds=task_request.timeout_seconds or template.default_timeout_seconds,
             max_thinking_steps=template.max_thinking_steps,
