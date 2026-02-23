@@ -179,6 +179,7 @@ def _build_snapshot(settings: Settings, store: SQLiteStore, last: int) -> dict[s
             "topology": [
                 {
                     "id": w.id,
+                    "template_name": w.template_name or w.template_id or "",
                     "status": w.status,
                     "task": w.task,
                     "updated_at": w.updated_at.isoformat(),
@@ -191,6 +192,7 @@ def _build_snapshot(settings: Settings, store: SQLiteStore, last: int) -> dict[s
             "recent": [
                 {
                     "id": w.id,
+                    "template_name": w.template_name or w.template_id or "",
                     "status": w.status,
                     "task": w.task,
                     "updated_at": w.updated_at.isoformat(),
@@ -713,8 +715,12 @@ def _dashboard_html() -> str:
         const lastTool = (Array.isArray(w.tools_used) && w.tools_used.length > 0) ? w.tools_used[w.tools_used.length - 1] : "-";
         const taskRaw = String(w.task || "");
         const taskShort = taskRaw.length > 220 ? (taskRaw.slice(0, 217) + "...") : taskRaw;
+        const fullId = String(w.id || "");
+        const shortId = fullId.includes("-") ? fullId.split("-")[0] : fullId.slice(0, 8);
+        const workerName = String(w.template_name || "").trim();
+        const workerDisplay = workerName ? (workerName + " (" + shortId + ")") : shortId;
         return "<tr>" +
-          "<td class='mono'>" + esc(w.id) + "</td>" +
+          "<td class='mono' title='" + esc(fullId) + "'>" + esc(workerDisplay) + "</td>" +
           "<td class='" + statusClass(w.status) + "'><strong>" + esc(w.status) + "</strong></td>" +
           "<td title='" + esc(taskRaw) + "'>" + esc(taskShort) + "</td>" +
           "<td class='mono'>" + esc(lastTool) + "</td>" +
@@ -775,9 +781,11 @@ def _dashboard_html() -> str:
         const parent = w.parent_worker_id ? ("child of " + String(w.parent_worker_id).slice(0, 8)) : "root worker";
         const wid = String(w.id || "");
         const shortId = wid.includes("-") ? wid.split("-")[0] : wid.slice(0, 8);
+        const workerName = String(w.template_name || "").trim();
+        const workerLabel = workerName ? (workerName + " (" + shortId + ")") : shortId;
         return "<div class='topo-row' style='margin-left:" + left + "px'>" +
           "<div class='topo-head'>" +
-          "<span class='topo-id'>" + esc(shortId) + "</span>" +
+          "<span class='topo-id' title='" + esc(wid) + "'>" + esc(workerLabel) + "</span>" +
           "<span class='topo-badge'><span class='pulse'></span>" + esc(parent) + "</span>" +
           "</div>" +
           "<div class='topo-task'>" + esc(w.task || "") + "</div>" +
@@ -794,7 +802,7 @@ def _dashboard_html() -> str:
         if (!rsp.ok) throw new Error("API " + rsp.status);
         const data = await rsp.json();
 
-        setKpi("system-running", data.system.running ? "RUNNING" : "STOPPED", data.system.running ? "ok" : "bad");
+        setKpi("system-running", data.system.running ? "Running" : "Stopped", data.system.running ? "ok" : "bad");
         setKpi("queen-state", data.queen.state || "-", statusClass(data.queen.state));
         setKpi("workers-running", String(data.workers.running || 0), (data.workers.running || 0) > 0 ? "ok" : "warn");
         setKpi("workers-failed", String(data.workers.failed || 0), (data.workers.failed || 0) > 0 ? "bad" : "ok");

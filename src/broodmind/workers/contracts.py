@@ -55,6 +55,7 @@ class WorkerSpec(BaseModel):
 
     id: str
     template_id: str = ""
+    template_name: str | None = None
     task: str
     inputs: dict[str, Any]
     system_prompt: str

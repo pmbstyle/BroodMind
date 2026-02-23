@@ -24,6 +24,8 @@ class WorkerRecord(BaseModel):
     parent_worker_id: str | None = None
     root_task_id: str | None = None
     spawn_depth: int = 0
+    template_id: str | None = None
+    template_name: str | None = None
 
 
 class IntentRecord(BaseModel):

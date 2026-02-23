@@ -115,6 +115,7 @@ class WorkerRuntime:
         spec = WorkerSpec(
             id=worker_id,
             template_id=template.id,
+            template_name=template.name,
             task=task_request.task,
             inputs=task_request.inputs,
             system_prompt=template.system_prompt,
@@ -176,6 +177,8 @@ class WorkerRuntime:
                 parent_worker_id=spec.parent_worker_id,
                 root_task_id=spec.root_task_id,
                 spawn_depth=spec.spawn_depth,
+                template_id=spec.template_id or None,
+                template_name=spec.template_name,
             ),
         )
         await self._append_audit(

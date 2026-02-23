@@ -113,7 +113,9 @@ class SQLiteStore(Store):
                 lineage_id TEXT,
                 parent_worker_id TEXT,
                 root_task_id TEXT,
-                spawn_depth INTEGER NOT NULL DEFAULT 0
+                spawn_depth INTEGER NOT NULL DEFAULT 0,
+                template_id TEXT,
+                template_name TEXT
             );
 
             CREATE TABLE IF NOT EXISTS intents (
@@ -358,6 +360,16 @@ class SQLiteStore(Store):
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN template_id TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self._conn.execute("ALTER TABLE workers ADD COLUMN template_name TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def create_worker(self, record: WorkerRecord) -> None:
         self._conn.execute(
@@ -365,9 +377,10 @@ class SQLiteStore(Store):
             INSERT INTO workers (
                 id, status, task, granted_caps_json, created_at, updated_at,
                 summary, output_json, error, tools_used_json,
-                lineage_id, parent_worker_id, root_task_id, spawn_depth
+                lineage_id, parent_worker_id, root_task_id, spawn_depth,
+                template_id, template_name
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
@@ -384,6 +397,8 @@ class SQLiteStore(Store):
                 record.parent_worker_id,
                 record.root_task_id,
                 int(record.spawn_depth or 0),
+                record.template_id,
+                record.template_name,
             ),
         )
         self._conn.commit()
@@ -927,6 +942,8 @@ class SQLiteStore(Store):
             parent_worker_id=_row_get(row, "parent_worker_id"),
             root_task_id=_row_get(row, "root_task_id"),
             spawn_depth=int(_row_get(row, "spawn_depth", 0) or 0),
+            template_id=_row_get(row, "template_id"),
+            template_name=_row_get(row, "template_name"),
         )
 
     def _row_to_permit(self, row: sqlite3.Row) -> PermitRecord:
