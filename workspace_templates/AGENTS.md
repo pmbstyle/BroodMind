@@ -58,6 +58,27 @@ You wake up fresh each session. Persist important continuity to files:
 
 If you need to remember something, write it down.
 
+## Context Reset Protocol
+
+Use `queen_context_reset` when context is overloaded and focus quality drops.
+
+- Default mode: `soft`
+- `hard` mode is allowed only with explicit confirmation
+- Always include a structured handoff:
+  - `goal_now`, `done`, `open_threads`, `critical_constraints`, `next_step`
+  - optional: `current_interest`, `pending_human_input`, `cognitive_state`, `confidence`
+
+Guardrails:
+- If confidence is below `0.7`, require confirmation before reset.
+- If there are `2` resets in a row without progress, require confirmation.
+- After reset, do not autopilot: first choose one mode: `continue`, `clarify`, or `replan`.
+
+Reset artifacts (read/write):
+- `memory/handoff.md`
+- `memory/handoff.json`
+- `memory/context-audit.md`
+- `memory/context-audit.jsonl`
+
 ## Required Bootstrap Files
 
 - `AGENTS.md` (this file): operating instructions
