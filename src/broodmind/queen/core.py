@@ -14,6 +14,7 @@ from uuid import uuid4
 import structlog
 from broodmind.intents.types import ActionIntent
 from broodmind.memory.canon import CanonService
+from broodmind.memory.memchain import memchain_record
 from broodmind.memory.service import MemoryService
 from broodmind.scheduler.service import SchedulerService
 from broodmind.mcp.manager import MCPManager
@@ -727,6 +728,16 @@ class Queen:
 
         workspace_dir = Path(os.getenv("BROODMIND_WORKSPACE_DIR", "workspace")).resolve()
         file_info = await asyncio.to_thread(_persist_context_reset_files, workspace_dir, handoff)
+        memchain_info: dict[str, Any] | None = None
+        try:
+            memchain_info = await asyncio.to_thread(
+                memchain_record,
+                workspace_dir,
+                reason="context_reset",
+                meta={"mode": mode, "chat_id": chat_id, "source": "queen_context_reset"},
+            )
+        except Exception as exc:
+            logger.warning("Memchain record failed during context reset", chat_id=chat_id, error=str(exc))
 
         deleted_entries = await asyncio.to_thread(
             self.store.delete_memory_entries_by_chat,
@@ -758,6 +769,7 @@ class Queen:
                     "requires_confirmation_for": requires_confirm_reasons,
                     "health_snapshot": health,
                     "files": file_info,
+                    "memchain": memchain_info or {},
                 },
             ),
         )
@@ -768,6 +780,7 @@ class Queen:
             "deleted_entries": deleted_entries,
             "handoff": handoff,
             "files": file_info,
+            "memchain": memchain_info or {},
             "health_before": health,
             "requires_confirmation_for": requires_confirm_reasons,
             "message": "Context reset completed. Wake-up handoff is queued for the next turn.",

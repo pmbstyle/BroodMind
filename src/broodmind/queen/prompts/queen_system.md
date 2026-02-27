@@ -223,7 +223,8 @@ When you receive a "heartbeat" trigger:
 1.  Call `check_schedule` and parse its JSON result.
 1.5. Read `context_health` from the `check_schedule` JSON payload.
 1.6. If `context_health` is missing, call `queen_context_health` and use that output.
-1.7. Apply reset decision rules:
+1.7. If memory/config integrity is in doubt, call `queen_memchain_status` or `queen_memchain_verify`.
+1.8. Apply reset decision rules:
     - `WATCH` when any one signal crosses early threshold:
       - `context_size_estimate >= 90000`
       - `repetition_score >= 0.70`
@@ -251,6 +252,7 @@ When you receive a "heartbeat" trigger:
     - `❌ Tool schema error` for MCP schema/contract mismatches.
 5.  If no tasks are due, return exactly `HEARTBEAT_OK`.
 6.  If context is overloaded (`RESET_SOON`), call `queen_context_reset` in `soft` mode with a concise handoff.
+7.  After major memory/config updates, call `queen_memchain_record` with a short reason.
     - If the tool asks for confirmation, ask the user and then retry with `confirm=true`.
 
 ## Schedule Management

@@ -148,6 +148,20 @@ uv run broodmind logs --follow
   - `context_size_estimate`, `repetition_score`, `error_streak`, `no_progress_turns`, `resets_since_progress`, `overload_score`
   - available directly as `context_health` in `check_schedule` JSON
 
+#### Memory Integrity (MemChain)
+
+- Purpose: tamper-evident chain for critical workspace memory/config.
+- Tracked files:
+  - `workspace/memory/canon/facts.md`
+  - `workspace/memory/canon/decisions.md`
+  - `workspace/memory/canon/failures.md`
+  - `workspace/MEMORY.md`
+  - `workspace/SOUL.md`
+  - `workspace/USER.md`
+  - `workspace/config/mcp.json`
+- `queen_context_reset` automatically records a memchain snapshot.
+- If memchain integrity is broken, bootstrap injects an integrity warning into Queen context.
+
 ### Workers
 
 - Worker templates are file-based under `workspace/workers/<id>/worker.json`
@@ -169,7 +183,7 @@ Examples:
 - Web: `web_search`, `web_fetch`
 - Execution: `exec_run`
 - Worker management: `list_workers`, `start_worker`, `start_child_worker`, `start_workers_parallel`, `synthesize_worker_results`, `get_worker_status`, `get_worker_result`
-- Self-management: `queen_context_health`, `queen_context_reset`, `self_control`
+- Self-management: `queen_context_health`, `queen_context_reset`, `queen_memchain_init`, `queen_memchain_record`, `queen_memchain_verify`, `queen_memchain_status`, `self_control`
 
 `start_worker` supports worker specialization routing:
 
@@ -212,6 +226,7 @@ uv run broodmind sync-worker-templates --overwrite
 uv run broodmind memory stats
 uv run broodmind memory cleanup --dry-run
 uv run broodmind memory cleanup --keep-days 30 --keep-count 1000
+
 ```
 
 ## Configuration

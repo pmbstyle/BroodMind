@@ -89,6 +89,14 @@ Operational thresholds (preemptive reset):
 - Use early `soft` reset in RESET_SOON state rather than waiting for quality collapse.
 - In heartbeat, prefer metrics from `check_schedule.context_health`; if missing, call `queen_context_health`.
 
+Memory integrity (MemChain):
+- Use tamper-evident chain snapshots for critical memory/config files.
+- Chain files:
+  - `memory/memchain.jsonl`
+  - `memory/memchain_head.txt`
+- Queen tools: `queen_memchain_init`, `queen_memchain_record`, `queen_memchain_verify`, `queen_memchain_status`.
+- If integrity is broken, treat memory as untrusted until confirmed.
+
 Reset artifacts (read/write):
 - `memory/handoff.md`
 - `memory/handoff.json`

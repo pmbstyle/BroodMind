@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+from pathlib import Path
 
+from broodmind.memory.memchain import memchain_init, memchain_record, memchain_status, memchain_verify
 from broodmind.tools.browser_tools import (
     browser_click,
     browser_close,
@@ -108,6 +112,50 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
             },
             permission="self_control",
             handler=_tool_queen_context_health,
+            is_async=True,
+        ),
+        ToolSpec(
+            name="queen_memchain_status",
+            description="Show current memchain integrity status for tracked workspace memory/config files.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            permission="self_control",
+            handler=_tool_queen_memchain_status,
+            is_async=True,
+        ),
+        ToolSpec(
+            name="queen_memchain_verify",
+            description="Verify memchain continuity and detect file drift for tracked workspace memory/config files.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            permission="self_control",
+            handler=_tool_queen_memchain_verify,
+            is_async=True,
+        ),
+        ToolSpec(
+            name="queen_memchain_record",
+            description="Record a new memchain snapshot for tracked workspace memory/config files.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "description": "Reason for recording snapshot."},
+                },
+                "additionalProperties": False,
+            },
+            permission="self_control",
+            handler=_tool_queen_memchain_record,
+            is_async=True,
+        ),
+        ToolSpec(
+            name="queen_memchain_init",
+            description="Initialize or reinitialize memchain files in workspace memory.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "force": {"type": "boolean", "description": "If true, reinitialize chain files."},
+                },
+                "additionalProperties": False,
+            },
+            permission="self_control",
+            handler=_tool_queen_memchain_init,
             is_async=True,
         ),
         ToolSpec(
@@ -888,4 +936,43 @@ async def _tool_queen_context_health(args, ctx) -> str:
         "context_health": snapshot,
         "thresholds": thresholds,
     }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _workspace_dir() -> Path:
+    return Path(os.getenv("BROODMIND_WORKSPACE_DIR", "workspace")).resolve()
+
+
+async def _tool_queen_memchain_status(args, ctx) -> str:
+    payload = await asyncio.to_thread(memchain_status, _workspace_dir())
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _tool_queen_memchain_verify(args, ctx) -> str:
+    result = await asyncio.to_thread(memchain_verify, _workspace_dir())
+    payload = {
+        "status": result.status,
+        "message": result.message,
+        "entries": result.entries,
+        "head_hash": result.head_hash,
+        "broken_at": result.broken_at,
+        "changed_files": result.changed_files or [],
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _tool_queen_memchain_record(args, ctx) -> str:
+    reason = str((args or {}).get("reason", "queen_manual") or "queen_manual")
+    payload = await asyncio.to_thread(
+        memchain_record,
+        _workspace_dir(),
+        reason=reason,
+        meta={"source": "queen_tool", "chat_id": int(ctx.get("chat_id", 0) or 0)},
+    )
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _tool_queen_memchain_init(args, ctx) -> str:
+    force = bool((args or {}).get("force", False))
+    payload = await asyncio.to_thread(memchain_init, _workspace_dir(), force=force)
     return json.dumps(payload, ensure_ascii=False)
