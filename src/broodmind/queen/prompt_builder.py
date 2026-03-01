@@ -201,6 +201,64 @@ def _current_datetime_prompt() -> str:
     return f"Current date/time: {now.isoformat()}"
 
 
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, value)
+
+
+def _trim_middle(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    head = max_chars // 2
+    tail = max_chars - head
+    return text[:head] + "\n...[pruned for context window]...\n" + text[-tail:]
+
+
+def _prune_recent_history_window(
+    history: list[tuple[str, str]],
+    *,
+    max_history_chars: int,
+    keep_recent: int,
+    per_message_chars: int,
+) -> tuple[list[tuple[str, str]], dict[str, int]]:
+    trimmed_count = 0
+    dropped_count = 0
+    normalized: list[tuple[str, str]] = []
+    for role, content in history:
+        trimmed = _trim_middle(content, per_message_chars)
+        if trimmed != content:
+            trimmed_count += 1
+        normalized.append((role, trimmed))
+
+    total_chars = sum(len(content) for _, content in normalized)
+    pruned = list(normalized)
+
+    # Drop oldest messages first while preserving a recent tail.
+    keep_recent = max(1, keep_recent)
+    while len(pruned) > keep_recent and total_chars > max_history_chars:
+        _, removed = pruned.pop(0)
+        dropped_count += 1
+        total_chars -= len(removed)
+
+    # If still too large, continue dropping oldest until within budget or one message remains.
+    while len(pruned) > 1 and total_chars > max_history_chars:
+        _, removed = pruned.pop(0)
+        dropped_count += 1
+        total_chars -= len(removed)
+
+    return pruned, {
+        "trimmed": trimmed_count,
+        "dropped": dropped_count,
+        "total_chars": total_chars,
+    }
+
+
 async def build_queen_prompt(
     store: Store,
     memory: MemoryService,
@@ -241,6 +299,15 @@ async def build_queen_prompt(
     recent_history = await memory.get_recent_history(chat_id, limit=20)
     if recent_history and recent_history[-1][0] == "user" and recent_history[-1][1] == user_text:
         recent_history = recent_history[:-1]
+    max_history_chars = _env_int("BROODMIND_CONTEXT_PRUNE_MAX_HISTORY_CHARS", 24_000, minimum=2_000)
+    keep_recent = _env_int("BROODMIND_CONTEXT_PRUNE_KEEP_RECENT", 12, minimum=1)
+    per_message_chars = _env_int("BROODMIND_CONTEXT_PRUNE_MESSAGE_CHARS", 3_000, minimum=500)
+    recent_history, prune_stats = _prune_recent_history_window(
+        recent_history,
+        max_history_chars=max_history_chars,
+        keep_recent=keep_recent,
+        per_message_chars=per_message_chars,
+    )
 
     messages: list[Message] = [Message(role="system", content=system_prompt)]
     if persona_prompt_lines:
@@ -267,6 +334,18 @@ async def build_queen_prompt(
         messages.append(
             Message(
                 role="system", content="<context>\n" + "\n".join(memory_context) + "\n</context>"
+            )
+        )
+    if prune_stats["trimmed"] > 0 or prune_stats["dropped"] > 0:
+        messages.append(
+            Message(
+                role="system",
+                content=(
+                    "Context pruning applied before inference:\n"
+                    f"- trimmed_messages={prune_stats['trimmed']}\n"
+                    f"- dropped_old_messages={prune_stats['dropped']}\n"
+                    f"- history_chars_after_prune={prune_stats['total_chars']}"
+                ),
             )
         )
     if recent_history:

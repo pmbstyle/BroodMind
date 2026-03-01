@@ -123,6 +123,7 @@ uv run broodmind logs --follow
 - Runs a verification pass before final user-facing responses
 - Calls tools directly or delegates to workers
 - Synthesizes final user-facing responses
+- Applies automatic pre-reset context pruning (trim/drop oldest history under char budget) before each inference
 - Supports self-directed context compaction/reset via `queen_context_reset` with structured handoff
 - Supports proactive initiative generation via opportunity scan + self-driven queue
 
