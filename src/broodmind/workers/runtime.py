@@ -237,8 +237,9 @@ class WorkerRuntime:
                     },
                 )
                 stderr_task: asyncio.Task[None] | None = None
-                if process.stderr is not None:
-                    stderr_task = asyncio.create_task(self._read_stderr_loop(spec.id, process.stderr))
+                process_stderr = getattr(process, "stderr", None)
+                if process_stderr is not None:
+                    stderr_task = asyncio.create_task(self._read_stderr_loop(spec.id, process_stderr))
 
                 try:
                     result = await asyncio.wait_for(

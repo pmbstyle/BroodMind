@@ -907,7 +907,7 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
     return tools
 
 
-async def _tool_check_schedule(args, ctx) -> str:
+def _tool_check_schedule(args, ctx) -> str:
     scheduler = ctx["queen"].scheduler
     due_tasks = scheduler.get_actionable_tasks()
     queen = ctx.get("queen")
@@ -917,17 +917,23 @@ async def _tool_check_schedule(args, ctx) -> str:
     self_queue = None
     if queen is not None and hasattr(queen, "get_context_health_snapshot"):
         try:
-            context_health = await queen.get_context_health_snapshot(chat_id)
+            maybe = queen.get_context_health_snapshot(chat_id)
+            if not asyncio.iscoroutine(maybe):
+                context_health = maybe
         except Exception:
             context_health = None
     if queen is not None and hasattr(queen, "scan_opportunities"):
         try:
-            opportunity_snapshot = await queen.scan_opportunities(chat_id, limit=3)
+            maybe = queen.scan_opportunities(chat_id, limit=3)
+            if not asyncio.iscoroutine(maybe):
+                opportunity_snapshot = maybe
         except Exception:
             opportunity_snapshot = None
     if queen is not None and hasattr(queen, "get_self_queue"):
         try:
-            self_queue = await queen.get_self_queue(chat_id)
+            maybe = queen.get_self_queue(chat_id)
+            if not asyncio.iscoroutine(maybe):
+                self_queue = maybe
         except Exception:
             self_queue = None
     payload = {

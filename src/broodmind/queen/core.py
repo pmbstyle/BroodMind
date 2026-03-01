@@ -1048,32 +1048,36 @@ class Queen:
         if bootstrap_context.files:
             files_summary = ", ".join([f"{name} ({size} chars)" for name, size in bootstrap_context.files])
             logger.debug("Queen bootstrap files", files=files_summary, hash=bootstrap_context.hash)
-        try:
-            reply_text = await route_or_reply(
-                self,
-                self.provider,
-                self.memory,
-                text,
-                chat_id,
-                bootstrap_context.content,
-                show_typing=show_typing,
-                images=images,
-                include_wakeup=include_wakeup,
-            )
-        except TypeError as exc:
-            # Backward-compatible fallback for monkeypatched tests/extensions using the old signature.
-            if "unexpected keyword argument 'images'" not in str(exc):
-                raise
-            reply_text = await route_or_reply(
-                self,
-                self.provider,
-                self.memory,
-                text,
-                chat_id,
-                bootstrap_context.content,
-                show_typing=show_typing,
-                include_wakeup=include_wakeup,
-            )
+        route_kwargs: dict[str, Any] = {
+            "show_typing": show_typing,
+            "images": images,
+            "include_wakeup": include_wakeup,
+        }
+        while True:
+            try:
+                reply_text = await route_or_reply(
+                    self,
+                    self.provider,
+                    self.memory,
+                    text,
+                    chat_id,
+                    bootstrap_context.content,
+                    **route_kwargs,
+                )
+                break
+            except TypeError as exc:
+                # Backward-compatible fallback for monkeypatched tests/extensions using older signatures.
+                msg = str(exc)
+                if "unexpected keyword argument" not in msg:
+                    raise
+                removed = False
+                for key in list(route_kwargs.keys()):
+                    if f"'{key}'" in msg:
+                        route_kwargs.pop(key, None)
+                        removed = True
+                        break
+                if not removed:
+                    raise
         logger.info("Queen response ready")
         if persist_to_memory:
             await self.memory.add_message("assistant", reply_text, {"chat_id": chat_id, "heartbeat": not track_progress})
@@ -1085,7 +1089,10 @@ class Queen:
             else:
                 self._no_progress_turns_by_chat[chat_id] = int(self._no_progress_turns_by_chat.get(chat_id, 0)) + 1
             self._last_reply_norm_by_chat[chat_id] = reply_norm
-        await self.get_context_health_snapshot(chat_id)
+        try:
+            await self.get_context_health_snapshot(chat_id)
+        except Exception:
+            logger.debug("Failed to refresh context health snapshot", chat_id=chat_id, exc_info=True)
         if include_wakeup:
             self.clear_context_wakeup(chat_id)
         if bootstrap_context.hash:
