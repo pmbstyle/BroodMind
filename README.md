@@ -169,6 +169,9 @@ uv run broodmind logs --follow
 - Spawned per task with timeout + lifecycle tracking
 - Includes automatic recovery retries for transient stuck/failure states
 - Report result back to Queen runtime
+- Startup restores worker lineage registry from persisted DB records
+- Active orphan/stale workers are reconciled to `stopped` on startup (with audit trail)
+- Malformed worker result payloads are repaired before persistence
 - Worker templates can opt in to child spawning with strict policy controls:
   - `can_spawn_children` (default `false`)
   - `allowed_child_templates` (explicit whitelist)
@@ -185,6 +188,11 @@ Examples:
 - Execution: `exec_run`
 - Worker management: `list_workers`, `start_worker`, `start_child_worker`, `start_workers_parallel`, `synthesize_worker_results`, `get_worker_status`, `get_worker_result`
 - Self-management: `queen_context_health`, `queen_context_reset`, `queen_opportunity_scan`, `queen_self_queue_add`, `queen_self_queue_list`, `queen_self_queue_take`, `queen_self_queue_update`, `queen_memchain_init`, `queen_memchain_record`, `queen_memchain_verify`, `queen_memchain_status`, `self_control`
+
+Operational guardrails:
+
+- Control-channel JSONL files are auto-repaired when malformed lines are detected (with backup file created before rewrite)
+- File tools reject path traversal and symlink-escape paths outside workspace
 
 `start_worker` supports worker specialization routing:
 

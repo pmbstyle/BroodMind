@@ -426,13 +426,13 @@ class SQLiteStore(Store):
             params.append(summary)
         if output is not None:
             updates.append("output_json = ?")
-            params.append(json.dumps(output))
+            params.append(_safe_json_dumps(output))
         if error is not None:
             updates.append("error = ?")
             params.append(error)
         if tools_used is not None:
             updates.append("tools_used_json = ?")
-            params.append(json.dumps(tools_used))
+            params.append(_safe_json_dumps([str(item) for item in tools_used]))
 
         params.append(worker_id)
         self._conn.execute(
@@ -1086,3 +1086,10 @@ def _loads_json(value: Any, default: Any = None) -> Any:
         return json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return default
+
+
+def _safe_json_dumps(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return json.dumps({"repr": repr(value)}, ensure_ascii=False)

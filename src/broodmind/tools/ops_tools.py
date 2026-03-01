@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
 import re
 import shlex
@@ -16,6 +17,7 @@ from typing import Any
 import httpx
 
 from broodmind.config.settings import load_settings
+from broodmind.jsonl_guard import read_jsonl_dicts
 
 
 def service_health(args: dict[str, Any], ctx: dict[str, Any]) -> str:
@@ -589,20 +591,17 @@ def _append_jsonl(path: Path, item: dict[str, Any]) -> None:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            item = json.loads(line)
-            if isinstance(item, dict):
-                out.append(item)
-        except Exception:
-            continue
-    return out
+    rows, report = read_jsonl_dicts(path, repair=True)
+    if report.repaired:
+        logging.getLogger(__name__).warning(
+            "Repaired malformed JSONL file",
+            extra={
+                "path": str(path),
+                "dropped_lines": report.dropped_lines,
+                "backup_path": report.backup_path,
+            },
+        )
+    return rows
 
 
 def _read_json_file(path: Path, default: Any) -> Any:

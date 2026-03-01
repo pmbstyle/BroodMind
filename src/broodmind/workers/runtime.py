@@ -643,7 +643,16 @@ class WorkerRuntime:
                 return None
 
             if msg_type == "result":
-                result = WorkerResult.model_validate(payload.get("result", {}))
+                raw_result = payload.get("result", {})
+                repaired_result = _repair_worker_result_payload(raw_result)
+                result = WorkerResult.model_validate(repaired_result)
+                if raw_result != repaired_result:
+                    await self._append_audit(
+                        "worker_result_repaired",
+                        level="warning",
+                        correlation_id=spec.id,
+                        data={"reason": "malformed_worker_result_payload"},
+                    )
                 await asyncio.to_thread(self.store.update_worker_status, spec.id, "completed")
                 await asyncio.to_thread(
                     self.store.update_worker_result,
@@ -773,6 +782,55 @@ def _safe_parse_json(line: bytes) -> dict[str, Any] | None:
         return json.loads(line.decode("utf-8"))
     except Exception:
         return None
+
+
+def _repair_worker_result_payload(raw_result: Any) -> dict[str, Any]:
+    if not isinstance(raw_result, dict):
+        return {
+            "summary": "Worker returned malformed result payload",
+            "output": {"raw_result": _truncate_text(str(raw_result), 4000)},
+        }
+
+    summary = str(raw_result.get("summary", "") or "").strip() or "Worker completed"
+    output = raw_result.get("output")
+    if output is not None and not _is_json_serializable(output):
+        output = {"repr": _truncate_text(repr(output), 4000)}
+
+    repaired: dict[str, Any] = {"summary": summary}
+    if output is not None:
+        repaired["output"] = output
+
+    questions = raw_result.get("questions")
+    if isinstance(questions, list):
+        repaired["questions"] = [str(item).strip() for item in questions if str(item).strip()][:20]
+
+    tools_used = raw_result.get("tools_used")
+    if isinstance(tools_used, list):
+        repaired["tools_used"] = [str(item).strip() for item in tools_used if str(item).strip()][:200]
+
+    thinking_steps = raw_result.get("thinking_steps")
+    if isinstance(thinking_steps, int):
+        repaired["thinking_steps"] = max(0, thinking_steps)
+
+    knowledge_proposals = raw_result.get("knowledge_proposals")
+    if isinstance(knowledge_proposals, list):
+        repaired["knowledge_proposals"] = knowledge_proposals
+
+    return repaired
+
+
+def _is_json_serializable(value: Any) -> bool:
+    try:
+        json.dumps(value)
+        return True
+    except Exception:
+        return False
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"...[truncated {len(text) - max_chars} chars]"
 
 
 def _pythonpath() -> str:
