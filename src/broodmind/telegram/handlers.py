@@ -21,7 +21,7 @@ from broodmind.runtime_metrics import update_component_gauges
 from broodmind.state import update_last_message
 from broodmind.telegram.access import is_allowed_chat, parse_allowed_chat_ids
 from broodmind.telegram.approvals import ApprovalManager
-from broodmind.utils import is_heartbeat_ok, utc_now
+from broodmind.utils import should_suppress_user_delivery, utc_now
 
 logger = structlog.get_logger(__name__)
 
@@ -100,6 +100,9 @@ def register_handlers(
         await message.answer("This chat is not authorized to use BroodMind.")
 
     async def _internal_send(chat_id: int, text: str) -> None:
+        if should_suppress_user_delivery(text):
+            logger.debug("Suppressed control response for Telegram delivery", chat_id=chat_id)
+            return
         await _enqueue_send(bot, chat_id, text)
 
     async def _internal_progress_send(
@@ -309,14 +312,14 @@ def register_handlers(
                     except Exception as exc:
                         logger.warning("Failed to apply reaction", emoji=emoji, mapped=mapped_emoji, error=str(exc))
 
-                if final_text and not is_heartbeat_ok(final_text):
+                if not should_suppress_user_delivery(final_text):
                     # Reply with quote/reply to the current message
                     await _enqueue_send(message.bot, message.chat.id, final_text, reply_to_message_id=message.message_id)
                 return
 
         update_last_message(settings)
         # Fallback for non-QueenReply results (shouldn't happen with current core types, but for safety)
-        if reply and not is_heartbeat_ok(str(reply)):
+        if not should_suppress_user_delivery(str(reply)):
             await _enqueue_send(message.bot, message.chat.id, str(reply), reply_to_message_id=message.message_id)
 
     @dp.callback_query()

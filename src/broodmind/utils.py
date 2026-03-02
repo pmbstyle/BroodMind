@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import re
 
 
 import subprocess
@@ -57,4 +58,26 @@ def is_control_response(text: str) -> bool:
     if normalized == "NOUSERRESPONSE":
         return True
         
+    return False
+
+
+def has_no_user_response_suffix(text: str) -> bool:
+    """Return True when text ends with NO_USER_RESPONSE (allowing spacing/underscore variations)."""
+    value = (text or "").strip()
+    if not value:
+        return False
+    trimmed = re.sub(r"[.!?,:;\"'`\]\)\}>]+$", "", value).strip()
+    normalized = re.sub(r"[\s_-]+", "", trimmed).upper()
+    return normalized.endswith("NOUSERRESPONSE")
+
+
+def should_suppress_user_delivery(text: str) -> bool:
+    """Guard rail for outbound channels: suppress control/system-only payloads."""
+    value = (text or "").strip()
+    if not value:
+        return True
+    if is_control_response(value):
+        return True
+    if has_no_user_response_suffix(value):
+        return True
     return False

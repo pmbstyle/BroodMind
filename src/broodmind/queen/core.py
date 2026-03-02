@@ -36,7 +36,7 @@ from broodmind.runtime_metrics import update_component_gauges
 from broodmind.store.base import Store
 from broodmind.store.models import AuditEvent
 from broodmind.telegram.approvals import ApprovalManager
-from broodmind.utils import is_control_response, utc_now
+from broodmind.utils import is_control_response, should_suppress_user_delivery, utc_now
 from broodmind.workers.contracts import TaskRequest, WorkerResult
 from broodmind.workers.runtime import WorkerRuntime
 
@@ -641,7 +641,7 @@ class Queen:
                 system_chat_id,
                 bootstrap_context.content,
             )
-            if not result or is_control_response(result):
+            if should_suppress_user_delivery(result):
                 result = (
                     "Queen is online. Initialization is complete and I am ready for your tasks."
                 )

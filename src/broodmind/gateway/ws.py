@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, stat
 import structlog
 
 from broodmind.queen.core import Queen, QueenReply
-from broodmind.utils import get_tailscale_ips
+from broodmind.utils import get_tailscale_ips, should_suppress_user_delivery
 
 logger = structlog.get_logger(__name__)
 
@@ -93,6 +93,9 @@ def register_ws_routes(app: FastAPI) -> None:
         
         # Define WS-specific output channel
         async def _ws_send(chat_id: int, text: str) -> None:
+            if should_suppress_user_delivery(text):
+                logger.debug("Suppressed control response for WebSocket delivery", chat_id=chat_id)
+                return
             await socket.send_json({"type": "message", "text": text})
 
         async def _ws_progress(chat_id: int, state: str, text: str, meta: dict) -> None:
@@ -172,4 +175,7 @@ async def _handle_message(
         response = f"Error: {exc}"
 
     text_out = response.immediate if isinstance(response, QueenReply) else str(response)
+    if should_suppress_user_delivery(text_out):
+        logger.debug("Suppressed control response for WebSocket reply", chat_id=chat_id)
+        return
     await socket.send_json({"type": "message", "text": text_out})

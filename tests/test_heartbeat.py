@@ -1,4 +1,8 @@
-from broodmind.utils import is_heartbeat_ok
+from broodmind.utils import (
+    has_no_user_response_suffix,
+    is_heartbeat_ok,
+    should_suppress_user_delivery,
+)
 from broodmind.queen.router import should_send_worker_followup
 
 def test_is_heartbeat_ok():
@@ -22,8 +26,27 @@ def test_should_send_worker_followup():
     assert should_send_worker_followup("HEARTBEAT_OK") is False
     assert should_send_worker_followup("HEARTBEAT_OK 😊") is False
     assert should_send_worker_followup("NO_USER_RESPONSE") is False
+    assert should_send_worker_followup("Done. NO_USER_RESPONSE") is False
+    assert should_send_worker_followup("Done.\nNO USER RESPONSE") is False
     assert should_send_worker_followup("I have finished the task.") is True
     assert should_send_worker_followup("HEARTBEAT_OK\nI did something else too.") is True
+
+
+def test_no_user_response_suffix_detection():
+    assert has_no_user_response_suffix("NO_USER_RESPONSE")
+    assert has_no_user_response_suffix("All good. NO_USER_RESPONSE")
+    assert has_no_user_response_suffix("All good.\nNO USER RESPONSE")
+    assert has_no_user_response_suffix("All good no-user-response")
+    assert not has_no_user_response_suffix("NO_USER_RESPONSE done")
+    assert not has_no_user_response_suffix("Normal reply")
+
+
+def test_should_suppress_user_delivery():
+    assert should_suppress_user_delivery("")
+    assert should_suppress_user_delivery("HEARTBEAT_OK")
+    assert should_suppress_user_delivery("NO_USER_RESPONSE")
+    assert should_suppress_user_delivery("Result ready. NO_USER_RESPONSE")
+    assert not should_suppress_user_delivery("Result ready.")
 
 def test_queen_does_not_have_web_fetch():
     from broodmind.queen.router import _get_queen_tools
