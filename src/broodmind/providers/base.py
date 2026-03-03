@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,14 @@ class Message:
 
 class InferenceProvider(Protocol):
     async def complete(self, messages: list[Message | dict], **kwargs: object) -> str: ...
+
+    async def complete_stream(
+        self,
+        messages: list[Message | dict],
+        *,
+        on_partial: Callable[[str], Awaitable[None]],
+        **kwargs: object,
+    ) -> str: ...
 
     async def complete_with_tools(
         self,

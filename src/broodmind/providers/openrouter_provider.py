@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -72,6 +73,22 @@ class OpenRouterProvider:
         except Exception as exc:
             logger.exception("OpenRouter completion failed")
             raise RuntimeError(f"OpenRouter completion failed: {exc}") from exc
+
+    async def complete_stream(
+        self,
+        messages: list[Message | dict],
+        *,
+        on_partial: Callable[[str], Awaitable[None]],
+        **kwargs: object,
+    ) -> str:
+        """Streaming fallback for providers without incremental transport in this adapter."""
+        text = await self.complete(messages, **kwargs)
+        if text:
+            try:
+                await on_partial(text)
+            except Exception:
+                logger.debug("OpenRouter partial callback failed", exc_info=True)
+        return text
 
     async def complete_with_tools(
         self,

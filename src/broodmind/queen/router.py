@@ -7,6 +7,7 @@ import os
 import base64
 import uuid
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import structlog
@@ -45,6 +46,11 @@ async def route_or_reply(
     
     await queen.set_thinking(True)
     try:
+        partial_callback = _build_partial_callback(
+            queen=queen,
+            chat_id=chat_id,
+            internal_followup=internal_followup,
+        )
         is_ws = getattr(queen, "is_ws_active", False)
         wake_notice = ""
         if include_wakeup and hasattr(queen, "peek_context_wakeup"):
@@ -199,7 +205,12 @@ async def route_or_reply(
                         content="You have reached the tool call limit for this turn. Summarize what you have initiated and let the user know you are processing their request.",
                     )
                 )
-                final_resp = await _complete_text(provider, messages, context="tool_limit_fallback")
+                final_resp = await _complete_text(
+                    provider,
+                    messages,
+                    context="tool_limit_fallback",
+                    on_partial=partial_callback,
+                )
                 return await _finalize_response(
                     provider=provider,
                     messages=messages,
@@ -216,7 +227,12 @@ async def route_or_reply(
                         content=f"A tool call failed: {last_error}. Explain the problem to the user naturally and ask for guidance if needed.",
                     )
                 )
-                final_resp = await _complete_text(provider, messages, context="tool_error_fallback")
+                final_resp = await _complete_text(
+                    provider,
+                    messages,
+                    context="tool_error_fallback",
+                    on_partial=partial_callback,
+                )
                 return await _finalize_response(
                     provider=provider,
                     messages=messages,
@@ -226,7 +242,12 @@ async def route_or_reply(
                 
             return ""
             
-        response_raw = await _complete_text(provider, messages, context="plain_completion")
+        response_raw = await _complete_text(
+            provider,
+            messages,
+            context="plain_completion",
+            on_partial=partial_callback,
+        )
         logger.debug("Queen output", output=response_raw)
         return await _finalize_response(
             provider=provider,
@@ -615,10 +636,21 @@ async def _complete_text(
     messages: list[Message | dict[str, Any]],
     *,
     context: str,
+    on_partial: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
     sanitized = _sanitize_messages_for_complete(messages)
     try:
-        return await provider.complete(sanitized)
+        if callable(on_partial):
+            stream_callable = getattr(provider, "complete_stream", None)
+            if callable(stream_callable):
+                return await stream_callable(sanitized, on_partial=on_partial)
+        text = await provider.complete(sanitized)
+        if callable(on_partial) and text:
+            try:
+                await on_partial(text)
+            except Exception:
+                logger.debug("Partial callback failed on non-stream completion", context=context, exc_info=True)
+        return text
     except Exception:
         logger.debug(
             "Text completion failed after sanitization",
@@ -697,3 +729,29 @@ def _message_shape(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
             }
         )
     return shape
+
+
+def _build_partial_callback(
+    *,
+    queen: Any,
+    chat_id: int,
+    internal_followup: bool,
+) -> Callable[[str], Awaitable[None]] | None:
+    if internal_followup or chat_id <= 0:
+        return None
+    sender = getattr(queen, "internal_progress_send", None)
+    if not callable(sender):
+        return None
+
+    async def _on_partial(text: str) -> None:
+        clean = normalize_plain_text(text or "")
+        if not clean:
+            return
+        if should_suppress_user_delivery(clean):
+            return
+        try:
+            await sender(chat_id, "partial", clean, {})
+        except Exception:
+            logger.debug("Failed to emit partial stream", chat_id=chat_id, exc_info=True)
+
+    return _on_partial

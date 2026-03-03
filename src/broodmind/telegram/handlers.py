@@ -6,6 +6,9 @@ import re
 import structlog
 import uuid
 import asyncio
+import contextlib
+import time
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 import telegramify_markdown
@@ -30,6 +33,16 @@ class QueuedMessage(NamedTuple):
     text: str
     reply_to_message_id: int | None = None
 
+
+@dataclass
+class ProgressPreviewState:
+    message_id: int | None = None
+    pending_text: str | None = None
+    last_sent_text: str = ""
+    last_sent_at: float = 0.0
+    flush_task: asyncio.Task | None = None
+
+
 # ... (rest of global vars remain same, just ensuring imports are correct)
 _CHAT_LOCKS: dict[int, asyncio.Lock] = {}
 _CHAT_QUEUES: dict[int, asyncio.Queue[QueuedMessage]] = {}
@@ -38,8 +51,12 @@ _TYPING_TASKS: dict[int, asyncio.Task] = {}
 _TYPING_STOP_EVENTS: dict[int, asyncio.Event] = {}
 _TYPING_REFS: dict[int, int] = {}
 _TYPING_LOCK: asyncio.Lock | None = None
+_PROGRESS_LOCKS: dict[int, asyncio.Lock] = {}
+_PROGRESS_PREVIEWS: dict[int, ProgressPreviewState] = {}
 _SEND_IDLE_TIMEOUT_SECONDS = 300.0
 _TELEGRAM_PARSE_MODE: str | None = None
+_PROGRESS_THROTTLE_SECONDS = 1.0
+_PROGRESS_TEXT_LIMIT = 3900
 
 
 def _publish_runtime_metrics() -> None:
@@ -50,6 +67,7 @@ def _publish_runtime_metrics() -> None:
             "chat_queues": len(_CHAT_QUEUES),
             "send_tasks": len(_CHAT_SEND_TASKS),
             "typing_tasks": len(_TYPING_TASKS),
+            "progress_previews": len(_PROGRESS_PREVIEWS),
         },
     )
 
@@ -111,9 +129,14 @@ def register_handlers(
         text: str,
         meta: dict[str, object],
     ) -> None:
-        # Progress events are for internal tracking/logging only.
-        # User-facing updates are handled by the Queen after worker completion or via her immediate replies.
-        logger.info("Worker progress event", chat_id=chat_id, state=state, text=text)
+        if state == "partial":
+            logger.debug("LLM partial stream update", chat_id=chat_id, text_len=len(text or ""))
+        else:
+            logger.info("Worker progress event", chat_id=chat_id, state=state, text=text)
+        preview_text = _format_progress_preview(state=state, text=text, meta=meta)
+        if not preview_text:
+            return
+        await _schedule_progress_preview(bot, chat_id, preview_text)
 
     async def _internal_typing_control(chat_id: int, active: bool) -> None:
         async with _TYPING_LOCK:
@@ -376,6 +399,15 @@ async def _send_message_safe(bot: Bot, chat_id: int, text: str, reply_to_message
 
 
 async def _enqueue_send(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None) -> None:
+    if not should_suppress_user_delivery(text):
+        promoted = await _promote_progress_preview_to_final(
+            bot,
+            chat_id,
+            text,
+        )
+        if promoted:
+            return
+
     queue = _CHAT_QUEUES.get(chat_id)
     if not queue:
         queue = asyncio.Queue()
@@ -463,3 +495,167 @@ def _prepare_markdown_v2(text: str) -> str:
     if not text:
         return ""
     return telegramify_markdown.markdownify(text)
+
+
+def _get_progress_lock(chat_id: int) -> asyncio.Lock:
+    lock = _PROGRESS_LOCKS.get(chat_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PROGRESS_LOCKS[chat_id] = lock
+    return lock
+
+
+def _format_progress_preview(state: str, text: str, meta: dict[str, object]) -> str:
+    state_label = (state or "working").strip().lower()
+    body = (text or "").strip()
+    if state_label == "partial":
+        return body[:_PROGRESS_TEXT_LIMIT].rstrip()
+    label_map = {
+        "queued": "queued",
+        "worker_started": "started",
+        "running": "running",
+        "completed": "completed",
+        "failed": "failed",
+        "duplicate": "duplicate",
+        "child_stopped": "child stopped",
+    }
+    label = label_map.get(state_label, state_label or "working")
+    if not body:
+        worker_id = str(meta.get("worker_id") or "").strip()
+        body = f"State update ({worker_id})" if worker_id else "State update"
+    rendered = f"[{label}] {body}"
+    return rendered[:_PROGRESS_TEXT_LIMIT].rstrip()
+
+
+async def _schedule_progress_preview(bot: Bot, chat_id: int, preview_text: str) -> None:
+    lock = _get_progress_lock(chat_id)
+    async with lock:
+        state = _PROGRESS_PREVIEWS.get(chat_id)
+        if state is None:
+            state = ProgressPreviewState()
+            _PROGRESS_PREVIEWS[chat_id] = state
+        state.pending_text = preview_text
+        task = state.flush_task
+        if task is None or task.done():
+            state.flush_task = asyncio.create_task(_progress_flush_loop(bot, chat_id))
+    _publish_runtime_metrics()
+
+
+async def _progress_flush_loop(bot: Bot, chat_id: int) -> None:
+    try:
+        while True:
+            lock = _get_progress_lock(chat_id)
+            async with lock:
+                state = _PROGRESS_PREVIEWS.get(chat_id)
+                if state is None:
+                    return
+                pending = (state.pending_text or "").strip()
+                if not pending:
+                    state.flush_task = None
+                    return
+                wait_s = max(0.0, _PROGRESS_THROTTLE_SECONDS - (time.monotonic() - state.last_sent_at))
+            if wait_s > 0:
+                await asyncio.sleep(wait_s)
+            async with lock:
+                state = _PROGRESS_PREVIEWS.get(chat_id)
+                if state is None:
+                    return
+                pending = (state.pending_text or "").strip()
+                if not pending:
+                    state.flush_task = None
+                    return
+                state.pending_text = None
+                if pending == state.last_sent_text:
+                    continue
+                try:
+                    message_id = state.message_id
+                    if message_id is None:
+                        sent = await bot.send_message(chat_id, pending)
+                        state.message_id = getattr(sent, "message_id", None)
+                    else:
+                        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=pending)
+                    state.last_sent_text = pending
+                    state.last_sent_at = time.monotonic()
+                except Exception:
+                    logger.debug("Progress preview update failed", chat_id=chat_id, exc_info=True)
+    finally:
+        lock = _PROGRESS_LOCKS.get(chat_id)
+        if lock is None:
+            return
+        async with lock:
+            state = _PROGRESS_PREVIEWS.get(chat_id)
+            if state is not None:
+                state.flush_task = None
+
+
+async def _promote_progress_preview_to_final(bot: Bot, chat_id: int, final_text: str) -> bool:
+    lock = _get_progress_lock(chat_id)
+    async with lock:
+        state = _PROGRESS_PREVIEWS.get(chat_id)
+        if state is None:
+            return False
+        task = state.flush_task
+        state.flush_task = None
+        state.pending_text = None
+        message_id = state.message_id
+
+    if task and not task.done():
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    if message_id is None:
+        async with lock:
+            _PROGRESS_PREVIEWS.pop(chat_id, None)
+            _PROGRESS_LOCKS.pop(chat_id, None)
+        _publish_runtime_metrics()
+        return False
+
+    clean_text = _strip_reaction_tags(final_text or "").strip()
+    if not clean_text or len(clean_text) > 4000:
+        with contextlib.suppress(Exception):
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        async with lock:
+            _PROGRESS_PREVIEWS.pop(chat_id, None)
+            _PROGRESS_LOCKS.pop(chat_id, None)
+        _publish_runtime_metrics()
+        return False
+
+    parse_mode = _TELEGRAM_PARSE_MODE
+    outbound = clean_text
+    if parse_mode == "MarkdownV2":
+        outbound = _prepare_markdown_v2(clean_text)
+
+    promoted = False
+    try:
+        if parse_mode:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=outbound,
+                parse_mode=parse_mode,
+            )
+        else:
+            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=clean_text)
+        promoted = True
+    except TelegramBadRequest as exc:
+        logger.warning(
+            "Progress final promote parse failed; retrying plain text (parse_mode=%s, error=%s)",
+            parse_mode,
+            exc,
+        )
+        with contextlib.suppress(Exception):
+            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=clean_text)
+            promoted = True
+    except Exception:
+        logger.debug("Progress final promote failed", chat_id=chat_id, exc_info=True)
+
+    if not promoted:
+        with contextlib.suppress(Exception):
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+
+    async with lock:
+        _PROGRESS_PREVIEWS.pop(chat_id, None)
+        _PROGRESS_LOCKS.pop(chat_id, None)
+    _publish_runtime_metrics()
+    return promoted

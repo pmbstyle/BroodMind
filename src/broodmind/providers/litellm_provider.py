@@ -7,6 +7,7 @@ import json
 import logging
 import random
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from litellm import acompletion
@@ -157,6 +158,68 @@ class LiteLLMProvider:
             
             logger.exception("LiteLLM completion failed")
             raise RuntimeError(f"LiteLLM completion failed: {exc}") from exc
+
+    async def complete_stream(
+        self,
+        messages: list[Message | dict],
+        *,
+        on_partial: Callable[[str], Awaitable[None]],
+        **kwargs: object,
+    ) -> str:
+        """Complete a chat request with streamed partial text callbacks."""
+        if not self._api_key:
+            raise RuntimeError("API key is not configured. Set OPENROUTER_API_KEY or ZAI_API_KEY.")
+
+        serialized_messages = _normalize_plain_messages([_serialize_message(m) for m in messages])
+        payload_str = json.dumps({"messages": serialized_messages, "stream": True}, ensure_ascii=False)
+        logger.debug(
+            "LiteLLM stream request: model=%s, messages=%d, total_chars=%d",
+            self._model,
+            len(serialized_messages),
+            len(payload_str),
+        )
+        if self._settings.debug_prompts:
+            logger.debug("LiteLLM stream payload: %s", _truncate(payload_str))
+
+        request_kwargs = _build_request_kwargs(
+            kwargs,
+            temperature=float(kwargs.get("temperature", 0.3)),
+            timeout=self._settings.litellm_timeout,
+            fallbacks=self._fallbacks,
+        )
+        request_kwargs["stream"] = True
+        try:
+            response = await self._acompletion_with_resilience(messages=serialized_messages, **request_kwargs)
+            if not hasattr(response, "__aiter__"):
+                # Provider did not return an async stream; gracefully fall back to non-stream.
+                text = _extract_content(response)
+                if text:
+                    try:
+                        await on_partial(text)
+                    except Exception:
+                        logger.debug("LiteLLM partial callback failed", exc_info=True)
+                return text
+
+            accumulated = ""
+            async for chunk in response:  # type: ignore[assignment]
+                delta = _extract_stream_delta(chunk)
+                if not delta:
+                    continue
+                accumulated += delta
+                try:
+                    await on_partial(accumulated)
+                except Exception:
+                    logger.debug("LiteLLM partial callback failed", exc_info=True)
+
+            logger.debug("LiteLLM streamed response: %s", _truncate(accumulated))
+            return accumulated
+        except Exception as exc:
+            logger.error(
+                "LiteLLM stream payload shape on error: %s",
+                _summarize_messages(serialized_messages),
+            )
+            logger.exception("LiteLLM stream completion failed")
+            raise RuntimeError(f"LiteLLM stream completion failed: {exc}") from exc
 
     async def complete_with_tools(
         self,
@@ -441,6 +504,30 @@ def _extract_tool_calls(response: Any) -> list[dict]:
     except Exception as exc:
         logger.warning("Failed to extract tool calls from response: %s", exc)
         return []
+
+
+def _extract_stream_delta(chunk: Any) -> str:
+    """Extract incremental text from a LiteLLM stream chunk."""
+    try:
+        choices = getattr(chunk, "choices", None)
+        if choices is None and isinstance(chunk, dict):
+            choices = chunk.get("choices")
+        if not choices:
+            return ""
+        first = choices[0]
+        delta_obj = getattr(first, "delta", None)
+        if delta_obj is None and isinstance(first, dict):
+            delta_obj = first.get("delta")
+        if delta_obj is None:
+            return ""
+        content = getattr(delta_obj, "content", None)
+        if content is None and isinstance(delta_obj, dict):
+            content = delta_obj.get("content")
+        if content is None:
+            return ""
+        return str(content)
+    except Exception:
+        return ""
 
 
 def _truncate(text: str) -> str:
