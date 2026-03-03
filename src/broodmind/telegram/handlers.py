@@ -129,10 +129,13 @@ def register_handlers(
         text: str,
         meta: dict[str, object],
     ) -> None:
-        if state == "partial":
-            logger.debug("LLM partial stream update", chat_id=chat_id, text_len=len(text or ""))
-        else:
+        # Telegram user-facing preview stream should reflect only model partial text.
+        # Worker lifecycle events remain internal logs to avoid noisy status messages.
+        if state != "partial":
             logger.info("Worker progress event", chat_id=chat_id, state=state, text=text)
+            return
+
+        logger.debug("LLM partial stream update", chat_id=chat_id, text_len=len(text or ""))
         preview_text = _format_progress_preview(state=state, text=text, meta=meta)
         if not preview_text:
             return
