@@ -907,7 +907,7 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
     return tools
 
 
-def _tool_check_schedule(args, ctx) -> str:
+async def _tool_check_schedule(args, ctx) -> str:
     scheduler = ctx["queen"].scheduler
     due_tasks = scheduler.get_actionable_tasks()
     queen = ctx.get("queen")
@@ -918,21 +918,27 @@ def _tool_check_schedule(args, ctx) -> str:
     if queen is not None and hasattr(queen, "get_context_health_snapshot"):
         try:
             maybe = queen.get_context_health_snapshot(chat_id)
-            if not asyncio.iscoroutine(maybe):
+            if asyncio.iscoroutine(maybe):
+                context_health = await maybe
+            else:
                 context_health = maybe
         except Exception:
             context_health = None
     if queen is not None and hasattr(queen, "scan_opportunities"):
         try:
             maybe = queen.scan_opportunities(chat_id, limit=3)
-            if not asyncio.iscoroutine(maybe):
+            if asyncio.iscoroutine(maybe):
+                opportunity_snapshot = await maybe
+            else:
                 opportunity_snapshot = maybe
         except Exception:
             opportunity_snapshot = None
     if queen is not None and hasattr(queen, "get_self_queue"):
         try:
             maybe = queen.get_self_queue(chat_id)
-            if not asyncio.iscoroutine(maybe):
+            if asyncio.iscoroutine(maybe):
+                self_queue = await maybe
+            else:
                 self_queue = maybe
         except Exception:
             self_queue = None
@@ -1108,3 +1114,5 @@ async def _tool_queen_self_queue_update(args, ctx) -> str:
         return json.dumps({"status": "error", "message": "queen self queue is unavailable"}, ensure_ascii=False)
     payload = await queen.update_self_queue_item(chat_id, args or {})
     return json.dumps(payload, ensure_ascii=False)
+
+
