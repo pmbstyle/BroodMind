@@ -216,6 +216,13 @@ def _run_webapp_command(cmd: list[str], *, cwd: Path) -> None:
     raise RuntimeError(message)
 
 
+def _has_webapp_build_toolchain(webapp_dir: Path) -> bool:
+    node_modules_dir = webapp_dir / "node_modules"
+    return (node_modules_dir / "typescript" / "package.json").is_file() and (
+        node_modules_dir / "vite" / "package.json"
+    ).is_file()
+
+
 def _ensure_webapp_built(settings: Settings) -> None:
     if not settings.webapp_enabled:
         return
@@ -238,8 +245,11 @@ def _ensure_webapp_built(settings: Settings) -> None:
     console.print("[bold cyan]Preparing web dashboard assets...[/bold cyan]")
     node_modules_dir = webapp_dir / "node_modules"
     try:
-        if not node_modules_dir.exists():
-            _run_webapp_command([npm_path, "install", "--no-audit", "--no-fund"], cwd=webapp_dir)
+        if not node_modules_dir.exists() or not _has_webapp_build_toolchain(webapp_dir):
+            install_cmd = [npm_path, "ci", "--include=dev", "--no-audit", "--no-fund"]
+            if not (webapp_dir / "package-lock.json").is_file():
+                install_cmd = [npm_path, "install", "--include=dev", "--no-audit", "--no-fund"]
+            _run_webapp_command(install_cmd, cwd=webapp_dir)
         _run_webapp_command([npm_path, "run", "build"], cwd=webapp_dir)
     except RuntimeError as exc:
         console.print(f"[bold red]Failed to build web dashboard:[/bold red]\n{exc}")
