@@ -117,6 +117,7 @@ async def route_or_reply(
             tools = [spec.to_openai_tool() for spec in active_tool_specs]
             last_error: str | None = None
             had_tool_calls = False
+            transient_tool_failures = 0
             max_attempts = 10
             
             for _ in range(max_attempts):
@@ -181,6 +182,44 @@ async def route_or_reply(
                             previous_tool_count=prior_count,
                             reduced_tool_count=len(active_tool_specs),
                         )
+                        continue
+                    if _is_transient_provider_error(e):
+                        transient_tool_failures += 1
+                        if transient_tool_failures >= 3:
+                            logger.warning(
+                                "Tool completion repeatedly failed with transient provider errors; falling back to plain completion",
+                                failures=transient_tool_failures,
+                                error=_exception_chain_text(e)[:500],
+                            )
+                            messages.append(
+                                Message(
+                                    role="system",
+                                    content=(
+                                        "Tool calling is temporarily unavailable due to provider instability. "
+                                        "Reply without tools, summarize status, and ask for retry only if needed."
+                                    ),
+                                )
+                            )
+                            fallback_text = await _complete_text(
+                                provider,
+                                messages,
+                                context="transient_tool_error_fallback",
+                                on_partial=partial_callback,
+                            )
+                            return await _finalize_response(
+                                provider=provider,
+                                messages=messages,
+                                response_text=fallback_text,
+                                internal_followup=internal_followup,
+                            )
+                        delay_s = min(4.0, 0.8 * (2 ** (transient_tool_failures - 1)))
+                        logger.warning(
+                            "Transient provider error during tool completion; retrying",
+                            failure_count=transient_tool_failures,
+                            retry_delay_s=round(delay_s, 2),
+                            error=_exception_chain_text(e)[:500],
+                        )
+                        await asyncio.sleep(delay_s)
                         continue
                     raise e
 
@@ -427,6 +466,42 @@ def _is_context_overflow_error(exc: Exception) -> bool:
             "input tokens exceeds",
             "context length",
             "too many tokens",
+        )
+    )
+
+
+def _exception_chain_text(exc: Exception) -> str:
+    parts: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(parts) < 8:
+        seen.add(id(current))
+        text = str(current).strip()
+        if text:
+            parts.append(text)
+        current = current.__cause__ or current.__context__
+    return " | ".join(parts)
+
+
+def _is_transient_provider_error(exc: Exception) -> bool:
+    text = _exception_chain_text(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "timeout",
+            "timed out",
+            "sockettimeout",
+            "apitimeouterror",
+            "rate limit",
+            "ratelimit",
+            "429",
+            "502",
+            "503",
+            "504",
+            "service unavailable",
+            "connection reset",
+            "temporary",
+            "temporarily unavailable",
         )
     )
 

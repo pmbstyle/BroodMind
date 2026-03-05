@@ -57,6 +57,7 @@ _SEND_IDLE_TIMEOUT_SECONDS = 300.0
 _TELEGRAM_PARSE_MODE: str | None = None
 _PROGRESS_THROTTLE_SECONDS = 1.0
 _PROGRESS_TEXT_LIMIT = 3900
+_PROGRESS_PROMOTE_MAX_AGE_SECONDS = 180.0
 
 
 def _publish_runtime_metrics() -> None:
@@ -608,6 +609,27 @@ async def _promote_progress_preview_to_final(bot: Bot, chat_id: int, final_text:
             await task
 
     if message_id is None:
+        async with lock:
+            _PROGRESS_PREVIEWS.pop(chat_id, None)
+            _PROGRESS_LOCKS.pop(chat_id, None)
+        _publish_runtime_metrics()
+        return False
+
+    # Never promote very old previews to final text:
+    # editing a stale message can surface a new answer at an old timestamp.
+    preview_age_s = float("inf")
+    if state.last_sent_at > 0:
+        preview_age_s = max(0.0, time.monotonic() - state.last_sent_at)
+    if preview_age_s > _PROGRESS_PROMOTE_MAX_AGE_SECONDS:
+        logger.info(
+            "Skipping stale progress promote",
+            chat_id=chat_id,
+            message_id=message_id,
+            preview_age_s=round(preview_age_s, 1),
+            max_age_s=_PROGRESS_PROMOTE_MAX_AGE_SECONDS,
+        )
+        with contextlib.suppress(Exception):
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
         async with lock:
             _PROGRESS_PREVIEWS.pop(chat_id, None)
             _PROGRESS_LOCKS.pop(chat_id, None)
