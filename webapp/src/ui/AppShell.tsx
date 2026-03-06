@@ -1,17 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
 
 import { GlobalFiltersBar } from "./GlobalFiltersBar";
 import type { DashboardFilters } from "./GlobalFiltersBar";
-
-const navItems = [
-  { to: "/overview", label: "Overview" },
-  { to: "/incidents", label: "Incidents" },
-  { to: "/queen", label: "Queen" },
-  { to: "/workers", label: "Workers" },
-  { to: "/system", label: "System" },
-  { to: "/actions", label: "Actions" },
-];
+import { ControlCenterPage } from "../pages/ControlCenterPage";
 
 const filtersStorageKey = "broodmind.webapp.filters";
 const tokenStorageKey = "broodmind.webapp.token";
@@ -70,38 +61,26 @@ export function AppShell() {
     }
   }, [filters]);
 
-  const outletContext = useMemo(
-    () => ({ filters, setFilters } satisfies AppShellOutletContext),
-    [filters],
-  );
-
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div>
-          <p className="kicker">BroodMind</p>
-          <h1 className="title">Control Deck</h1>
-        </div>
-        <div className="status-badge">Foundation stage</div>
-      </header>
-
-      <nav className="tabs" aria-label="Dashboard sections">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) => `tab ${isActive ? "tab-active" : ""}`}
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
-
-      <GlobalFiltersBar filters={filters} onChange={setFilters} />
-
-      <main className="content">
-        <Outlet context={outletContext} />
-      </main>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8 md:py-10">
+        <header className="mb-6">
+          <p className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">BroodMind</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-50 md:text-4xl">
+            Operations Control Center
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-slate-400">
+            Live view for queen activity, worker pool, queue pressure and system health.
+          </p>
+        </header>
+        <GlobalFiltersBar filters={filters} onChange={setFilters} />
+        <main className="mt-5">
+          <ControlCenterPage filters={filters} />
+        </main>
+        <footer className="mt-8 border-t border-slate-800 pt-4 text-xs text-slate-500">
+          Updates every 4 seconds. Streamlined for operator-first monitoring.
+        </footer>
+      </div>
     </div>
   );
 }

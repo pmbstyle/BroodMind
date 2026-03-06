@@ -5,17 +5,16 @@ import { describe, expect, it } from "vitest";
 import { appRouter } from "../routes";
 
 describe("AppShell", () => {
-  it("renders navigation tabs", () => {
+  it("renders control center shell", () => {
     const router = createMemoryRouter(appRouter.routes, {
-      initialEntries: ["/workers"],
+      initialEntries: ["/"],
     });
 
     render(<RouterProvider router={router} />);
 
-    expect(screen.getByText("Control Deck")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Incidents" })).toBeInTheDocument();
+    expect(screen.getByText("Operations Control Center")).toBeInTheDocument();
     expect(screen.getByText("Window")).toBeInTheDocument();
     expect(screen.getByText("Service")).toBeInTheDocument();
+    expect(screen.getByText("Loading live operations view...")).toBeInTheDocument();
   });
 });

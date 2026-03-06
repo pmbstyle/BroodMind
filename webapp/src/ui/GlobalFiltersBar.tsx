@@ -37,20 +37,32 @@ export function GlobalFiltersBar({ filters, onChange }: GlobalFiltersBarProps) {
   };
 
   return (
-    <section className="filters" aria-label="Global filters">
-      <label>
-        Window
-        <select value={filters.windowMinutes} onChange={onSelectWindow}>
+    <section
+      className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60"
+      aria-label="Global filters"
+    >
+      <div className="grid gap-3 md:grid-cols-4">
+        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+          Window
+          <select
+            value={filters.windowMinutes}
+            onChange={onSelectWindow}
+            className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+          >
           <option value={15}>15m</option>
           <option value={60}>1h</option>
           <option value={240}>4h</option>
           <option value={1440}>24h</option>
-        </select>
-      </label>
+          </select>
+        </label>
 
-      <label>
-        Service
-        <select value={filters.service} onChange={onSelectService}>
+        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+          Service
+          <select
+            value={filters.service}
+            onChange={onSelectService}
+            className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+          >
           <option value="all">All services</option>
           <option value="gateway">Gateway</option>
           <option value="queen">Queen</option>
@@ -58,48 +70,54 @@ export function GlobalFiltersBar({ filters, onChange }: GlobalFiltersBarProps) {
           <option value="exec_run">Exec Run</option>
           <option value="mcp">MCP</option>
           <option value="workers">Workers</option>
-        </select>
-      </label>
+          </select>
+        </label>
 
-      <label>
-        Environment
-        <select value={filters.environment} onChange={onSelectEnvironment}>
+        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+          Environment
+          <select
+            value={filters.environment}
+            onChange={onSelectEnvironment}
+            className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+          >
           <option value="all">All</option>
           <option value="local">local</option>
           <option value="dev">dev</option>
           <option value="staging">staging</option>
           <option value="prod">prod</option>
-        </select>
-      </label>
+          </select>
+        </label>
 
-      <label className="token-field">
-        Dashboard token
-        <div className="token-controls">
-          <input
-            value={draftToken}
-            onChange={onTokenChange}
-            type="password"
-            placeholder="optional"
-          />
-          <button
-            type="button"
-            className="drill-btn"
-            onClick={() => onChange({ ...filters, token: draftToken.trim() })}
-          >
-            Apply
-          </button>
-          <button
-            type="button"
-            className="drill-btn"
-            onClick={() => {
-              setDraftToken("");
-              onChange({ ...filters, token: "" });
-            }}
-          >
-            Clear
-          </button>
-        </div>
-      </label>
+        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+          Dashboard token
+          <div className="flex gap-2">
+            <input
+              value={draftToken}
+              onChange={onTokenChange}
+              type="password"
+              placeholder="optional"
+              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+            />
+            <button
+              type="button"
+              className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/25"
+              onClick={() => onChange({ ...filters, token: draftToken.trim() })}
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-700"
+              onClick={() => {
+                setDraftToken("");
+                onChange({ ...filters, token: "" });
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        </label>
+      </div>
     </section>
   );
 }
