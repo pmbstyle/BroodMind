@@ -246,10 +246,32 @@ def _ensure_webapp_built(settings: Settings) -> None:
     node_modules_dir = webapp_dir / "node_modules"
     try:
         if not node_modules_dir.exists() or not _has_webapp_build_toolchain(webapp_dir):
-            install_cmd = [npm_path, "ci", "--include=dev", "--no-audit", "--no-fund"]
-            if not (webapp_dir / "package-lock.json").is_file():
-                install_cmd = [npm_path, "install", "--include=dev", "--no-audit", "--no-fund"]
-            _run_webapp_command(install_cmd, cwd=webapp_dir)
+            has_lock = (webapp_dir / "package-lock.json").is_file()
+            install_attempts: list[list[str]] = []
+            if has_lock:
+                install_attempts.extend(
+                    [
+                        [npm_path, "ci", "--include=dev", "--no-audit", "--no-fund"],
+                        [npm_path, "ci", "--production=false", "--no-audit", "--no-fund"],
+                    ]
+                )
+            install_attempts.extend(
+                [
+                    [npm_path, "install", "--include=dev", "--no-audit", "--no-fund"],
+                    [npm_path, "install", "--production=false", "--no-audit", "--no-fund"],
+                ]
+            )
+
+            install_error: RuntimeError | None = None
+            for install_cmd in install_attempts:
+                try:
+                    _run_webapp_command(install_cmd, cwd=webapp_dir)
+                    install_error = None
+                    break
+                except RuntimeError as exc:
+                    install_error = exc
+            if install_error is not None:
+                raise install_error
         _run_webapp_command([npm_path, "run", "build"], cwd=webapp_dir)
     except RuntimeError as exc:
         console.print(f"[bold red]Failed to build web dashboard:[/bold red]\n{exc}")
