@@ -14,6 +14,8 @@ type WorkerRow = {
   status?: string;
   task?: string;
   updated_at?: string;
+  parent_worker_id?: string | null;
+  spawn_depth?: number;
 };
 
 type MetricPoint = {
@@ -42,6 +44,22 @@ function shortWorkerId(value?: string): string {
     return "n/a";
   }
   return value.includes("-") ? value.split("-")[0] : value.slice(0, 8);
+}
+
+function hierarchyLabel(worker: WorkerRow): { text: string; isChild: boolean; depth: number } {
+  const depth = Math.max(0, Number(worker.spawn_depth ?? 0));
+  if (worker.parent_worker_id) {
+    return {
+      text: `child of ${shortWorkerId(worker.parent_worker_id)}`,
+      isChild: true,
+      depth,
+    };
+  }
+  return {
+    text: "root",
+    isChild: false,
+    depth,
+  };
 }
 
 function statusPill(status?: string): string {
@@ -372,6 +390,7 @@ export function ControlCenterPage({ filters }: { filters: DashboardFilters }) {
             <thead className="text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-3 py-2">ID</th>
+                <th className="px-3 py-2">Hierarchy</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Template</th>
                 <th className="px-3 py-2">Task</th>
@@ -381,14 +400,26 @@ export function ControlCenterPage({ filters }: { filters: DashboardFilters }) {
             <tbody>
               {workers.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-4 text-slate-400">
+                  <td colSpan={6} className="px-3 py-4 text-slate-400">
                     No active workers in current filter window.
                   </td>
                 </tr>
               ) : (
-                workers.map((worker) => (
+                workers.map((worker) => {
+                  const hierarchy = hierarchyLabel(worker);
+                  return (
                   <tr key={`${worker.id}-${worker.updated_at}`} className="rounded-lg bg-slate-950/70">
                     <td className="rounded-l-lg px-3 py-3 font-mono text-xs text-cyan-300">{shortWorkerId(worker.id)}</td>
+                    <td className="px-3 py-3 text-xs text-slate-300">
+                      <div
+                        className="inline-flex items-center gap-1"
+                        style={{ paddingLeft: `${Math.min(28, hierarchy.depth * 8)}px` }}
+                        title={hierarchy.text}
+                      >
+                        {hierarchy.isChild ? <span className="text-cyan-400">↳</span> : <span className="text-slate-500">•</span>}
+                        <span>{hierarchy.text}</span>
+                      </div>
+                    </td>
                     <td className="px-3 py-3">
                       <span className={`rounded-full px-2 py-1 text-xs font-semibold uppercase ${statusPill(worker.status)}`}>
                         {String(worker.status ?? "unknown")}
@@ -400,7 +431,7 @@ export function ControlCenterPage({ filters }: { filters: DashboardFilters }) {
                     </td>
                     <td className="rounded-r-lg px-3 py-3 text-slate-400">{prettyTime(worker.updated_at)}</td>
                   </tr>
-                ))
+                )})
               )}
             </tbody>
           </table>
