@@ -14,7 +14,7 @@ describe("AppShell", () => {
 
     expect(screen.getByText("Operations Control Center")).toBeInTheDocument();
     expect(screen.getByText("Window")).toBeInTheDocument();
-    expect(screen.getByText("Service")).toBeInTheDocument();
+    expect(screen.getByText("Dashboard token")).toBeInTheDocument();
     expect(screen.getByText("Loading live operations view...")).toBeInTheDocument();
   });
 });

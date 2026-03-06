@@ -70,15 +70,18 @@ function buildLine(points: number[], width: number, height: number, max: number)
   if (points.length === 0) {
     return "";
   }
+  const topPad = 14;
+  const bottomPad = 10;
+  const plotHeight = Math.max(1, height - topPad - bottomPad);
   if (points.length === 1) {
-    const y = height - (points[0] / max) * height;
+    const y = topPad + plotHeight - (points[0] / max) * plotHeight;
     return `M 0 ${y.toFixed(2)} L ${width} ${y.toFixed(2)}`;
   }
   const step = width / (points.length - 1);
   return points
     .map((value, index) => {
       const x = index * step;
-      const y = height - (value / max) * height;
+      const y = topPad + plotHeight - (value / max) * plotHeight;
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
@@ -94,6 +97,15 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
   const workerLine = buildLine(workers, width, height, maxValue);
   const queueLine = buildLine(queueDepth, width, height, maxValue);
   const queenLine = buildLine(queenQueue, width, height, maxValue);
+  const firstPoint = points[0];
+  const lastPoint = points[points.length - 1];
+  const startLabel = firstPoint
+    ? new Date(firstPoint.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "--:--";
+  const endLabel = lastPoint
+    ? new Date(lastPoint.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "--:--";
+  const tzLabel = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
@@ -117,6 +129,13 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
         <path d={queueLine} fill="none" stroke="#f59e0b" strokeWidth={2.5} strokeLinecap="round" />
         <path d={queenLine} fill="none" stroke="#22c55e" strokeWidth={2.5} strokeLinecap="round" />
       </svg>
+      <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+        <span>{startLabel}</span>
+        <span>
+          Local time axis ({tzLabel}): {startLabel} {"->"} {endLabel}
+        </span>
+        <span>{endLabel}</span>
+      </div>
       <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-300">
         <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />Workers</span>
         <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />System queue</span>
@@ -276,7 +295,7 @@ export function ControlCenterPage({ filters }: { filters: DashboardFilters }) {
             </div>
             <div className="rounded-lg bg-slate-950/70 px-3 py-2">
               <p className="text-xs uppercase tracking-wider text-slate-500">Last update</p>
-              <p className="mt-1 text-sm text-slate-300">{prettyTime(bundle?.overview.generated_at)}</p>
+              <p className="mt-1 text-sm text-slate-300">{prettyTime(bundle?.overview.generated_at)} (local)</p>
             </div>
           </div>
         </section>
@@ -285,7 +304,7 @@ export function ControlCenterPage({ filters }: { filters: DashboardFilters }) {
       <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Workers</h3>
-          <p className="text-xs text-slate-500">Top 12 by recency</p>
+          <p className="text-xs text-slate-500">Top 12 by recency, timestamps in local browser time</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-separate border-spacing-y-2 text-left text-sm">

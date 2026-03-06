@@ -24,14 +24,6 @@ export function GlobalFiltersBar({ filters, onChange }: GlobalFiltersBarProps) {
     onChange({ ...filters, windowMinutes: Number(event.target.value) as DashboardFilters["windowMinutes"] });
   };
 
-  const onSelectService = (event: ChangeEvent<HTMLSelectElement>) => {
-    onChange({ ...filters, service: event.target.value as DashboardFilters["service"] });
-  };
-
-  const onSelectEnvironment = (event: ChangeEvent<HTMLSelectElement>) => {
-    onChange({ ...filters, environment: event.target.value as DashboardFilters["environment"] });
-  };
-
   const onTokenChange = (event: ChangeEvent<HTMLInputElement>) => {
     setDraftToken(event.target.value);
   };
@@ -41,7 +33,7 @@ export function GlobalFiltersBar({ filters, onChange }: GlobalFiltersBarProps) {
       className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60"
       aria-label="Global filters"
     >
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-[minmax(220px,320px)_1fr]">
         <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
           Window
           <select
@@ -53,38 +45,6 @@ export function GlobalFiltersBar({ filters, onChange }: GlobalFiltersBarProps) {
           <option value={60}>1h</option>
           <option value={240}>4h</option>
           <option value={1440}>24h</option>
-          </select>
-        </label>
-
-        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
-          Service
-          <select
-            value={filters.service}
-            onChange={onSelectService}
-            className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-          >
-          <option value="all">All services</option>
-          <option value="gateway">Gateway</option>
-          <option value="queen">Queen</option>
-          <option value="telegram">Telegram</option>
-          <option value="exec_run">Exec Run</option>
-          <option value="mcp">MCP</option>
-          <option value="workers">Workers</option>
-          </select>
-        </label>
-
-        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
-          Environment
-          <select
-            value={filters.environment}
-            onChange={onSelectEnvironment}
-            className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-          >
-          <option value="all">All</option>
-          <option value="local">local</option>
-          <option value="dev">dev</option>
-          <option value="staging">staging</option>
-          <option value="prod">prod</option>
           </select>
         </label>
 
