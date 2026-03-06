@@ -88,6 +88,7 @@ function buildLine(points: number[], width: number, height: number, max: number)
 }
 
 function RealtimeGraph({ points }: { points: MetricPoint[] }) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const width = 760;
   const height = 220;
   const workers = points.map((point) => point.activeWorkers);
@@ -106,14 +107,33 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
     ? new Date(lastPoint.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : "--:--";
   const tzLabel = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const activeIndex = hoverIndex !== null && hoverIndex >= 0 && hoverIndex < points.length ? hoverIndex : null;
+  const activePoint = activeIndex !== null ? points[activeIndex] : null;
+  const step = points.length > 1 ? width / (points.length - 1) : width;
+  const markerX = activeIndex !== null ? activeIndex * step : 0;
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+    <section className="relative rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Realtime Signal</h3>
         <span className="text-xs text-slate-400">Last {points.length} samples</span>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-52 w-full rounded-lg bg-slate-950/80">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-52 w-full rounded-lg bg-slate-950/80"
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0 || points.length === 0) {
+            setHoverIndex(null);
+            return;
+          }
+          const ratio = (event.clientX - rect.left) / rect.width;
+          const clamped = Math.min(1, Math.max(0, ratio));
+          const nextIndex = Math.round(clamped * (points.length - 1));
+          setHoverIndex(nextIndex);
+        }}
+        onMouseLeave={() => setHoverIndex(null)}
+      >
         {[0.25, 0.5, 0.75].map((fraction) => (
           <line
             key={fraction}
@@ -128,7 +148,29 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
         <path d={workerLine} fill="none" stroke="#06b6d4" strokeWidth={3} strokeLinecap="round" />
         <path d={queueLine} fill="none" stroke="#f59e0b" strokeWidth={2.5} strokeLinecap="round" />
         <path d={queenLine} fill="none" stroke="#22c55e" strokeWidth={2.5} strokeLinecap="round" />
+        {activePoint ? (
+          <>
+            <line x1={markerX} x2={markerX} y1={0} y2={height} stroke="#64748b" strokeWidth={1} strokeDasharray="5 4" />
+          </>
+        ) : null}
       </svg>
+      {activePoint ? (
+        <div className="pointer-events-none absolute right-6 top-16 rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs text-slate-200 shadow-xl">
+          <p className="mb-1 text-[11px] text-slate-400">
+            {new Date(activePoint.at).toLocaleString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              month: "short",
+              day: "2-digit",
+            })}{" "}
+            ({tzLabel})
+          </p>
+          <p className="text-cyan-300">Workers: {activePoint.activeWorkers}</p>
+          <p className="text-amber-300">System queue: {activePoint.queueDepth}</p>
+          <p className="text-emerald-300">Queen queue: {activePoint.queenQueue}</p>
+        </div>
+      ) : null}
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
         <span>{startLabel}</span>
         <span>
