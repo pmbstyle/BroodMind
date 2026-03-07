@@ -27,27 +27,6 @@ _PROVIDER_GROUPS: dict[str, tuple[str, ...]] = {
     "Local": ("ollama",),
 }
 
-_CURATED_MODEL_CHOICES: dict[str, tuple[str, ...]] = {
-    "openrouter": (
-        "anthropic/claude-sonnet-4",
-        "openai/gpt-4.1",
-        "google/gemini-2.0-flash",
-    ),
-    "zai": ("glm-5", "glm-4.6", "glm-4.5-air"),
-    "openai": ("gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini"),
-    "anthropic": ("claude-sonnet-4-20250514", "claude-3-7-sonnet-latest"),
-    "google": ("gemini-2.0-flash", "gemini-2.0-pro-exp", "gemini-1.5-pro"),
-    "mistral": ("mistral-medium-latest", "mistral-large-latest", "ministral-8b-latest"),
-    "together": (
-        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        "deepseek-ai/DeepSeek-V3",
-        "Qwen/Qwen2.5-Coder-32B-Instruct",
-    ),
-    "groq": ("llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "mixtral-8x7b-32768"),
-    "ollama": ("llama3.2", "qwen2.5-coder:14b", "deepseek-r1:14b"),
-}
-
-
 def configure_wizard() -> None:
     """Run the interactive configuration wizard."""
     print_banner()
@@ -181,15 +160,20 @@ def _configure_provider_profile(
 ) -> dict[str, str]:
     console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Model Provider[/bold {ACCENT}]"))
     console.print("Choose the upstream model provider BroodMind should use through LiteLLM.")
-    _render_provider_catalog()
 
-    provider_choices = list_registered_provider_ids(include_custom=True)
+    provider_choices = _render_provider_select_list()
     current_provider_id = _resolve_configured_provider_id(config, staged)
-    provider_id = Prompt.ask(
-        "Provider",
-        choices=provider_choices,
-        default=current_provider_id,
+    default_choice = 1
+    for index, provider_choice in enumerate(provider_choices, start=1):
+        if provider_choice == current_provider_id:
+            default_choice = index
+            break
+    selected_index = IntPrompt.ask(
+        "Choose provider",
+        choices=[str(index) for index in range(1, len(provider_choices) + 1)],
+        default=default_choice,
     )
+    provider_id = provider_choices[selected_index - 1]
     provider_entry = get_provider_catalog_entry(provider_id)
     _set_if_changed(config, staged, "BROODMIND_LLM_PROVIDER", "litellm")
     _set_if_changed(config, staged, "BROODMIND_LITELLM_PROVIDER_ID", provider_id)
@@ -232,7 +216,7 @@ def _configure_provider_profile(
         _set_if_changed(config, staged, "BROODMIND_LITELLM_API_KEY", api_key)
 
     current_model = _default_profile_value(config, staged, provider_id, "model")
-    selected_model = _prompt_for_model(config, staged, provider_id, current_model)
+    selected_model = _prompt_for_model(provider_id, current_model)
     _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL", selected_model)
 
     current_api_base = _default_profile_value(config, staged, provider_id, "api_base")
@@ -240,8 +224,9 @@ def _configure_provider_profile(
         ask_base_url = advanced_mode or provider_id in {"custom", "ollama"}
         use_recommended_endpoint = True
         if not ask_base_url:
+            recommended_endpoint = current_api_base or provider_entry.default_api_base or "provider-managed default"
             use_recommended_endpoint = Confirm.ask(
-                "Use the recommended endpoint URL?",
+                f"Use the recommended endpoint URL ({recommended_endpoint})?",
                 default=True,
             )
         if ask_base_url or not use_recommended_endpoint:
@@ -448,37 +433,11 @@ def _configure_runtime_defaults(
     }
 
 
-def _prompt_for_model(config: ConfigManager, staged: dict[str, str], provider_id: str, current_model: str) -> str:
+def _prompt_for_model(provider_id: str, current_model: str) -> str:
     provider_entry = get_provider_catalog_entry(provider_id)
-    curated = list(_CURATED_MODEL_CHOICES.get(provider_id, ()))
-    options = [*curated, "custom"]
-
-    if current_model and current_model not in curated:
-        default_choice = "custom"
-    elif current_model:
-        default_choice = current_model
-    else:
-        default_choice = curated[0] if curated else "custom"
-
-    if curated:
-        table = Table(box=box.SIMPLE, show_header=True, header_style=f"bold {ACCENT}", expand=False)
-        table.add_column("Choice", style="white", width=34)
-        table.add_column("Why pick it", style="dim", width=42)
-        for index, model in enumerate(curated):
-            hint = "Recommended default" if index == 0 else "Alternative preset"
-            table.add_row(model, hint)
-        table.add_row("custom", "Enter any model name manually")
-        console.print(table)
-
-        selected = Prompt.ask(
-            f"{provider_entry.model_label} preset",
-            choices=options,
-            default=default_choice,
-        )
-        if selected != "custom":
-            return selected
-
-    return Prompt.ask(provider_entry.model_label, default=current_model or provider_entry.default_model)
+    example_model = provider_entry.default_model
+    prompt = f"{provider_entry.model_label} (example: {example_model})"
+    return Prompt.ask(prompt, default=current_model or provider_entry.default_model)
 
 
 def _print_workspace_bootstrap(workspace_result: dict[str, int | list[str]]) -> None:
@@ -654,29 +613,29 @@ def _ensure_workspace_bootstrap(workspace_dir: Path) -> dict[str, int | list[str
     }
 
 
-def _render_provider_catalog() -> None:
-    table = Table(box=box.SIMPLE, show_header=True, header_style=f"bold {ACCENT}", expand=False)
-    table.add_column("Category", style="bold white", width=20)
-    table.add_column("ID", style="white", width=16)
-    table.add_column("Provider", style="bold white", width=20)
-    table.add_column("Notes", style="dim", width=42)
-
+def _render_provider_select_list() -> list[str]:
+    provider_choices: list[str] = []
     rendered_ids: set[str] = set()
+    lines: list[str] = []
+
     for category, provider_ids in _PROVIDER_GROUPS.items():
-        first_in_group = True
+        lines.append(f"[bold]{category}[/bold]")
         for provider_id in provider_ids:
             entry = get_provider_catalog_entry(provider_id)
-            table.add_row(category if first_in_group else "", entry.id, entry.label, entry.description)
+            provider_choices.append(provider_id)
             rendered_ids.add(provider_id)
-            first_in_group = False
+            lines.append(f"{len(provider_choices)}. {entry.label} [dim]({entry.description})[/dim]")
+        lines.append("")
 
     for provider_id in list_registered_provider_ids(include_custom=True):
         if provider_id in rendered_ids:
             continue
         entry = get_provider_catalog_entry(provider_id)
-        table.add_row("Other", entry.id, entry.label, entry.description)
+        provider_choices.append(provider_id)
+        lines.append(f"{len(provider_choices)}. {entry.label} [dim]({entry.description})[/dim]")
 
-    console.print(table)
+    console.print(Panel("\n".join(lines).strip(), border_style=SURFACE, padding=(1, 2)))
+    return provider_choices
 
 
 def _resolve_configured_provider_id(config: ConfigManager, staged: dict[str, str]) -> str:

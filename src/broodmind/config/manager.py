@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from dotenv import get_key, load_dotenv, set_key
+from dotenv import dotenv_values, set_key
 
 
 class ConfigManager:
@@ -12,7 +12,8 @@ class ConfigManager:
         self.env_path = Path(env_path)
         if not self.env_path.exists():
             self.env_path.touch(mode=0o600)
-        load_dotenv(self.env_path)
+        for key, value in self._read_env_values().items():
+            os.environ.setdefault(key, value)
 
     def set(self, key: str, value: Any) -> None:
         """Set a value in the .env file."""
@@ -25,10 +26,20 @@ class ConfigManager:
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value from the .env file or environment."""
-        val = get_key(str(self.env_path), key)
+        val = self._read_env_values().get(key)
         if val is None:
             return os.environ.get(key, default)
         return val
 
     def exists(self) -> bool:
         return self.env_path.exists()
+
+    def _read_env_values(self) -> dict[str, str]:
+        encodings = ("utf-8", "utf-8-sig", "cp1251", "latin-1")
+        for encoding in encodings:
+            try:
+                values = dotenv_values(self.env_path, encoding=encoding)
+                return {key: value for key, value in values.items() if key and value is not None}
+            except UnicodeDecodeError:
+                continue
+        return {}
