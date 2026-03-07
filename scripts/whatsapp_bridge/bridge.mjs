@@ -2,13 +2,30 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import http from "node:http";
 import { URL } from "node:url";
-import makeWASocket, {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  useMultiFileAuthState,
-} from "@whiskeysockets/baileys";
+import * as baileys from "@whiskeysockets/baileys";
 import pino from "pino";
 import QRCode from "qrcode-terminal";
+
+const makeWASocket =
+  typeof baileys.makeWASocket === "function"
+    ? baileys.makeWASocket
+    : typeof baileys.default === "function"
+      ? baileys.default
+      : typeof baileys.default?.makeWASocket === "function"
+        ? baileys.default.makeWASocket
+        : null;
+const DisconnectReason = baileys.DisconnectReason ?? baileys.default?.DisconnectReason;
+const fetchLatestBaileysVersion =
+  baileys.fetchLatestBaileysVersion ?? baileys.default?.fetchLatestBaileysVersion;
+const useMultiFileAuthState = baileys.useMultiFileAuthState ?? baileys.default?.useMultiFileAuthState;
+
+if (
+  typeof makeWASocket !== "function" ||
+  typeof fetchLatestBaileysVersion !== "function" ||
+  typeof useMultiFileAuthState !== "function"
+) {
+  throw new TypeError("Unsupported @whiskeysockets/baileys module shape. Reinstall bridge dependencies.");
+}
 
 const host = process.env.BROODMIND_WHATSAPP_BRIDGE_HOST || "127.0.0.1";
 const port = Number(process.env.BROODMIND_WHATSAPP_BRIDGE_PORT || "8765");

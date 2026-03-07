@@ -3,18 +3,31 @@ set -euo pipefail
 
 install_nodejs_with_available_manager() {
   if command -v npm >/dev/null 2>&1; then
-    return 0
+    if command -v node >/dev/null 2>&1; then
+      local current_major
+      current_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+      if [[ "$current_major" =~ ^[0-9]+$ ]] && (( current_major >= 20 )); then
+        return 0
+      fi
+    fi
   fi
 
-  echo "npm not found. Installing Node.js and npm..."
+  echo "Node.js 20+ and npm are required. Installing/upgrading..."
 
   if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
-    sudo apt-get install -y nodejs npm
+    sudo apt-get install -y ca-certificates curl gnupg
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+    sudo apt-get update
+    sudo apt-get install -y nodejs
   elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y nodejs npm
+    curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+    sudo dnf install -y nodejs
   elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y nodejs npm
+    curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+    sudo yum install -y nodejs
   elif command -v pacman >/dev/null 2>&1; then
     sudo pacman -Sy --noconfirm nodejs npm
   elif command -v zypper >/dev/null 2>&1; then
@@ -29,9 +42,16 @@ install_nodejs_with_available_manager() {
     exit 1
   fi
 
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "Node.js/npm installation did not make npm available on PATH." >&2
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo "Node.js/npm installation did not make node and npm available on PATH." >&2
     echo "Open a new shell or add Node.js to PATH, then rerun ./scripts/bootstrap.sh." >&2
+    exit 1
+  fi
+
+  local installed_major
+  installed_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  if [[ ! "$installed_major" =~ ^[0-9]+$ ]] || (( installed_major < 20 )); then
+    echo "Node.js 20 or newer is required, but found $(node --version 2>/dev/null || echo unknown)." >&2
     exit 1
   fi
 }

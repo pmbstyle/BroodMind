@@ -14,11 +14,14 @@ function Test-Npm {
 }
 
 function Install-NodeJs {
-    if (Test-Npm) {
-        return
+    if ((Test-Npm) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+        $currentMajor = (& node -p "process.versions.node.split('.')[0]")
+        if ([int]$currentMajor -ge 20) {
+            return
+        }
     }
 
-    Write-Host "npm not found. Installing Node.js and npm..."
+    Write-Host "Node.js 20+ and npm are required. Installing/upgrading..."
 
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         winget install --exact --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
@@ -35,8 +38,13 @@ function Install-NodeJs {
         $env:Path = "$machineNodePath;$env:Path"
     }
 
-    if (-not (Test-Npm)) {
-        throw "Node.js/npm installation finished, but npm is still not on PATH. Restart PowerShell and rerun .\scripts\bootstrap.ps1."
+    if ((-not (Test-Npm)) -or (-not (Get-Command node -ErrorAction SilentlyContinue))) {
+        throw "Node.js/npm installation finished, but node or npm is still not on PATH. Restart PowerShell and rerun .\scripts\bootstrap.ps1."
+    }
+
+    $installedMajor = (& node -p "process.versions.node.split('.')[0]")
+    if ([int]$installedMajor -lt 20) {
+        throw "Node.js 20 or newer is required for the WhatsApp bridge. Found $(& node --version)."
     }
 }
 

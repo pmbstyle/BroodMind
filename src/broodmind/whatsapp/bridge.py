@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -49,6 +50,8 @@ class WhatsAppBridgeController:
         npm = self._find_command(("npm.cmd", "npm"))
         if npm is None:
             raise WhatsAppBridgeError("npm is required to install the WhatsApp bridge dependencies.")
+        node = self._find_command((self.settings.whatsapp_node_command, "node"))
+        self._require_supported_node(node)
         subprocess.run([npm, "install"], cwd=str(self.bridge_dir), check=True)
 
     def start(self, *, callback_url: str | None = None) -> None:
@@ -61,6 +64,7 @@ class WhatsAppBridgeController:
         node = self._find_command((self.settings.whatsapp_node_command, "node"))
         if node is None:
             raise WhatsAppBridgeError("Node.js is required to run the WhatsApp bridge.")
+        self._require_supported_node(node)
 
         self.auth_dir.mkdir(parents=True, exist_ok=True)
         log_dir = self.settings.state_dir / "logs"
@@ -153,3 +157,40 @@ class WhatsAppBridgeController:
             if found:
                 return found
         return None
+
+    @staticmethod
+    def _require_supported_node(node_command: str | None) -> None:
+        if node_command is None:
+            raise WhatsAppBridgeError("Node.js 20 or newer is required to run the WhatsApp bridge.")
+        version = WhatsAppBridgeController._node_version(node_command)
+        major = WhatsAppBridgeController._parse_node_major(version)
+        if major is None:
+            raise WhatsAppBridgeError(
+                f"Could not determine Node.js version from `{node_command}`. Node.js 20 or newer is required."
+            )
+        if major < 20:
+            raise WhatsAppBridgeError(
+                f"Node.js 20 or newer is required for the WhatsApp bridge. Found {version or 'unknown version'}."
+            )
+
+    @staticmethod
+    def _node_version(node_command: str) -> str:
+        try:
+            completed = subprocess.run(
+                [node_command, "--version"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise WhatsAppBridgeError(
+                f"Failed to run `{node_command} --version`. Node.js 20 or newer is required."
+            ) from exc
+        return (completed.stdout or completed.stderr or "").strip()
+
+    @staticmethod
+    def _parse_node_major(version_text: str) -> int | None:
+        match = re.search(r"v?(?P<major>\d+)", version_text.strip())
+        if not match:
+            return None
+        return int(match.group("major"))
