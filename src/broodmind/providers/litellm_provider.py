@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import random
@@ -324,12 +325,18 @@ class LiteLLMProvider:
 
     async def _acompletion_guarded(self, **kwargs: object) -> Any:
         async with self._semaphore:
-            return await acompletion(
+            response = await acompletion(
                 model=self._model,
                 api_base=self._api_base,
                 api_key=self._api_key,
                 **kwargs,
             )
+            # LiteLLM can occasionally return a nested awaitable object on
+            # provider-error paths (seen on Python 3.14). Unwrap it to avoid
+            # "coroutine ... was never awaited" warnings and leaked coroutines.
+            while inspect.isawaitable(response):
+                response = await response
+            return response
 
 
 def _serialize_message(message: Message | dict) -> dict:
