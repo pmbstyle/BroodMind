@@ -14,12 +14,38 @@ from rich.text import Text
 
 from broodmind.cli.branding import print_banner
 from broodmind.config.manager import ConfigManager
-from broodmind.providers.catalog import get_provider_catalog_entry, list_provider_catalog, list_registered_provider_ids
+from broodmind.providers.catalog import get_provider_catalog_entry, list_registered_provider_ids
 
 console = Console()
 ACCENT = "bright_cyan"
 SURFACE = "cyan"
 SUCCESS = "green"
+
+_PROVIDER_GROUPS: dict[str, tuple[str, ...]] = {
+    "Routers and Gateways": ("openrouter", "custom"),
+    "Hosted APIs": ("zai", "openai", "anthropic", "google", "mistral", "together", "groq"),
+    "Local": ("ollama",),
+}
+
+_CURATED_MODEL_CHOICES: dict[str, tuple[str, ...]] = {
+    "openrouter": (
+        "anthropic/claude-sonnet-4",
+        "openai/gpt-4.1",
+        "google/gemini-2.0-flash",
+    ),
+    "zai": ("glm-5", "glm-4.6", "glm-4.5-air"),
+    "openai": ("gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini"),
+    "anthropic": ("claude-sonnet-4-20250514", "claude-3-7-sonnet-latest"),
+    "google": ("gemini-2.0-flash", "gemini-2.0-pro-exp", "gemini-1.5-pro"),
+    "mistral": ("mistral-medium-latest", "mistral-large-latest", "ministral-8b-latest"),
+    "together": (
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "deepseek-ai/DeepSeek-V3",
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+    ),
+    "groq": ("llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "mixtral-8x7b-32768"),
+    "ollama": ("llama3.2", "qwen2.5-coder:14b", "deepseek-r1:14b"),
+}
 
 
 def configure_wizard() -> None:
@@ -30,185 +56,432 @@ def configure_wizard() -> None:
         Panel(
             Text("BroodMind Configuration Studio\n", style="bold bright_cyan")
             + Text(
-                "Production-ready setup for access control, model routing, runtime paths, and service security.",
+                "Guided setup for Telegram access, provider profiles, storage paths, and runtime defaults.",
                 style="dim",
             ),
             title="[bold white]Onboarding[/bold white]",
-            subtitle="[dim]Estimated time: 3-5 minutes[/dim]",
+            subtitle="[dim]Quick setup for first run, advanced setup for finer control[/dim]",
             border_style=SURFACE,
             padding=(1, 2),
         )
     )
 
     config = ConfigManager()
-    changes: list[tuple[str, str]] = []
+    staged: dict[str, str] = {}
 
-    console.print(Rule(f"[bold {ACCENT}]Step 1/7  Telegram Access[/bold {ACCENT}]"))
-    console.print("Get your bot token from @BotFather.")
-    current_token = config.get("TELEGRAM_BOT_TOKEN", "")
+    setup_mode = Prompt.ask(
+        "Setup mode",
+        choices=["quick", "advanced"],
+        default="quick",
+    )
+    advanced_mode = setup_mode == "advanced"
+    total_steps = 6 if advanced_mode else 5
+
+    _configure_telegram_access(config, staged, step_index=1, total_steps=total_steps, advanced_mode=advanced_mode)
+    provider_summary = _configure_provider_profile(
+        config,
+        staged,
+        step_index=2,
+        total_steps=total_steps,
+        advanced_mode=advanced_mode,
+    )
+    workspace_result, storage_summary = _configure_storage(
+        config,
+        staged,
+        step_index=3,
+        total_steps=total_steps,
+    )
+    features_summary = _configure_optional_tools(
+        config,
+        staged,
+        step_index=4,
+        total_steps=total_steps,
+    )
+
+    gateway_summary: dict[str, str] = {}
+    runtime_summary: dict[str, str] = {}
+    if advanced_mode:
+        gateway_summary = _configure_gateway_security(
+            config,
+            staged,
+            step_index=5,
+            total_steps=total_steps,
+        )
+        runtime_summary = _configure_runtime_defaults(
+            config,
+            staged,
+            step_index=6,
+            total_steps=total_steps,
+        )
+
+    step_index = total_steps
+    console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Review and Save[/bold {ACCENT}]"))
+    _print_workspace_bootstrap(workspace_result)
+    _print_review(
+        config=config,
+        staged=staged,
+        provider_summary=provider_summary,
+        storage_summary=storage_summary,
+        features_summary=features_summary,
+        gateway_summary=gateway_summary,
+        runtime_summary=runtime_summary,
+        advanced_mode=advanced_mode,
+    )
+
+    if not Confirm.ask("Save these changes to .env?", default=True):
+        console.print("[yellow]Configuration cancelled. No changes were written.[/yellow]")
+        return
+
+    _apply_staged_changes(config, staged)
+    _print_saved_summary(config, staged)
+
+
+def _configure_telegram_access(
+    config: ConfigManager,
+    staged: dict[str, str],
+    *,
+    step_index: int,
+    total_steps: int,
+    advanced_mode: bool,
+) -> None:
+    console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Telegram Access[/bold {ACCENT}]"))
+    console.print("Get your bot token from @BotFather and lock BroodMind to your chat IDs.")
+
+    current_token = _effective_value(config, staged, "TELEGRAM_BOT_TOKEN", "")
     token = Prompt.ask(
         "Telegram Bot Token",
         default=current_token,
         password=bool(current_token),
     )
     if token:
-        _set_if_changed(config, changes, "TELEGRAM_BOT_TOKEN", token)
+        _set_if_changed(config, staged, "TELEGRAM_BOT_TOKEN", token)
 
-    current_parse_mode = config.get("BROODMIND_TELEGRAM_PARSE_MODE", "MarkdownV2")
-    parse_mode = Prompt.ask(
-        "Telegram parse mode",
-        choices=["MarkdownV2", "HTML", "Markdown", "none"],
-        default=current_parse_mode if current_parse_mode else "MarkdownV2",
-    )
-    parse_mode_value = "" if parse_mode == "none" else parse_mode
-    _set_if_changed(config, changes, "BROODMIND_TELEGRAM_PARSE_MODE", parse_mode_value)
-
-    console.print(Rule(f"[bold {ACCENT}]Step 2/7  Access Control[/bold {ACCENT}]"))
-    console.print("Define who can interact with the Queen.")
-    console.print("[dim]Tip: message @userinfobot on Telegram to get your chat ID.[/dim]")
-    current_ids = config.get("ALLOWED_TELEGRAM_CHAT_IDS", "")
-    allowed_ids = Prompt.ask(
-        "Allowed Chat IDs (comma-separated)",
-        default=current_ids,
-    )
+    current_ids = _effective_value(config, staged, "ALLOWED_TELEGRAM_CHAT_IDS", "")
+    allowed_ids = Prompt.ask("Allowed Chat IDs (comma-separated)", default=current_ids)
     if allowed_ids:
-        _set_if_changed(config, changes, "ALLOWED_TELEGRAM_CHAT_IDS", allowed_ids)
+        _set_if_changed(config, staged, "ALLOWED_TELEGRAM_CHAT_IDS", allowed_ids)
 
-    console.print(Rule(f"[bold {ACCENT}]Step 3/7  LLM Provider[/bold {ACCENT}]"))
+    if advanced_mode:
+        current_parse_mode = _effective_value(config, staged, "BROODMIND_TELEGRAM_PARSE_MODE", "MarkdownV2")
+        parse_mode = Prompt.ask(
+            "Telegram parse mode",
+            choices=["MarkdownV2", "HTML", "Markdown", "none"],
+            default=current_parse_mode if current_parse_mode else "MarkdownV2",
+        )
+        _set_if_changed(config, staged, "BROODMIND_TELEGRAM_PARSE_MODE", "" if parse_mode == "none" else parse_mode)
+
+
+def _configure_provider_profile(
+    config: ConfigManager,
+    staged: dict[str, str],
+    *,
+    step_index: int,
+    total_steps: int,
+    advanced_mode: bool,
+) -> dict[str, str]:
+    console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Model Provider[/bold {ACCENT}]"))
+    console.print("Choose the upstream model provider BroodMind should use through LiteLLM.")
+    _render_provider_catalog()
+
     provider_choices = list_registered_provider_ids(include_custom=True)
-    current_provider_id = _resolve_configured_provider_id(config)
-    _render_provider_catalog(provider_choices)
+    current_provider_id = _resolve_configured_provider_id(config, staged)
     provider_id = Prompt.ask(
-        "LiteLLM provider",
+        "Provider",
         choices=provider_choices,
         default=current_provider_id,
     )
     provider_entry = get_provider_catalog_entry(provider_id)
-    _set_if_changed(config, changes, "BROODMIND_LLM_PROVIDER", "litellm")
-    _set_if_changed(config, changes, "BROODMIND_LITELLM_PROVIDER_ID", provider_id)
+    _set_if_changed(config, staged, "BROODMIND_LLM_PROVIDER", "litellm")
+    _set_if_changed(config, staged, "BROODMIND_LITELLM_PROVIDER_ID", provider_id)
 
-    console.print(f"[bold]{provider_entry.label} profile[/bold]")
-    console.print(f"[dim]{provider_entry.description}[/dim]")
-
-    current_api_key = _default_profile_value(config, provider_id, "api_key")
-    api_key = Prompt.ask(
-        provider_entry.api_key_label,
-        default=current_api_key,
-        password=bool(current_api_key),
+    console.print(
+        Panel(
+            f"[bold]{provider_entry.label}[/bold]\n"
+            f"{provider_entry.description}\n\n"
+            f"[dim]Key:[/dim] {provider_entry.api_key_label}\n"
+            f"[dim]Model:[/dim] {provider_entry.model_label}\n"
+            f"[dim]Endpoint:[/dim] "
+            f"{provider_entry.default_api_base or 'Provider-managed default'}",
+            border_style=SURFACE,
+            padding=(1, 2),
+        )
     )
-    _set_if_changed(config, changes, "BROODMIND_LITELLM_API_KEY", api_key)
 
-    current_model = _default_profile_value(config, provider_id, "model")
-    selected_model = Prompt.ask(provider_entry.model_label, default=current_model)
-    _set_if_changed(config, changes, "BROODMIND_LITELLM_MODEL", selected_model)
-
-    if provider_entry.supports_custom_base_url:
-        current_api_base = _default_profile_value(config, provider_id, "api_base")
-        api_base = Prompt.ask(provider_entry.base_url_label, default=current_api_base)
-        _set_if_changed(config, changes, "BROODMIND_LITELLM_API_BASE", api_base)
+    current_api_key = _default_profile_value(config, staged, provider_id, "api_key")
+    if provider_entry.requires_api_key:
+        api_key = Prompt.ask(
+            provider_entry.api_key_label,
+            default=current_api_key,
+            password=bool(current_api_key),
+        )
+        _set_if_changed(config, staged, "BROODMIND_LITELLM_API_KEY", api_key)
     else:
-        inherited_base = _default_profile_value(config, provider_id, "api_base")
-        if inherited_base:
-            _set_if_changed(config, changes, "BROODMIND_LITELLM_API_BASE", inherited_base)
+        configure_optional_key = Confirm.ask(
+            f"Configure {provider_entry.api_key_label.lower()}?",
+            default=bool(current_api_key),
+        )
+        api_key = current_api_key
+        if configure_optional_key:
+            api_key = Prompt.ask(
+                provider_entry.api_key_label,
+                default=current_api_key,
+                password=bool(current_api_key),
+            )
+        elif not current_api_key:
+            api_key = ""
+        _set_if_changed(config, staged, "BROODMIND_LITELLM_API_KEY", api_key)
 
-    current_prefix = _default_profile_value(config, provider_id, "model_prefix")
-    if provider_entry.supports_model_prefix_override:
-        selected_prefix = Prompt.ask("LiteLLM model prefix", default=current_prefix)
-        _set_if_changed(config, changes, "BROODMIND_LITELLM_MODEL_PREFIX", selected_prefix)
+    current_model = _default_profile_value(config, staged, provider_id, "model")
+    selected_model = _prompt_for_model(config, staged, provider_id, current_model)
+    _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL", selected_model)
+
+    current_api_base = _default_profile_value(config, staged, provider_id, "api_base")
+    if provider_entry.supports_custom_base_url:
+        ask_base_url = advanced_mode or provider_id in {"custom", "ollama"}
+        use_recommended_endpoint = True
+        if not ask_base_url:
+            use_recommended_endpoint = Confirm.ask(
+                "Use the recommended endpoint URL?",
+                default=True,
+            )
+        if ask_base_url or not use_recommended_endpoint:
+            api_base = Prompt.ask(provider_entry.base_url_label, default=current_api_base)
+            _set_if_changed(config, staged, "BROODMIND_LITELLM_API_BASE", api_base)
+        else:
+            _set_if_changed(config, staged, "BROODMIND_LITELLM_API_BASE", current_api_base)
+
+    current_prefix = _default_profile_value(config, staged, provider_id, "model_prefix")
+    if provider_entry.supports_model_prefix_override or advanced_mode:
+        if provider_entry.supports_model_prefix_override:
+            selected_prefix = Prompt.ask("LiteLLM model prefix", default=current_prefix)
+            _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", selected_prefix)
+        elif current_prefix:
+            _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", current_prefix)
     elif current_prefix:
-        _set_if_changed(config, changes, "BROODMIND_LITELLM_MODEL_PREFIX", current_prefix)
+        _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", current_prefix)
 
-    current_timeout = str(config.get("LITELLM_TIMEOUT", "120") or "120")
-    litellm_timeout = Prompt.ask("LiteLLM timeout (seconds)", default=current_timeout)
-    _set_if_changed(config, changes, "LITELLM_TIMEOUT", litellm_timeout)
+    if advanced_mode:
+        current_timeout = _effective_value(config, staged, "LITELLM_TIMEOUT", "120")
+        litellm_timeout = Prompt.ask("LiteLLM timeout (seconds)", default=current_timeout)
+        _set_if_changed(config, staged, "LITELLM_TIMEOUT", litellm_timeout)
 
-    console.print(Rule(f"[bold {ACCENT}]Step 4/7  Storage[/bold {ACCENT}]"))
-    current_workspace = config.get("BROODMIND_WORKSPACE_DIR", "workspace")
+        current_retries = _effective_value(config, staged, "LITELLM_NUM_RETRIES", "3")
+        retries = Prompt.ask("LiteLLM retries", default=current_retries)
+        _set_if_changed(config, staged, "LITELLM_NUM_RETRIES", retries)
+
+        current_concurrency = _effective_value(config, staged, "LITELLM_MAX_CONCURRENCY", "2")
+        concurrency = Prompt.ask("LiteLLM max concurrency", default=current_concurrency)
+        _set_if_changed(config, staged, "LITELLM_MAX_CONCURRENCY", concurrency)
+
+    return {
+        "provider": provider_entry.label,
+        "provider_id": provider_id,
+        "model": selected_model,
+        "api_key_set": "yes" if bool(api_key.strip()) else "no",
+        "api_base": _effective_value(config, staged, "BROODMIND_LITELLM_API_BASE", current_api_base),
+    }
+
+
+def _configure_storage(
+    config: ConfigManager,
+    staged: dict[str, str],
+    *,
+    step_index: int,
+    total_steps: int,
+) -> tuple[dict[str, int | list[str]], dict[str, str]]:
+    console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Storage[/bold {ACCENT}]"))
+    console.print("Choose where BroodMind stores runtime state and the shared workspace.")
+
+    current_workspace = _effective_value(config, staged, "BROODMIND_WORKSPACE_DIR", "workspace")
     workspace = Prompt.ask("Workspace directory", default=current_workspace)
-    _set_if_changed(config, changes, "BROODMIND_WORKSPACE_DIR", workspace)
+    _set_if_changed(config, staged, "BROODMIND_WORKSPACE_DIR", workspace)
     workspace_result = _ensure_workspace_bootstrap(Path(workspace))
 
-    current_state = config.get("BROODMIND_STATE_DIR", "data")
+    current_state = _effective_value(config, staged, "BROODMIND_STATE_DIR", "data")
     state_dir = Prompt.ask("State directory (DB, logs)", default=current_state)
-    _set_if_changed(config, changes, "BROODMIND_STATE_DIR", state_dir)
+    _set_if_changed(config, staged, "BROODMIND_STATE_DIR", state_dir)
 
-    console.print(Rule(f"[bold {ACCENT}]Step 5/7  Optional Tools[/bold {ACCENT}]"))
+    return workspace_result, {"workspace": workspace, "state_dir": state_dir}
 
-    if Confirm.ask("Enable Web Search? (requires Brave API key)", default=False):
-        current_brave = config.get("BRAVE_API_KEY", "")
+
+def _configure_optional_tools(
+    config: ConfigManager,
+    staged: dict[str, str],
+    *,
+    step_index: int,
+    total_steps: int,
+) -> dict[str, str]:
+    console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Tools and Features[/bold {ACCENT}]"))
+    console.print("Turn on the extra services you want BroodMind to use.")
+
+    summary: dict[str, str] = {}
+
+    current_brave = _effective_value(config, staged, "BRAVE_API_KEY", "")
+    if Confirm.ask("Configure Brave web search?", default=bool(current_brave)):
         brave_key = Prompt.ask("Brave API Key", default=current_brave, password=bool(current_brave))
-        if brave_key:
-            _set_if_changed(config, changes, "BRAVE_API_KEY", brave_key)
+        _set_if_changed(config, staged, "BRAVE_API_KEY", brave_key)
+        summary["Brave search"] = "enabled" if brave_key.strip() else "not configured"
+    else:
+        summary["Brave search"] = "disabled"
 
-    if Confirm.ask("Enable Firecrawl-backed web fetch?", default=False):
-        current_firecrawl = config.get("FIRECRAWL_API_KEY", "")
-        firecrawl_key = Prompt.ask("Firecrawl API Key", default=current_firecrawl, password=bool(current_firecrawl))
-        if firecrawl_key:
-            _set_if_changed(config, changes, "FIRECRAWL_API_KEY", firecrawl_key)
+    current_firecrawl = _effective_value(config, staged, "FIRECRAWL_API_KEY", "")
+    if Confirm.ask("Configure Firecrawl web fetch?", default=bool(current_firecrawl)):
+        firecrawl_key = Prompt.ask(
+            "Firecrawl API Key",
+            default=current_firecrawl,
+            password=bool(current_firecrawl),
+        )
+        _set_if_changed(config, staged, "FIRECRAWL_API_KEY", firecrawl_key)
+        summary["Firecrawl"] = "enabled" if firecrawl_key.strip() else "not configured"
+    else:
+        summary["Firecrawl"] = "disabled"
 
-    if Confirm.ask("Enable Semantic Memory? (requires OpenAI API key)", default=False):
-        current_openai = config.get("OPENAI_API_KEY", "")
+    current_openai = _effective_value(config, staged, "OPENAI_API_KEY", "")
+    if Confirm.ask("Configure semantic memory embeddings?", default=bool(current_openai)):
         openai_key = Prompt.ask("OpenAI API Key", default=current_openai, password=bool(current_openai))
-        if openai_key:
-            _set_if_changed(config, changes, "OPENAI_API_KEY", openai_key)
+        _set_if_changed(config, staged, "OPENAI_API_KEY", openai_key)
 
-            current_base_url = config.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        if openai_key.strip():
+            current_base_url = _effective_value(config, staged, "OPENAI_BASE_URL", "https://api.openai.com/v1")
             openai_base_url = Prompt.ask("OpenAI Base URL", default=current_base_url)
-            _set_if_changed(config, changes, "OPENAI_BASE_URL", openai_base_url)
+            _set_if_changed(config, staged, "OPENAI_BASE_URL", openai_base_url)
 
-            current_embed_model = config.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+            current_embed_model = _effective_value(config, staged, "OPENAI_EMBED_MODEL", "text-embedding-3-small")
             openai_embed_model = Prompt.ask("OpenAI Embedding Model", default=current_embed_model)
-            _set_if_changed(config, changes, "OPENAI_EMBED_MODEL", openai_embed_model)
+            _set_if_changed(config, staged, "OPENAI_EMBED_MODEL", openai_embed_model)
+            summary["Semantic memory"] = openai_embed_model
+        else:
+            summary["Semantic memory"] = "not configured"
+    else:
+        summary["Semantic memory"] = "disabled"
 
-    console.print(Rule(f"[bold {ACCENT}]Step 6/7  Gateway and Security[/bold {ACCENT}]"))
-    auto_serve_default = _env_bool(config.get("BROODMIND_TAILSCALE_AUTO_SERVE", "1"), default=True)
+    return summary
+
+
+def _configure_gateway_security(
+    config: ConfigManager,
+    staged: dict[str, str],
+    *,
+    step_index: int,
+    total_steps: int,
+) -> dict[str, str]:
+    console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Gateway and Security[/bold {ACCENT}]"))
+    console.print("Tune network exposure and dashboard protection.")
+
+    auto_serve_default = _env_bool(_effective_value(config, staged, "BROODMIND_TAILSCALE_AUTO_SERVE", "1"), default=True)
     auto_serve = Confirm.ask("Enable automatic `tailscale serve` at startup?", default=auto_serve_default)
-    _set_if_changed(config, changes, "BROODMIND_TAILSCALE_AUTO_SERVE", "1" if auto_serve else "0")
+    _set_if_changed(config, staged, "BROODMIND_TAILSCALE_AUTO_SERVE", "1" if auto_serve else "0")
 
-    current_tailscale_ips = config.get("BROODMIND_TAILSCALE_IPS", "")
+    current_tailscale_ips = _effective_value(config, staged, "BROODMIND_TAILSCALE_IPS", "")
     tailscale_ips = Prompt.ask(
-        "Optional trusted Tailscale IPs (comma-separated, leave blank to auto-discover)",
+        "Trusted Tailscale IPs (comma-separated, leave blank to auto-discover)",
         default=current_tailscale_ips,
     )
-    _set_if_changed(config, changes, "BROODMIND_TAILSCALE_IPS", tailscale_ips)
+    _set_if_changed(config, staged, "BROODMIND_TAILSCALE_IPS", tailscale_ips)
 
-    protect_dashboard = Confirm.ask("Require token authentication for dashboard API?", default=True)
+    protect_dashboard = Confirm.ask(
+        "Require dashboard token authentication?",
+        default=bool(_effective_value(config, staged, "BROODMIND_DASHBOARD_TOKEN", "")),
+    )
+    dashboard_token = _effective_value(config, staged, "BROODMIND_DASHBOARD_TOKEN", "")
     if protect_dashboard:
-        current_dashboard_token = config.get("BROODMIND_DASHBOARD_TOKEN", "")
         dashboard_token = Prompt.ask(
             "Dashboard token",
-            default=current_dashboard_token,
-            password=bool(current_dashboard_token),
+            default=dashboard_token,
+            password=bool(dashboard_token),
         )
-        if dashboard_token:
-            _set_if_changed(config, changes, "BROODMIND_DASHBOARD_TOKEN", dashboard_token)
+    _set_if_changed(config, staged, "BROODMIND_DASHBOARD_TOKEN", dashboard_token if protect_dashboard else "")
 
-    console.print(Rule(f"[bold {ACCENT}]Step 7/7  Runtime Defaults[/bold {ACCENT}]"))
-    current_log_level = config.get("BROODMIND_LOG_LEVEL", "INFO")
+    return {
+        "tailscale_serve": "enabled" if auto_serve else "disabled",
+        "dashboard_auth": "enabled" if protect_dashboard and bool(dashboard_token.strip()) else "disabled",
+    }
+
+
+def _configure_runtime_defaults(
+    config: ConfigManager,
+    staged: dict[str, str],
+    *,
+    step_index: int,
+    total_steps: int,
+) -> dict[str, str]:
+    console.print(Rule(f"[bold {ACCENT}]Step {step_index}/{total_steps}  Runtime Defaults[/bold {ACCENT}]"))
+    console.print("Set defaults for logs, heartbeat behavior, and worker execution.")
+
+    current_log_level = _effective_value(config, staged, "BROODMIND_LOG_LEVEL", "INFO")
     log_level = Prompt.ask(
         "Log level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default=current_log_level,
     )
-    _set_if_changed(config, changes, "BROODMIND_LOG_LEVEL", log_level)
+    _set_if_changed(config, staged, "BROODMIND_LOG_LEVEL", log_level)
 
-    current_heartbeat = int(config.get("BROODMIND_HEARTBEAT_INTERVAL_SECONDS", "900") or 900)
+    current_heartbeat = int(_effective_value(config, staged, "BROODMIND_HEARTBEAT_INTERVAL_SECONDS", "900") or 900)
     heartbeat = IntPrompt.ask("Heartbeat interval (seconds)", default=current_heartbeat)
-    _set_if_changed(config, changes, "BROODMIND_HEARTBEAT_INTERVAL_SECONDS", str(max(60, heartbeat)))
+    _set_if_changed(config, staged, "BROODMIND_HEARTBEAT_INTERVAL_SECONDS", str(max(60, heartbeat)))
 
-    current_launcher = config.get("BROODMIND_WORKER_LAUNCHER", "same_env")
+    current_launcher = _effective_value(config, staged, "BROODMIND_WORKER_LAUNCHER", "same_env")
     launcher = Prompt.ask("Worker launcher", choices=["same_env", "docker"], default=current_launcher)
-    _set_if_changed(config, changes, "BROODMIND_WORKER_LAUNCHER", launcher)
+    _set_if_changed(config, staged, "BROODMIND_WORKER_LAUNCHER", launcher)
 
     if launcher == "docker":
-        current_image = config.get("BROODMIND_WORKER_DOCKER_IMAGE", "broodmind-worker:latest")
+        current_image = _effective_value(config, staged, "BROODMIND_WORKER_DOCKER_IMAGE", "broodmind-worker:latest")
         image = Prompt.ask("Worker Docker image", default=current_image)
-        _set_if_changed(config, changes, "BROODMIND_WORKER_DOCKER_IMAGE", image)
+        _set_if_changed(config, staged, "BROODMIND_WORKER_DOCKER_IMAGE", image)
 
-        current_docker_workspace = config.get("BROODMIND_WORKER_DOCKER_WORKSPACE", "/workspace")
+        current_docker_workspace = _effective_value(
+            config,
+            staged,
+            "BROODMIND_WORKER_DOCKER_WORKSPACE",
+            "/workspace",
+        )
         docker_workspace = Prompt.ask("Worker Docker workspace path", default=current_docker_workspace)
-        _set_if_changed(config, changes, "BROODMIND_WORKER_DOCKER_WORKSPACE", docker_workspace)
+        _set_if_changed(config, staged, "BROODMIND_WORKER_DOCKER_WORKSPACE", docker_workspace)
+    else:
+        image = _effective_value(config, staged, "BROODMIND_WORKER_DOCKER_IMAGE", "broodmind-worker:latest")
 
+    return {
+        "log_level": log_level,
+        "heartbeat": f"{max(60, heartbeat)}s",
+        "launcher": launcher,
+        "docker_image": image,
+    }
+
+
+def _prompt_for_model(config: ConfigManager, staged: dict[str, str], provider_id: str, current_model: str) -> str:
+    provider_entry = get_provider_catalog_entry(provider_id)
+    curated = list(_CURATED_MODEL_CHOICES.get(provider_id, ()))
+    options = [*curated, "custom"]
+
+    if current_model and current_model not in curated:
+        default_choice = "custom"
+    elif current_model:
+        default_choice = current_model
+    else:
+        default_choice = curated[0] if curated else "custom"
+
+    if curated:
+        table = Table(box=box.SIMPLE, show_header=True, header_style=f"bold {ACCENT}", expand=False)
+        table.add_column("Choice", style="white", width=34)
+        table.add_column("Why pick it", style="dim", width=42)
+        for index, model in enumerate(curated):
+            hint = "Recommended default" if index == 0 else "Alternative preset"
+            table.add_row(model, hint)
+        table.add_row("custom", "Enter any model name manually")
+        console.print(table)
+
+        selected = Prompt.ask(
+            f"{provider_entry.model_label} preset",
+            choices=options,
+            default=default_choice,
+        )
+        if selected != "custom":
+            return selected
+
+    return Prompt.ask(provider_entry.model_label, default=current_model or provider_entry.default_model)
+
+
+def _print_workspace_bootstrap(workspace_result: dict[str, int | list[str]]) -> None:
     console.print()
     if workspace_result["created_files"]:
         created_lines = "\n".join(f"- {path}" for path in workspace_result["created_files"])
@@ -224,27 +497,80 @@ def configure_wizard() -> None:
         )
     )
 
+
+def _print_review(
+    *,
+    config: ConfigManager,
+    staged: dict[str, str],
+    provider_summary: dict[str, str],
+    storage_summary: dict[str, str],
+    features_summary: dict[str, str],
+    gateway_summary: dict[str, str],
+    runtime_summary: dict[str, str],
+    advanced_mode: bool,
+) -> None:
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column(style="bold white")
+    overview.add_column()
+    overview.add_row("Mode", "Advanced" if advanced_mode else "Quick")
+    overview.add_row("Provider", f"{provider_summary['provider']} [dim]({provider_summary['provider_id']})[/dim]")
+    overview.add_row("Model", provider_summary["model"])
+    overview.add_row("Provider key", provider_summary["api_key_set"])
+    overview.add_row("Workspace", storage_summary["workspace"])
+    overview.add_row("State dir", storage_summary["state_dir"])
+
+    console.print(
+        Panel(
+            overview,
+            title="[bold white]Configuration Review[/bold white]",
+            border_style=SURFACE,
+            padding=(1, 2),
+        )
+    )
+
+    sections: list[tuple[str, dict[str, str]]] = [
+        ("Provider Profile", provider_summary),
+        ("Features", features_summary),
+        ("Runtime Paths", storage_summary),
+    ]
+    if gateway_summary:
+        sections.append(("Gateway and Security", gateway_summary))
+    if runtime_summary:
+        sections.append(("Runtime Defaults", runtime_summary))
+
+    for title, values in sections:
+        table = Table(box=box.SIMPLE, show_header=True, header_style=f"bold {ACCENT}", expand=False)
+        table.add_column("Setting", style="white", width=28)
+        table.add_column("Value", style="dim", width=52)
+        for key, value in values.items():
+            table.add_row(key.replace("_", " ").capitalize(), value or "[dim](empty)[/dim]")
+        console.print(Panel(table, title=f"[bold white]{title}[/bold white]", border_style=SURFACE, padding=(0, 1)))
+
     summary = Table(box=box.SIMPLE, show_header=True, header_style=f"bold {ACCENT}", expand=False)
     summary.add_column("Setting", style="white", width=40)
     summary.add_column("New Value", style="dim", width=40)
-    if changes:
-        for key, value in changes:
-            summary.add_row(key, value)
+    if staged:
+        for key, value in staged.items():
+            summary.add_row(key, _mask_value(key, value))
     else:
         summary.add_row("[dim]No changes[/dim]", "[dim]Existing values kept[/dim]")
 
     console.print(
         Panel(
             summary,
-            title="[bold white]Configuration Summary[/bold white]",
+            title="[bold white]Pending .env Changes[/bold white]",
             border_style=SURFACE,
             padding=(1, 2),
         )
     )
+
+
+def _print_saved_summary(config: ConfigManager, staged: dict[str, str]) -> None:
     console.print(
         Panel(
             f"[bold {SUCCESS}][V] Configuration complete[/bold {SUCCESS}]\n"
             f"Saved to: [cyan]{config.env_path.absolute()}[/cyan]\n\n"
+            f"Updated settings: [bold]{len(staged)}[/bold]\n\n"
             "[bold]Next:[/bold]\n"
             "[magenta]uv run broodmind start[/magenta]\n"
             "[magenta]uv run broodmind status[/magenta]\n"
@@ -262,16 +588,31 @@ def _mask_value(key: str, value: Any) -> str:
         if len(text) <= 8:
             return "********"
         return f"{text[:4]}...{text[-4:]}"
-    return text
+    return text if text else "[dim](empty)[/dim]"
 
 
-def _set_if_changed(config: ConfigManager, changes: list[tuple[str, str]], key: str, value: Any) -> None:
+def _set_if_changed(config: ConfigManager, staged: dict[str, str], key: str, value: Any) -> None:
     new_value = str(value if value is not None else "")
     current_value = str(config.get(key, "") or "")
+    if key in staged:
+        current_value = str(config.get(key, "") or "")
+        if new_value == current_value:
+            staged.pop(key, None)
+            return
     if new_value == current_value:
         return
-    config.set(key, new_value)
-    changes.append((key, _mask_value(key, new_value)))
+    staged[key] = new_value
+
+
+def _apply_staged_changes(config: ConfigManager, staged: dict[str, str]) -> None:
+    for key, value in staged.items():
+        config.set(key, value)
+
+
+def _effective_value(config: ConfigManager, staged: dict[str, str], key: str, default: str = "") -> str:
+    if key in staged:
+        return staged[key]
+    return str(config.get(key, default) or default)
 
 
 def _env_bool(raw: Any, default: bool = False) -> bool:
@@ -313,29 +654,43 @@ def _ensure_workspace_bootstrap(workspace_dir: Path) -> dict[str, int | list[str
     }
 
 
-def _render_provider_catalog(provider_ids: list[str]) -> None:
+def _render_provider_catalog() -> None:
     table = Table(box=box.SIMPLE, show_header=True, header_style=f"bold {ACCENT}", expand=False)
+    table.add_column("Category", style="bold white", width=20)
     table.add_column("ID", style="white", width=16)
-    table.add_column("Provider", style="bold white", width=22)
-    table.add_column("Notes", style="dim", width=54)
-    for provider_id in provider_ids:
+    table.add_column("Provider", style="bold white", width=20)
+    table.add_column("Notes", style="dim", width=42)
+
+    rendered_ids: set[str] = set()
+    for category, provider_ids in _PROVIDER_GROUPS.items():
+        first_in_group = True
+        for provider_id in provider_ids:
+            entry = get_provider_catalog_entry(provider_id)
+            table.add_row(category if first_in_group else "", entry.id, entry.label, entry.description)
+            rendered_ids.add(provider_id)
+            first_in_group = False
+
+    for provider_id in list_registered_provider_ids(include_custom=True):
+        if provider_id in rendered_ids:
+            continue
         entry = get_provider_catalog_entry(provider_id)
-        table.add_row(entry.id, entry.label, entry.description)
+        table.add_row("Other", entry.id, entry.label, entry.description)
+
     console.print(table)
 
 
-def _resolve_configured_provider_id(config: ConfigManager) -> str:
-    explicit = str(config.get("BROODMIND_LITELLM_PROVIDER_ID", "") or "").strip().lower()
+def _resolve_configured_provider_id(config: ConfigManager, staged: dict[str, str]) -> str:
+    explicit = _effective_value(config, staged, "BROODMIND_LITELLM_PROVIDER_ID", "").strip().lower()
     if explicit:
         return explicit
 
-    legacy_provider = str(config.get("BROODMIND_LLM_PROVIDER", "litellm") or "litellm").strip().lower()
+    legacy_provider = _effective_value(config, staged, "BROODMIND_LLM_PROVIDER", "litellm").strip().lower()
     if legacy_provider == "openrouter":
         return "openrouter"
 
-    if str(config.get("ZAI_API_KEY", "") or "").strip():
+    if _effective_value(config, staged, "ZAI_API_KEY", "").strip():
         return "zai"
-    if str(config.get("OPENROUTER_API_KEY", "") or "").strip():
+    if _effective_value(config, staged, "OPENROUTER_API_KEY", "").strip():
         return "openrouter"
     return "zai"
 
@@ -345,7 +700,7 @@ def _default_provider_for_profiles(provider_id: str) -> str:
     return normalized if normalized in set(list_registered_provider_ids(include_custom=True)) else "custom"
 
 
-def _default_profile_value(config: ConfigManager, provider_id: str, field_name: str) -> str:
+def _default_profile_value(config: ConfigManager, staged: dict[str, str], provider_id: str, field_name: str) -> str:
     entry = get_provider_catalog_entry(provider_id)
     normalized_provider = _default_provider_for_profiles(provider_id)
 
@@ -355,7 +710,7 @@ def _default_profile_value(config: ConfigManager, provider_id: str, field_name: 
         "model": "BROODMIND_LITELLM_MODEL",
         "model_prefix": "BROODMIND_LITELLM_MODEL_PREFIX",
     }
-    explicit_value = str(config.get(unified_keys[field_name], "") or "").strip()
+    explicit_value = _effective_value(config, staged, unified_keys[field_name], "").strip()
     if explicit_value:
         return explicit_value
 
@@ -366,7 +721,7 @@ def _default_profile_value(config: ConfigManager, provider_id: str, field_name: 
             "model": "OPENROUTER_MODEL",
             "model_prefix": "BROODMIND_LITELLM_MODEL_PREFIX",
         }
-        legacy_value = str(config.get(legacy_map[field_name], "") or "").strip()
+        legacy_value = _effective_value(config, staged, legacy_map[field_name], "").strip()
         if legacy_value:
             return legacy_value
 
@@ -377,7 +732,7 @@ def _default_profile_value(config: ConfigManager, provider_id: str, field_name: 
             "model": "ZAI_MODEL",
             "model_prefix": "BROODMIND_LITELLM_MODEL_PREFIX",
         }
-        legacy_value = str(config.get(legacy_map[field_name], "") or "").strip()
+        legacy_value = _effective_value(config, staged, legacy_map[field_name], "").strip()
         if legacy_value:
             return legacy_value
 
