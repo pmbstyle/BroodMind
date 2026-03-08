@@ -2,48 +2,66 @@
 
 ## Project Structure & Module Organization
 
-- `src/broodmind/` holds the core Python package (CLI, gateway, workers, providers, and shared utilities).
-- `docker/` contains container assets (worker image Dockerfile).
-- `data/` is runtime state storage (SQLite DB, logs); avoid committing generated files.
-- `workspace/` is the default worker workspace and scratch area.
-- `README.md` covers quick start basics.
+- `src/broodmind/` contains the main Python package: CLI, channels, gateway, memory, policy, providers, Queen runtime, scheduler, WhatsApp/Telegram integrations, workers, and shared utilities.
+- `webapp/` holds the Vite-based dashboard frontend. `src/` contains app code and `dist/` contains built assets.
+- `tests/` contains the pytest suite for CLI, dashboard, runtime, worker orchestration, memory, and channel behavior.
+- `scripts/` contains setup and maintenance helpers such as bootstrap and worker-template sync utilities.
+- `docker/` contains container assets, including the worker image Dockerfile.
+- `data/` is runtime state storage for SQLite, metrics, auth state, and logs; avoid committing generated contents.
+- `workspace/` is the default Queen/worker workspace and scratch area.
+- `workspace_templates/` contains bootstrap content copied into new workspaces.
+- `docs/` stores additional project documentation.
 
 ## Build, Test, and Development Commands
 
-- `python -m venv .venv` and `pip install -e .` set up a local editable environment.
-- `broodmind start` runs the Telegram bot and core services.
-- `broodmind gateway` starts the FastAPI gateway on `BROODMIND_GATEWAY_HOST`/`BROODMIND_GATEWAY_PORT`.
-- `broodmind status` shows health and last message timestamp.
-- `broodmind logs --follow` tails `data/logs/broodmind.log`.
-- `broodmind build-worker-image --tag broodmind-worker:latest` builds the Docker worker image.
+- `uv sync` installs the project and dev dependencies for day-to-day development.
+- `python -m venv .venv` and `pip install -e .[dev]` are the non-`uv` editable setup path.
+- `uv run broodmind configure` runs the interactive configuration wizard and bootstraps missing workspace files.
+- `uv run broodmind start` starts BroodMind in background mode.
+- `uv run broodmind start --foreground` runs the Queen and gateway in the foreground.
+- `uv run broodmind stop`, `uv run broodmind restart`, and `uv run broodmind status` manage the local runtime.
+- `uv run broodmind logs --follow` tails `data/logs/broodmind.log`.
+- `uv run broodmind gateway` starts the FastAPI gateway directly.
+- `uv run broodmind dashboard --once` prints one dashboard snapshot; `uv run broodmind dashboard --watch` runs the live terminal dashboard.
+- `uv run broodmind sync-worker-templates --overwrite` refreshes default worker templates into `workspace/workers`.
+- `uv run broodmind memory stats` and `uv run broodmind memory cleanup --dry-run` cover common memory maintenance flows.
+- `uv run broodmind whatsapp install-bridge`, `uv run broodmind whatsapp link`, and `uv run broodmind whatsapp status` manage the WhatsApp bridge.
+- `uv run broodmind build-worker-image --tag broodmind-worker:latest` builds the Docker worker image.
+- `uv run pytest` runs the test suite.
+- `uv run ruff check .`, `uv run black --check .`, and `uv run mypy src` are the configured lint/format/type-check commands.
+- `npm install` and `npm run build` from `webapp/` build the dashboard bundle manually when needed.
 
 ## Coding Style & Naming Conventions
 
-- Python code lives under `src/` with package imports rooted at `broodmind`.
-- Use 4-space indentation and follow PEP 8 conventions (no repo-wide formatter is configured).
-- Prefer descriptive module names (e.g., `gateway/`, `worker_sdk/`) and keep CLI commands in `cli/`.
+- Python code lives under `src/` with imports rooted at `broodmind`.
+- Use 4-space indentation, type hints on new or changed Python code, and descriptive module names.
+- Follow the configured tooling in `pyproject.toml`: Black for formatting, Ruff for linting/import order, and MyPy for type checks.
+- Keep CLI entrypoints in `src/broodmind/cli/` and group related runtime code under focused packages such as `gateway/`, `memory/`, `queen/`, and `workers/`.
+- Frontend code in `webapp/src/` should stay TypeScript-first and match the existing Vite/Tailwind setup.
 
 ## Testing Guidelines
 
-- No test framework or test directory is configured yet.
-- If you add tests, place them under `tests/` and use a consistent naming pattern like `test_<module>.py`.
-- Document the new test command in this file and `README.md` when adding test tooling.
+- Add Python tests under `tests/` using `test_<module>.py` naming.
+- Prefer focused pytest coverage near the behavior you change, especially for CLI flows, runtime safety checks, worker orchestration, and dashboard APIs.
+- Run `uv run pytest` before finishing substantial changes. For frontend-only changes, also run `npm run build` in `webapp/`.
+- When you add new tooling or test workflows, update this file and `README.md`.
 
 ## Commit & Pull Request Guidelines
 
-- Git history currently shows a single commit (`init`); no established convention yet.
-- Use concise, imperative commit subjects (e.g., `add worker status command`).
-- PRs should include: a short description, linked issue (if any), and screenshots/logs for user-facing changes.
+- Use concise, imperative commit subjects such as `update AGENTS guide` or `harden worker status recovery`.
+- Keep commits scoped to one logical change when practical.
+- PRs should include a short description, linked issue if relevant, and logs or screenshots for user-facing CLI/dashboard changes.
 
 ## Security & Configuration Tips
 
 - Copy `.env.example` to `.env` and keep secrets out of version control.
-- Key settings include `TELEGRAM_BOT_TOKEN`, provider API keys, and `BROODMIND_STATE_DIR` paths.
+- Important settings include channel credentials, provider API keys, dashboard protection, and `BROODMIND_STATE_DIR` / workspace paths.
+- Treat `data/`, WhatsApp auth state, and generated workspace files as local runtime artifacts unless the repo explicitly needs fixtures.
 
 ## Queen Context Reset Policy
 
-- The Queen can invoke `queen_context_reset` to compact/reset overloaded chat context.
-- Preferred default is `mode=soft` with structured handoff fields (`goal_now`, `done`, `open_threads`, `critical_constraints`, `next_step`).
+- The Queen can invoke `queen_context_reset` to compact or reset overloaded chat context.
+- Preferred default is `mode=soft` with structured handoff fields: `goal_now`, `done`, `open_threads`, `critical_constraints`, and `next_step`.
 - Persist reset artifacts in workspace memory:
   - `memory/handoff.md`, `memory/handoff.json`
   - `memory/context-audit.md`, `memory/context-audit.jsonl`
