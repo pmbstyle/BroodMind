@@ -1,23 +1,39 @@
-<img width="1252" height="328" alt="logo" src="https://github.com/user-attachments/assets/fc911d8d-5d76-4de6-8bff-541c08009ea6" />
+<p align="center">
+<img width="80%" alt="BroodMind" src="https://github.com/user-attachments/assets/fc911d8d-5d76-4de6-8bff-541c08009ea6" />
+</p>
 
+<p align="center">
+  <strong>RUN YOUR OWN AI HIVE, FAST AND SECURE!</strong>
+</p>
 
+BroodMind is a local AI orchestration system built around a **Queen + Workers** architecture.
+It runs on your device or server and acts as a long-running AI operator that plans tasks, spawns workers, and executes workflows on your behalf.
 
+## Core architecture
 
-BroodMind is an AI orchestration system built around a **Queen + Workers** model.
-
-- **Queen** talks to the user, plans work, tracks context, chooses tools, and orchestrates its workers.
-- **Workers** run focused tasks with bounded permissions and time limits.
+- **Queen** talks to the user, has all system context and memory, plans work, chooses tools, and orchestrates its workers.
+- **Workers** execute focused tasks with limited permissions, time bounds, and minimal context required for completion.
 
 It is designed for long-running assistant workflows, with memory, scheduling, and operational guardrails.
+The Queen, who holds all system context and sensitive data, never communicates with the world outside by itself. Instead, the Queen delegates tasks to workers with limited context and predefined tool/skill sets. Workers can spawn subworkers for multi-step tasks. Workers can only return response of their tasks or question/error responses. 
+This design increases data security, reduces context leakage, and helps guard against prompt injection attacks.
 
 ## What It Can Do
 
-- Handle user channel conversations with planning + execution flow
+- Handle user channel (Telegram/WhatsApp) conversations with planning + execution flow
 - Delegate tasks to specialized workers
 - Run filesystem/web/exec tools under policy controls
-- Keep persistent memory and canon files in `workspace/memory/canon/`
+- Can create reusable workers
+- Can use skills and provide skills to workers
+- Keep persistent memory and canon files
 - Track context health and proactively reset context when overloaded
 - Expose a private dashboard/gateway for ops visibility
+- The system environment is shaped by a set of canonical files:
+  - **MEMORY.md** – working memory and durable context; important facts, current state, and notes the system may need across sessions
+  - **memory/canon/** - curated long-term knowledge that has been reviewed and promoted from ordinary memory into trusted reference material
+  - **USER.md** – user profile, preferences, habits, and interaction style
+  - **SOUL.md** – system identity, values, tone, and core behavioral principles
+  - **HEARTBEAT.md** – recurring duties, monitoring loops, schedules, and background obligations
 
 ## Quick Start
 
@@ -25,12 +41,12 @@ It is designed for long-running assistant workflows, with memory, scheduling, an
 
 - Python 3.12+
 - `uv` (recommended)
+- Node 20+ for web ui
 - One user channel:
-  - Telegram bot token from [@BotFather](https://t.me/botfather), or
-  - WhatsApp Web linking via QR (requires Node.js for the bridge)
-- At least one LLM API key:
-  - `BROODMIND_LITELLM_API_KEY` for the provider you select in `broodmind configure`, or
-  - legacy `ZAI_API_KEY` / `OPENROUTER_API_KEY` if you are upgrading an existing setup
+  Telegram bot token from [@BotFather](https://t.me/botfather), or
+  WhatsApp Web linking via QR (requires Node.js for the bridge)
+- Bring your own LLM API key:
+  OpenRouter, OpenAI, Anthropic, Google Gemini, Mistral AI, Together AI, Groq, Z.ai, Custom OpenAI-compatible, Ollama
 
 Install `uv` if needed:
 
@@ -44,7 +60,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-### 2. One-shot bootstrap
+### 2. Bootstrap script
 
 ```bash
 git clone https://github.com/pmbstyle/BroodMind.git
@@ -83,7 +99,7 @@ cd webapp
 npm run build
 ```
 
-Then set `BROODMIND_WEBAPP_ENABLED=true` in `.env` and start BroodMind again.
+Then set `BROODMIND_WEBAPP_ENABLED=1` in `.env` and start BroodMind again.
 
 ### 4. Manual setup
 
@@ -181,7 +197,7 @@ Restart BroodMind after config changes.
 - Verify your chat ID is in `ALLOWED_TELEGRAM_CHAT_IDS`
 - Check `uv run broodmind status` and `uv run broodmind logs --follow`
 
-### WhatsApp is selected but not receiving messages
+### WhatsApp is selected, but not receiving messages
 
 - Verify `BROODMIND_USER_CHANNEL=whatsapp`
 - Verify your phone number is in `ALLOWED_WHATSAPP_NUMBERS`
@@ -200,6 +216,3 @@ Restart BroodMind after config changes.
 - Add `BRAVE_API_KEY` for `web_search`
 - Add `FIRECRAWL_API_KEY` for richer page extraction
 
-## License
-
-MIT
