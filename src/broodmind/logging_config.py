@@ -4,6 +4,7 @@ import logging
 import sys
 from contextvars import ContextVar
 from pathlib import Path
+from typing import TextIO
 
 import structlog
 from structlog.types import EventDict, Processor
@@ -19,6 +20,26 @@ def add_correlation_id(_: logging.Logger, __: str, event_dict: EventDict) -> Eve
     return event_dict
 
 
+def _prepare_console_stream(stream: TextIO) -> TextIO:
+    """Prefer UTF-8 console output and fall back to safe replacement on Windows."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if not callable(reconfigure):
+        return stream
+
+    encoding = str(getattr(stream, "encoding", "") or "").lower()
+    try:
+        if encoding != "utf-8":
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        else:
+            reconfigure(errors="backslashreplace")
+    except (LookupError, OSError, ValueError):
+        try:
+            reconfigure(errors="backslashreplace")
+        except (LookupError, OSError, ValueError):
+            return stream
+    return stream
+
+
 def configure_logging(log_level: str, log_dir: Path, debug_prompts: bool) -> None:
     """
     Configures logging for the entire application using structlog.
@@ -27,6 +48,8 @@ def configure_logging(log_level: str, log_dir: Path, debug_prompts: bool) -> Non
     log_path = log_dir / "broodmind.log"
 
     # These are the processors that will be applied to all log records.
+    console_stream = _prepare_console_stream(sys.stdout)
+
     shared_processors: list[Processor] = [
         # Add shared context automatically
         structlog.contextvars.merge_contextvars,
@@ -45,7 +68,7 @@ def configure_logging(log_level: str, log_dir: Path, debug_prompts: bool) -> Non
 
     # Configure the standard logging library to be a bridge for structlog.
     # All loggers will now pass their records to structlog for processing.
-    logging.basicConfig(level=log_level.upper(), stream=sys.stdout, format="%(message)s")
+    logging.basicConfig(level=log_level.upper(), stream=console_stream, format="%(message)s")
 
     # Configure structlog itself.
     structlog.configure(
@@ -64,7 +87,7 @@ def configure_logging(log_level: str, log_dir: Path, debug_prompts: bool) -> Non
 
     # 1. Console Handler (for development)
     # This handler uses a ConsoleRenderer for pretty, colored, human-readable output.
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler(console_stream)
     console_handler.setLevel(log_level.upper())
 
     console_formatter = structlog.stdlib.ProcessorFormatter(
