@@ -29,6 +29,8 @@ _PROVIDER_GROUPS: dict[str, tuple[str, ...]] = {
     "Local": ("ollama",),
 }
 
+StagedConfig = dict[str, str | None]
+
 def configure_wizard() -> None:
     """Run the interactive configuration wizard."""
     print_banner()
@@ -48,7 +50,7 @@ def configure_wizard() -> None:
     )
 
     config = ConfigManager()
-    staged: dict[str, str] = {}
+    staged: StagedConfig = {}
 
     setup_mode = Prompt.ask(
         "Setup mode",
@@ -127,7 +129,7 @@ def configure_wizard() -> None:
 
 def _configure_user_channel_access(
     config: ConfigManager,
-    staged: dict[str, str],
+    staged: StagedConfig,
     *,
     step_index: int,
     total_steps: int,
@@ -218,7 +220,7 @@ def _configure_user_channel_access(
 
 def _configure_provider_profile(
     config: ConfigManager,
-    staged: dict[str, str],
+    staged: StagedConfig,
     *,
     step_index: int,
     total_steps: int,
@@ -301,15 +303,13 @@ def _configure_provider_profile(
         else:
             _set_if_changed(config, staged, "BROODMIND_LITELLM_API_BASE", current_api_base)
 
-    current_prefix = _default_profile_value(config, staged, provider_id, "model_prefix")
-    if provider_entry.supports_model_prefix_override or advanced_mode:
-        if provider_entry.supports_model_prefix_override:
-            selected_prefix = Prompt.ask("LiteLLM model prefix", default=current_prefix)
-            _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", selected_prefix)
-        elif current_prefix:
-            _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", current_prefix)
-    elif current_prefix:
-        _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", current_prefix)
+    _stage_provider_model_prefix(
+        config,
+        staged,
+        provider_id=provider_id,
+        supports_model_prefix_override=provider_entry.supports_model_prefix_override,
+        advanced_mode=advanced_mode,
+    )
 
     if advanced_mode:
         current_timeout = _effective_value(config, staged, "LITELLM_TIMEOUT", "120")
@@ -335,7 +335,7 @@ def _configure_provider_profile(
 
 def _configure_storage(
     config: ConfigManager,
-    staged: dict[str, str],
+    staged: StagedConfig,
     *,
     step_index: int,
     total_steps: int,
@@ -357,7 +357,7 @@ def _configure_storage(
 
 def _configure_optional_tools(
     config: ConfigManager,
-    staged: dict[str, str],
+    staged: StagedConfig,
     *,
     step_index: int,
     total_steps: int,
@@ -411,7 +411,7 @@ def _configure_optional_tools(
 
 def _configure_gateway_security(
     config: ConfigManager,
-    staged: dict[str, str],
+    staged: StagedConfig,
     *,
     step_index: int,
     total_steps: int,
@@ -451,7 +451,7 @@ def _configure_gateway_security(
 
 def _configure_runtime_defaults(
     config: ConfigManager,
-    staged: dict[str, str],
+    staged: StagedConfig,
     *,
     step_index: int,
     total_steps: int,
@@ -526,7 +526,7 @@ def _print_workspace_bootstrap(workspace_result: dict[str, int | list[str]]) -> 
 def _print_review(
     *,
     config: ConfigManager,
-    staged: dict[str, str],
+    staged: StagedConfig,
     access_summary: dict[str, str],
     provider_summary: dict[str, str],
     storage_summary: dict[str, str],
@@ -593,7 +593,7 @@ def _print_review(
     )
 
 
-def _print_saved_summary(config: ConfigManager, staged: dict[str, str], *, user_channel: str) -> None:
+def _print_saved_summary(config: ConfigManager, staged: StagedConfig, *, user_channel: str) -> None:
     next_steps = _saved_summary_next_steps(user_channel)
     console.print(
         Panel(
@@ -625,6 +625,8 @@ def _saved_summary_next_steps(user_channel: str) -> list[str]:
 
 
 def _mask_value(key: str, value: Any) -> str:
+    if value is None:
+        return "[dim](removed)[/dim]"
     text = str(value)
     lowered = key.lower()
     if any(token in lowered for token in ("token", "key", "secret")) and text:
@@ -634,7 +636,7 @@ def _mask_value(key: str, value: Any) -> str:
     return text if text else "[dim](empty)[/dim]"
 
 
-def _set_if_changed(config: ConfigManager, staged: dict[str, str], key: str, value: Any) -> None:
+def _set_if_changed(config: ConfigManager, staged: StagedConfig, key: str, value: Any) -> None:
     new_value = str(value if value is not None else "")
     current_value = str(config.get(key, "") or "")
     if key in staged:
@@ -647,14 +649,25 @@ def _set_if_changed(config: ConfigManager, staged: dict[str, str], key: str, val
     staged[key] = new_value
 
 
-def _apply_staged_changes(config: ConfigManager, staged: dict[str, str]) -> None:
+def _unset_if_present(config: ConfigManager, staged: StagedConfig, key: str) -> None:
+    current_value = str(config.get(key, "") or "")
+    if not current_value:
+        staged.pop(key, None)
+        return
+    staged[key] = None
+
+
+def _apply_staged_changes(config: ConfigManager, staged: StagedConfig) -> None:
     for key, value in staged.items():
+        if value is None:
+            config.unset(key)
+            continue
         config.set(key, value)
 
 
-def _effective_value(config: ConfigManager, staged: dict[str, str], key: str, default: str = "") -> str:
+def _effective_value(config: ConfigManager, staged: StagedConfig, key: str, default: str = "") -> str:
     if key in staged:
-        return staged[key]
+        return default if staged[key] is None else staged[key] or default
     return str(config.get(key, default) or default)
 
 
@@ -722,7 +735,7 @@ def _render_provider_select_list() -> list[str]:
     return provider_choices
 
 
-def _resolve_configured_provider_id(config: ConfigManager, staged: dict[str, str]) -> str:
+def _resolve_configured_provider_id(config: ConfigManager, staged: StagedConfig) -> str:
     explicit = _effective_value(config, staged, "BROODMIND_LITELLM_PROVIDER_ID", "").strip().lower()
     if explicit:
         return explicit
@@ -743,7 +756,7 @@ def _default_provider_for_profiles(provider_id: str) -> str:
     return normalized if normalized in set(list_registered_provider_ids(include_custom=True)) else "custom"
 
 
-def _default_profile_value(config: ConfigManager, staged: dict[str, str], provider_id: str, field_name: str) -> str:
+def _default_profile_value(config: ConfigManager, staged: StagedConfig, provider_id: str, field_name: str) -> str:
     entry = get_provider_catalog_entry(provider_id)
     normalized_provider = _default_provider_for_profiles(provider_id)
 
@@ -786,3 +799,26 @@ def _default_profile_value(config: ConfigManager, staged: dict[str, str], provid
         "model_prefix": entry.model_prefix or "",
     }
     return defaults[field_name]
+
+
+def _stage_provider_model_prefix(
+    config: ConfigManager,
+    staged: StagedConfig,
+    *,
+    provider_id: str,
+    supports_model_prefix_override: bool,
+    advanced_mode: bool,
+) -> None:
+    current_prefix = _default_profile_value(config, staged, provider_id, "model_prefix")
+    if provider_id == "ollama":
+        _unset_if_present(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX")
+        return
+    if supports_model_prefix_override or advanced_mode:
+        if supports_model_prefix_override:
+            selected_prefix = Prompt.ask("LiteLLM model prefix", default=current_prefix)
+            _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", selected_prefix)
+        elif current_prefix:
+            _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", current_prefix)
+        return
+    if current_prefix:
+        _set_if_changed(config, staged, "BROODMIND_LITELLM_MODEL_PREFIX", current_prefix)

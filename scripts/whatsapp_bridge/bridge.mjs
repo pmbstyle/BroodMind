@@ -65,7 +65,8 @@ function normalizeDirectJid(raw) {
 }
 
 function senderFromJid(jid) {
-  const digits = String(jid || "").split("@", 1)[0].replace(/\D+/g, "");
+  const localPart = String(jid || "").split("@", 1)[0].split(":", 1)[0];
+  const digits = localPart.replace(/\D+/g, "");
   return digits ? `+${digits}` : "";
 }
 

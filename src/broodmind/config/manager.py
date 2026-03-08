@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from dotenv import dotenv_values, set_key
+from dotenv import dotenv_values, set_key, unset_key
 
 
 class ConfigManager:
@@ -23,6 +23,11 @@ class ConfigManager:
         set_key(str(self.env_path), key, str_value)
         # Update current environment so subsequent calls in the same process see it
         os.environ[key] = str_value
+
+    def unset(self, key: str) -> None:
+        """Remove a value from the .env file and current process environment."""
+        unset_key(str(self.env_path), key)
+        os.environ.pop(key, None)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value from the .env file or environment."""
