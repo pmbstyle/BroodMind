@@ -1241,23 +1241,25 @@ class Queen:
                 )
                 result = await self.runtime.run_task(task_request, approval_requester=requester)
                 worker_record = await asyncio.to_thread(self.store.get_worker, run_id)
-                failed = bool(not worker_record or worker_record.status in {"failed", "stopped"})
+                worker_status = getattr(worker_record, "status", None)
+                failed = worker_status in {"failed", "stopped"}
                 if scheduled_task_id and self.scheduler:
-                    if worker_record and worker_record.status == "completed":
+                    if not failed:
                         self.scheduler.mark_executed(scheduled_task_id)
                         logger.info(
                             "Marked scheduled task as executed after worker completion",
                             task_id=scheduled_task_id,
                             run_id=run_id,
+                            worker_status=worker_status,
                         )
                     else:
                         logger.warning(
                             "Skipped scheduled task execution mark due to non-completed worker state",
                             task_id=scheduled_task_id,
                             run_id=run_id,
-                            worker_status=getattr(worker_record, "status", None),
+                            worker_status=worker_status,
                         )
-                if worker_record and worker_record.status == "completed":
+                if not failed:
                     self._register_progress(chat_id, "worker_completed")
                 await self._emit_progress(
                     chat_id,

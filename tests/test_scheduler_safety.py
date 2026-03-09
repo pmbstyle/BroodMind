@@ -122,8 +122,8 @@ def test_check_schedule_returns_json_with_inputs(tmp_path: Path) -> None:
     assert payload["due_tasks"][0]["inputs"] == {"section": "news", "max_items": 5}
 
 
-def test_queen_marks_scheduled_task_only_on_completed_status() -> None:
-    async def _run(worker_status: str) -> list[str]:
+def test_queen_marks_scheduled_task_after_successful_worker_run_even_if_store_lags() -> None:
+    async def _run(worker_status: str | None) -> list[str]:
         store = _StoreStub(worker_status=worker_status)
         scheduler = SchedulerService(store=store, workspace_dir=Path("."))
         queen = Queen(
@@ -150,7 +150,9 @@ def test_queen_marks_scheduled_task_only_on_completed_status() -> None:
         return store.marked_task_ids
 
     marked_completed = asyncio.run(_run("completed"))
+    marked_missing = asyncio.run(_run(None))
     marked_failed = asyncio.run(_run("failed"))
 
     assert marked_completed == ["daily_digest"]
+    assert marked_missing == ["daily_digest"]
     assert marked_failed == []
