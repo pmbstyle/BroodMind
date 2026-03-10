@@ -25,12 +25,23 @@ type WorkerItem = {
 function tone(status?: string): string {
   const v = String(status ?? "").toLowerCase();
   if (v === "completed" || v === "running" || v === "started") {
-    return "tone-ok";
+    return "text-emerald-300";
   }
   if (v === "warning" || v === "stopped") {
-    return "tone-warn";
+    return "text-amber-300";
   }
-  return "tone-bad";
+  return "text-rose-300";
+}
+
+function pillTone(status?: string): string {
+  const v = String(status ?? "").toLowerCase();
+  if (v === "completed" || v === "running" || v === "started") {
+    return "border-emerald-400/30 bg-emerald-500/10 text-emerald-300";
+  }
+  if (v === "warning" || v === "stopped") {
+    return "border-amber-300/30 bg-amber-500/10 text-amber-300";
+  }
+  return "border-rose-300/30 bg-rose-500/10 text-rose-300";
 }
 
 function short(value?: string): string {
@@ -82,18 +93,18 @@ export function WorkersPage() {
 
   if (loading) {
     return (
-      <section className="panel">
-        <h2>Workers</h2>
-        <p>Loading workers...</p>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-slate-300">
+        <h2 className="text-2xl font-semibold text-slate-100">Workers</h2>
+        <p className="mt-2">Loading workers...</p>
       </section>
     );
   }
 
   if (error) {
     return (
-      <section className="panel panel-error">
-        <h2>Workers</h2>
-        <p>Failed to load workers: {error}</p>
+      <section className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-rose-200">
+        <h2 className="text-2xl font-semibold text-rose-100">Workers</h2>
+        <p className="mt-2">Failed to load workers: {error}</p>
       </section>
     );
   }
@@ -112,28 +123,55 @@ export function WorkersPage() {
   const topology = workersNode.topology ?? [];
 
   return (
-    <section className="panel">
-      <h2>Workers</h2>
-      <p className="overview-meta">
-        Running: {workersNode.running ?? 0} | Root: {workersNode.root_running ?? 0} | Subworkers:{" "}
-        {workersNode.subworkers_running ?? 0} | Failed: {workersNode.failed ?? 0}
-      </p>
+    <section className="grid gap-5">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/60">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Worker pool</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-100">Workers</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Detailed recent results and active topology for the current filter window.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-center">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Running</div>
+              <div className="mt-1 text-xl font-semibold text-slate-100">{workersNode.running ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-center">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Root</div>
+              <div className="mt-1 text-xl font-semibold text-slate-100">{workersNode.root_running ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-center">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Subworkers</div>
+              <div className="mt-1 text-xl font-semibold text-slate-100">{workersNode.subworkers_running ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-center">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Failed</div>
+              <div className="mt-1 text-xl font-semibold text-rose-300">{workersNode.failed ?? 0}</div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <div className="overview-columns">
-        <article className="mini-panel">
-          <h4>Recent Workers</h4>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Recent Workers</h3>
+            <p className="text-xs text-slate-500">Click a row to inspect the worker reply</p>
+          </div>
           {recent.length === 0 ? (
-            <p>No recent workers.</p>
+            <p className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">No recent workers.</p>
           ) : (
-            <div className="workers-table-wrap">
-              <table className="workers-table">
-                <thead>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[980px] border-separate border-spacing-y-2 text-left text-sm">
+                <thead className="text-xs uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th>ID</th>
-                    <th>Status</th>
-                    <th>Template</th>
-                    <th>Task</th>
-                    <th>Result</th>
+                    <th className="px-3 py-2">ID</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Template</th>
+                    <th className="px-3 py-2">Task</th>
+                    <th className="px-3 py-2">Result</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -145,7 +183,7 @@ export function WorkersPage() {
                     return [
                       <tr
                         key={`${workerKey}-row`}
-                        className="cursor-pointer align-top"
+                        className="cursor-pointer rounded-xl bg-slate-950/70 align-top transition hover:bg-slate-900"
                         onClick={() => {
                           if (!workerId) {
                             return;
@@ -153,20 +191,28 @@ export function WorkersPage() {
                           setExpandedWorkerId((current) => (current === workerId ? "" : workerId));
                         }}
                       >
-                        <td>{short(worker.id)}</td>
-                        <td className={tone(worker.status)}>{String(worker.status ?? "unknown")}</td>
-                        <td>{worker.template_name ?? "n/a"}</td>
-                        <td title={worker.task ?? ""}>{String(worker.task ?? "").slice(0, 64) || "n/a"}</td>
-                        <td title={preview} className="max-w-xs">
-                          <div className="text-sm text-slate-300">
+                        <td className="rounded-l-xl px-3 py-3 font-mono text-xs text-cyan-300">{short(worker.id)}</td>
+                        <td className="px-3 py-3">
+                          <span
+                            className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${pillTone(worker.status)}`}
+                          >
+                            {String(worker.status ?? "unknown")}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-slate-200">{worker.template_name ?? "n/a"}</td>
+                        <td className="max-w-[340px] px-3 py-3 text-slate-300" title={worker.task ?? ""}>
+                          <div className="line-clamp-2">{String(worker.task ?? "") || "n/a"}</div>
+                        </td>
+                        <td title={preview} className="max-w-xs rounded-r-xl px-3 py-3">
+                          <div className={`text-sm ${tone(worker.status)}`}>
                             {preview.length > 88 ? `${preview.slice(0, 88)}...` : preview}
                           </div>
                         </td>
                       </tr>,
                       isExpanded ? (
                         <tr key={`${workerKey}-details`}>
-                          <td colSpan={5} className="bg-slate-900/70">
-                            <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+                          <td colSpan={5} className="px-3 pb-3">
+                            <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950/90 p-4">
                               <div className="flex flex-wrap gap-3 text-xs text-slate-400">
                                 <span>Updated: {worker.updated_at ?? "n/a"}</span>
                                 <span>Lineage: {short(worker.lineage_id ?? undefined)}</span>
@@ -222,16 +268,25 @@ export function WorkersPage() {
           )}
         </article>
 
-        <article className="mini-panel">
-          <h4>Topology Snapshot</h4>
+        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Topology Snapshot</h3>
           {topology.length === 0 ? (
-            <p>No active topology nodes.</p>
+            <p className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">
+              No active topology nodes.
+            </p>
           ) : (
-            <ul className="plain-list">
+            <ul className="mt-4 space-y-2">
               {topology.slice(0, 20).map((node) => (
-                <li key={node.id ?? node.updated_at}>
-                  <span style={{ marginLeft: `${Math.min(64, (node.spawn_depth ?? 0) * 12)}px` }}>
-                    <strong>{short(node.id)}</strong> [{String(node.status ?? "unknown")}]{" "}
+                <li
+                  key={node.id ?? node.updated_at}
+                  className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3 text-sm text-slate-300"
+                >
+                  <span
+                    className="block"
+                    style={{ marginLeft: `${Math.min(64, (node.spawn_depth ?? 0) * 12)}px` }}
+                  >
+                    <strong className="font-mono text-cyan-300">{short(node.id)}</strong>{" "}
+                    <span className={tone(node.status)}>[{String(node.status ?? "unknown")}]</span>{" "}
                     {node.parent_worker_id ? `child of ${short(node.parent_worker_id)}` : "root"}
                   </span>
                 </li>
