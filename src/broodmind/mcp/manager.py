@@ -36,6 +36,8 @@ _MCP_TRANSIENT_ERROR_THRESHOLD = 5
 _MCP_TRANSIENT_ERROR_OPEN_SECONDS = 60.0
 _MCP_DEFAULT_TIMEOUT_SECONDS = 120.0
 _MCP_SLOW_TIMEOUT_SECONDS = 300.0
+_MCP_RECONNECT_BASE_SECONDS = 2.0
+_MCP_RECONNECT_MAX_SECONDS = 60.0
 _MCP_SLOW_TOOL_HINTS = (
     "search",
     "fetch",
@@ -58,25 +60,44 @@ class MCPManager:
         self._tools: Dict[str, List[ToolSpec]] = {}
         self._server_configs: Dict[str, MCPServerConfig] = {}
         self._tool_failure_state: Dict[tuple[str, str], Dict[str, Any]] = {}
+        self._reconnect_tasks: Dict[str, asyncio.Task] = {}
+        self._reconnect_attempts: Dict[str, int] = {}
+        self._manual_disconnects: set[str] = set()
+        self._shutdown_requested = False
         self.config_path = workspace_dir / "mcp_servers.json"
+        self._configs_loaded = False
+
+    def _load_configs_from_disk(self) -> Dict[str, MCPServerConfig]:
+        if self._configs_loaded:
+            return dict(self._server_configs)
+        if not self.config_path.exists():
+            self._configs_loaded = True
+            return dict(self._server_configs)
+
+        config_data = json.loads(self.config_path.read_text(encoding="utf-8"))
+        loaded: Dict[str, MCPServerConfig] = {}
+        for server_id, cfg in config_data.items():
+            existing = self._server_configs.get(server_id)
+            loaded[server_id] = MCPServerConfig(
+                id=server_id,
+                name=cfg.get("name", server_id),
+                command=cfg.get("command"),
+                args=cfg.get("args", []),
+                env=cfg.get("env", {}),
+                url=cfg.get("url"),
+                headers=cfg.get("headers", {}),
+                transport=_normalize_transport(cfg.get("transport") or cfg.get("type")),
+                last_error=existing.last_error if existing else None,
+            )
+        self._server_configs.update(loaded)
+        self._configs_loaded = True
+        return dict(self._server_configs)
 
     async def load_and_connect_all(self):
         if not self.config_path.exists():
             return
         try:
-            config_data = json.loads(self.config_path.read_text(encoding="utf-8"))
-            for server_id, cfg in config_data.items():
-                mcp_cfg = MCPServerConfig(
-                    id=server_id,
-                    name=cfg.get("name", server_id),
-                    command=cfg.get("command"),
-                    args=cfg.get("args", []),
-                    env=cfg.get("env", {}),
-                    url=cfg.get("url"),
-                    headers=cfg.get("headers", {}),
-                    transport=_normalize_transport(cfg.get("transport") or cfg.get("type")),
-                )
-
+            for server_id, mcp_cfg in self._load_configs_from_disk().items():
                 try:
                     await self.connect_server(mcp_cfg)
                 except Exception:
@@ -84,8 +105,48 @@ class MCPManager:
         except Exception:
             logger.exception("Failed to load MCP config")
 
+    async def ensure_configured_servers_connected(
+        self,
+        server_ids: list[str] | None = None,
+    ) -> Dict[str, str]:
+        """Reconnect configured MCP servers that should already be available."""
+        try:
+            configs = self._load_configs_from_disk()
+        except Exception:
+            logger.exception("Failed to load MCP config for ensure_configured_servers_connected")
+            return {}
+
+        requested_ids = [str(server_id).strip() for server_id in (server_ids or []) if str(server_id).strip()]
+        target_ids = requested_ids or list(configs.keys())
+        results: Dict[str, str] = {}
+        for server_id in target_ids:
+            cfg = configs.get(server_id)
+            if cfg is None:
+                results[server_id] = "unknown"
+                continue
+            if server_id in self.sessions:
+                results[server_id] = "connected"
+                continue
+            try:
+                await self.connect_server(cfg)
+                results[server_id] = "connected"
+            except Exception as exc:
+                cfg.last_error = str(exc)
+                results[server_id] = "error"
+                logger.warning(
+                    "Failed to ensure configured MCP server is connected",
+                    server_id=server_id,
+                    error=str(exc),
+                )
+        return results
+
     async def connect_server(self, config: MCPServerConfig) -> List[ToolSpec]:
+        self._shutdown_requested = False
         self._server_configs[config.id] = config
+        self._manual_disconnects.discard(config.id)
+        reconnect_task = self._reconnect_tasks.pop(config.id, None)
+        if reconnect_task and not reconnect_task.done():
+            reconnect_task.cancel()
         if config.id in self.sessions:
             logger.info("MCP server already connected", server_id=config.id)
             return self._tools.get(config.id, [])
@@ -117,6 +178,7 @@ class MCPManager:
             if ready_event.is_set():
                 # Success!
                 config.last_error = None
+                self._reconnect_attempts.pop(config.id, None)
                 return self._tools.get(config.id, [])
             
             # If the task finished but ready_event is not set, it failed
@@ -135,7 +197,7 @@ class MCPManager:
             logger.error("Failed to connect to MCP server", server_id=config.id, error=str(e))
             if not config.last_error:
                 config.last_error = str(e)
-            await self.disconnect_server(config.id)
+            await self.disconnect_server(config.id, intentional=False)
             if isinstance(e, RuntimeError) and "timed out" in str(e):
                 raise
             raise RuntimeError(f"MCP Connection Error ({config.id}): {e}") from e
@@ -230,6 +292,13 @@ class MCPManager:
             # This happens in the same task that created them, which anyio requires.
             await exit_stack.aclose()
             logger.info("MCP server resources released", server_id=config.id)
+            if (
+                not self._shutdown_requested
+                and config.id not in self._manual_disconnects
+                and config.id in self._server_configs
+                and config.id not in self.sessions
+            ):
+                self._schedule_reconnect(config.id)
 
     async def call_tool(
         self,
@@ -364,7 +433,54 @@ class MCPManager:
         
         return handler
 
-    async def disconnect_server(self, server_id: str):
+    def _schedule_reconnect(self, server_id: str) -> None:
+        if self._shutdown_requested or server_id in self._manual_disconnects:
+            return
+        existing = self._reconnect_tasks.get(server_id)
+        if existing and not existing.done():
+            return
+        config = self._server_configs.get(server_id)
+        if config is None:
+            return
+        attempt = int(self._reconnect_attempts.get(server_id, 0)) + 1
+        self._reconnect_attempts[server_id] = attempt
+        delay = min(_MCP_RECONNECT_MAX_SECONDS, _MCP_RECONNECT_BASE_SECONDS * (2 ** (attempt - 1)))
+
+        async def _reconnect() -> None:
+            try:
+                logger.warning(
+                    "Scheduling MCP reconnect",
+                    server_id=server_id,
+                    attempt=attempt,
+                    delay_seconds=delay,
+                )
+                await asyncio.sleep(delay)
+                if self._shutdown_requested or server_id in self._manual_disconnects or server_id in self.sessions:
+                    return
+                await self.connect_server(config)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "MCP reconnect attempt failed",
+                    server_id=server_id,
+                    attempt=attempt,
+                    exc_info=True,
+                )
+                self._schedule_reconnect(server_id)
+            finally:
+                task = self._reconnect_tasks.get(server_id)
+                if task is asyncio.current_task():
+                    self._reconnect_tasks.pop(server_id, None)
+
+        self._reconnect_tasks[server_id] = asyncio.create_task(_reconnect())
+
+    async def disconnect_server(self, server_id: str, *, intentional: bool = True):
+        if intentional:
+            self._manual_disconnects.add(server_id)
+        reconnect_task = self._reconnect_tasks.pop(server_id, None)
+        if reconnect_task and not reconnect_task.done():
+            reconnect_task.cancel()
         event = self._stop_events.get(server_id)
         if event:
             event.set()
@@ -386,6 +502,11 @@ class MCPManager:
         return all_specs
 
     async def shutdown(self):
+        self._shutdown_requested = True
+        for task in list(self._reconnect_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._reconnect_tasks.clear()
         # Trigger all stop events
         for server_id in list(self._stop_events.keys()):
             await self.disconnect_server(server_id)
@@ -395,12 +516,33 @@ class MCPManager:
         for server_id, config in self._server_configs.items():
             is_connected = server_id in self.sessions
             tools = self._tools.get(server_id, [])
+            reconnect_task = self._reconnect_tasks.get(server_id)
+            reconnecting = bool(reconnect_task and not reconnect_task.done())
+            reconnect_attempts = int(self._reconnect_attempts.get(server_id, 0))
+            if is_connected:
+                status = "connected"
+                reason = f"{len(tools)} tool(s) available"
+            elif reconnecting:
+                status = "reconnecting"
+                reason = "Background reconnect scheduled"
+            elif config.last_error:
+                status = "error"
+                reason = str(config.last_error)
+            else:
+                status = "configured"
+                reason = "Configured but not connected"
             statuses[server_id] = {
                 "name": config.name,
-                "status": "connected" if is_connected else ("error" if config.last_error else "disconnected"),
+                "status": status,
+                "configured": True,
+                "connected": is_connected,
+                "reconnecting": reconnecting,
+                "reason": reason,
                 "tool_count": len(tools),
                 "error": config.last_error,
                 "transport": config.transport or "auto",
+                "reconnect_attempts": reconnect_attempts,
+                "manual_disconnect": server_id in self._manual_disconnects,
             }
         return statuses
 

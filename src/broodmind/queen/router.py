@@ -95,6 +95,13 @@ async def route_or_reply(
             wake_notice=wake_notice,
         )
         _log_system_prompt(messages, "route")
+
+        mcp_manager = getattr(queen, "mcp_manager", None)
+        if mcp_manager is not None:
+            try:
+                await mcp_manager.ensure_configured_servers_connected()
+            except Exception:
+                logger.warning("Failed to refresh configured MCP servers before routing", exc_info=True)
         
         queen_tools, ctx = _get_queen_tools(queen, chat_id)
         logger.info("Queen tools fetched: count=%d", len(queen_tools))

@@ -47,6 +47,23 @@ class _FakeProcess:
         return self.returncode
 
 
+class _FakeReader:
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = list(lines)
+
+    async def read(self, _n: int = -1) -> bytes:
+        if not self._lines:
+            return b""
+        chunk = b"".join(self._lines)
+        self._lines = []
+        return chunk
+
+    async def readline(self) -> bytes:
+        if self._lines:
+            return self._lines.pop(0)
+        return b""
+
+
 class _LauncherStub:
     def __init__(self) -> None:
         self.calls = 0
@@ -138,3 +155,55 @@ def test_runtime_fails_after_recovery_exhausted(tmp_path: Path) -> None:
     except RuntimeError as exc:
         assert "after recovery attempts" in str(exc)
     assert launcher.calls == 2
+
+
+def test_worker_mcp_call_restores_configured_session(tmp_path: Path) -> None:
+    store = _StoreStub()
+    launcher = _LauncherStub()
+
+    class _MCP:
+        def __init__(self) -> None:
+            self.sessions = {}
+            self.ensure_calls: list[list[str]] = []
+
+        async def ensure_configured_servers_connected(self, server_ids=None):
+            self.ensure_calls.append(list(server_ids or []))
+            self.sessions["demo"] = object()
+            return {"demo": "connected"}
+
+        async def call_tool(self, server_id: str, tool_name: str, args: dict, allow_name_fallback: bool = False):
+            class _Result:
+                content = ["ok"]
+
+            return _Result()
+
+    runtime = WorkerRuntime(
+        store=store,
+        policy=_PolicyStub(),
+        workspace_dir=tmp_path,
+        launcher=launcher,
+        mcp_manager=_MCP(),
+    )
+
+    writes: list[dict] = []
+
+    async def _fake_write(_process, payload: dict):
+        writes.append(payload)
+
+    runtime._write_to_worker = _fake_write  # type: ignore[method-assign]
+
+    process = _FakeProcess(pid=1)
+    process.stdout = _FakeReader(
+        [
+            b'{"type":"mcp_call","server_id":"demo","tool_name":"read_data","arguments":{"q":"x"}}\n',
+            b'{"type":"result","result":{"summary":"done","output":{}}}\n',
+        ]
+    )
+
+    async def scenario():
+        return await runtime._read_loop(_spec(), process)
+
+    result = asyncio.run(scenario())
+    assert result.summary == "done"
+    assert runtime.mcp_manager.ensure_calls == [["demo"]]
+    assert writes[0]["type"] == "mcp_result"

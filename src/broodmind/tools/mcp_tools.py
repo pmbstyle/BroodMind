@@ -113,6 +113,13 @@ def mcp_status(args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
             "servers": statuses,
             "connected_count": len(queen.mcp_manager.sessions),
             "known_count": len(statuses),
+            "configured_count": len(statuses),
+            "reconnecting_count": sum(
+                1 for payload in statuses.values() if str(payload.get("status", "")).lower() == "reconnecting"
+            ),
+            "error_count": sum(
+                1 for payload in statuses.values() if str(payload.get("status", "")).lower() == "error"
+            ),
         },
         indent=2,
     )

@@ -9,7 +9,21 @@ type SystemPayload = components["schemas"]["DashboardSystemV2"];
 type ServiceItem = { id?: string; name?: string; status?: string; reason?: string; updated_at?: string };
 type LogItem = { timestamp?: string; level?: string; event?: string; service?: string };
 type Connectivity = {
-  mcp_servers?: Record<string, { status?: string; tool_count?: number; name?: string }>;
+  mcp_servers?: Record<
+    string,
+    {
+      status?: string;
+      tool_count?: number;
+      name?: string;
+      reason?: string;
+      transport?: string;
+      reconnect_attempts?: number;
+      connected?: boolean;
+      reconnecting?: boolean;
+      configured?: boolean;
+      error?: string | null;
+    }
+  >;
 };
 
 function statusTone(status?: string): string {
@@ -17,7 +31,7 @@ function statusTone(status?: string): string {
   if (v === "ok" || v === "connected" || v === "running") {
     return "border-emerald-400/30 bg-emerald-500/10 text-emerald-300";
   }
-  if (v === "warning") {
+  if (v === "warning" || v === "reconnecting" || v === "configured") {
     return "border-amber-300/30 bg-amber-500/10 text-amber-300";
   }
   return "border-rose-300/30 bg-rose-500/10 text-rose-300";
@@ -142,7 +156,16 @@ export function SystemPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h4 className="text-base font-semibold text-slate-100">{value.name ?? key}</h4>
-                      <p className="mt-1 text-sm text-slate-400">Available tools: {value.tool_count ?? 0}</p>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Available tools: {value.tool_count ?? 0} | Transport: {value.transport ?? "auto"}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {value.reason ?? "No detail available"}
+                        {typeof value.reconnect_attempts === "number" && value.reconnect_attempts > 0
+                          ? ` | Retry attempts: ${value.reconnect_attempts}`
+                          : ""}
+                      </p>
+                      {value.error ? <p className="mt-1 text-sm text-rose-300/80">{value.error}</p> : null}
                     </div>
                     <div className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-wide ${statusTone(value.status)}`}>
                       {String(value.status ?? "unknown")}

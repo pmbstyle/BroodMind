@@ -67,10 +67,22 @@ class WorkerRuntime:
         if not granted:
             return WorkerResult(summary="Permission denied for worker task")
 
+        requested_tool_names = list(task_request.tools or template.available_tools)
+        has_requested_mcp_tools = any(str(tool_name).startswith("mcp_") for tool_name in requested_tool_names)
+        if self.mcp_manager:
+            try:
+                await self.mcp_manager.ensure_configured_servers_connected(None if has_requested_mcp_tools else [])
+            except Exception:
+                logger.warning(
+                    "Failed to ensure configured MCP servers before worker launch",
+                    worker_id=task_request.worker_id,
+                    requested_mcp_tools=has_requested_mcp_tools,
+                    exc_info=True,
+                )
+
         # Get all tools to find MCP tool definitions
         from broodmind.tools.tools import get_tools
         all_tools = get_tools(mcp_manager=self.mcp_manager)
-        requested_tool_names = list(task_request.tools or template.available_tools)
         
         mcp_tools_data = []
         known_server_ids = list(self.mcp_manager.sessions.keys()) if self.mcp_manager else []
@@ -472,6 +484,18 @@ class WorkerRuntime:
                     return None
                 
                 session = self.mcp_manager.sessions.get(server_id)
+                if not session:
+                    try:
+                        await self.mcp_manager.ensure_configured_servers_connected([str(server_id)])
+                    except Exception:
+                        logger.warning(
+                            "Failed to restore MCP session for worker call",
+                            worker_id=spec.id,
+                            server_id=server_id,
+                            tool=tool_name,
+                            exc_info=True,
+                        )
+                    session = self.mcp_manager.sessions.get(server_id)
                 if not session:
                     await self._write_to_worker(process, {"type": "error", "message": f"MCP session {server_id} not active."})
                     return None

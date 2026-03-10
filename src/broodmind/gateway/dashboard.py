@@ -1129,12 +1129,16 @@ def _build_service_health(
 
     mcp_error = 0
     mcp_warn = 0
+    mcp_reconnecting = 0
     for payload in mcp_servers.values():
         if not isinstance(payload, dict):
             continue
         status = str(payload.get("status", "unknown")).lower()
         if status == "error":
             mcp_error += 1
+        elif status == "reconnecting":
+            mcp_reconnecting += 1
+            mcp_warn += 1
         elif status != "connected":
             mcp_warn += 1
     mcp_total = len(mcp_servers)
@@ -1143,6 +1147,9 @@ def _build_service_health(
     if mcp_error > 0:
         mcp_status = "critical"
         mcp_reason = f"{mcp_error} MCP server(s) in error"
+    elif mcp_reconnecting > 0:
+        mcp_status = "warning"
+        mcp_reason = f"{mcp_reconnecting} MCP server(s) reconnecting"
     elif mcp_warn > 0:
         mcp_status = "warning"
         mcp_reason = f"{mcp_warn} MCP server(s) not connected"
@@ -1153,7 +1160,7 @@ def _build_service_health(
             "status": mcp_status,
             "reason": mcp_reason,
             "updated_at": None,
-            "metrics": {"total": mcp_total, "error": mcp_error, "warning": mcp_warn},
+            "metrics": {"total": mcp_total, "error": mcp_error, "warning": mcp_warn, "reconnecting": mcp_reconnecting},
         }
     )
     return out

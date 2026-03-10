@@ -1375,8 +1375,24 @@ def _build_dashboard_renderable(snapshot: dict, compact: bool = False) -> Align:
     else:
         for s_id, s_data in mcp_servers.items():
             status = s_data.get("status", "unknown")
-            color = "bright_green" if status == "connected" else "bright_red" if status == "error" else "yellow"
-            mcp_grid.add_row(f"{s_data.get('name', s_id)}:", f"[{color}]{status.upper()}[/{color}] [dim]({s_data.get('tool_count', 0)} tools)[/dim]")
+            color = (
+                "bright_green"
+                if status == "connected"
+                else "bright_red"
+                if status == "error"
+                else "bright_yellow"
+                if status == "reconnecting"
+                else "yellow"
+            )
+            details = str(s_data.get("reason", "") or "").strip()
+            transport = str(s_data.get("transport", "auto"))
+            attempts = int(s_data.get("reconnect_attempts", 0) or 0)
+            suffix = f"[dim]({s_data.get('tool_count', 0)} tools, {transport})[/dim]"
+            if attempts > 0 and status == "reconnecting":
+                suffix += f" [dim]retry {attempts}[/dim]"
+            if details:
+                suffix += f" [dim]- {details}[/dim]"
+            mcp_grid.add_row(f"{s_data.get('name', s_id)}:", f"[{color}]{str(status).upper()}[/{color}] {suffix}")
     connectivity_panel = Panel(mcp_grid, title="[bold white]MCP Connectivity[/bold white]", border_style="cyan")
 
     # Recent Logs Panel
