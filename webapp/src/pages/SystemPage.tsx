@@ -12,15 +12,15 @@ type Connectivity = {
   mcp_servers?: Record<string, { status?: string; tool_count?: number; name?: string }>;
 };
 
-function tone(status?: string): string {
+function statusTone(status?: string): string {
   const v = String(status ?? "").toLowerCase();
   if (v === "ok" || v === "connected" || v === "running") {
-    return "tone-ok";
+    return "border-emerald-400/30 bg-emerald-500/10 text-emerald-300";
   }
   if (v === "warning") {
-    return "tone-warn";
+    return "border-amber-300/30 bg-amber-500/10 text-amber-300";
   }
-  return "tone-bad";
+  return "border-rose-300/30 bg-rose-500/10 text-rose-300";
 }
 
 export function SystemPage() {
@@ -64,18 +64,18 @@ export function SystemPage() {
 
   if (loading) {
     return (
-      <section className="panel">
-        <h2>System</h2>
-        <p>Loading system diagnostics...</p>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-slate-300">
+        <h2 className="text-2xl font-semibold text-slate-100">System</h2>
+        <p className="mt-2">Loading system diagnostics...</p>
       </section>
     );
   }
 
   if (error) {
     return (
-      <section className="panel panel-error">
-        <h2>System</h2>
-        <p>Failed to load system diagnostics: {error}</p>
+      <section className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-rose-200">
+        <h2 className="text-2xl font-semibold text-rose-100">System</h2>
+        <p className="mt-2">Failed to load system diagnostics: {error}</p>
       </section>
     );
   }
@@ -87,63 +87,109 @@ export function SystemPage() {
   const mcpServers = connectivity.mcp_servers ?? {};
 
   return (
-    <section className="panel">
-      <h2>System</h2>
-      <p className="overview-meta">
-        Runtime: <span className={tone(system.running ? "running" : "critical")}>{system.running ? "RUNNING" : "DOWN"}</span>{" "}
-        | PID: {system.pid ?? "n/a"} | Channel: {system.active_channel ?? "n/a"} | Uptime: {system.uptime ?? "n/a"}
-      </p>
+    <section className="grid gap-5">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/60">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">System</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-100">
+              {system.running ? "Runtime is healthy" : "Runtime is degraded"}
+            </h2>
+            <p className="mt-2 text-sm text-slate-400">
+              PID {system.pid ?? "n/a"} | Channel {system.active_channel ?? "n/a"} | Uptime {system.uptime ?? "n/a"}
+            </p>
+          </div>
+          <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] ${statusTone(system.running ? "running" : "critical")}`}>
+            {system.running ? "running" : "down"}
+          </div>
+        </div>
+      </section>
 
-      <div className="overview-columns">
-        <article className="mini-panel">
-          <h4>Service Health</h4>
-          {services.length === 0 ? (
-            <p>No services.</p>
-          ) : (
-            <ul className="plain-list">
-              {services.map((service) => (
-                <li key={service.id ?? service.name}>
-                  <span className={tone(service.status)}>{String(service.status ?? "unknown").toUpperCase()}</span>{" "}
-                  {service.name ?? "Service"}: {service.reason ?? "No reason"}
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className="grid gap-5 xl:grid-cols-2">
+        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Service Health</h3>
+          <div className="mt-4 space-y-3">
+            {services.length === 0 ? (
+              <p className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">No services.</p>
+            ) : (
+              services.map((service) => (
+                <article key={service.id ?? service.name} className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-base font-semibold text-slate-100">{service.name ?? "Service"}</h4>
+                      <p className="mt-1 text-sm text-slate-400">{service.reason ?? "No reason"}</p>
+                    </div>
+                    <div className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-wide ${statusTone(service.status)}`}>
+                      {String(service.status ?? "unknown")}
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
         </article>
 
-        <article className="mini-panel">
-          <h4>MCP Connectivity</h4>
-          {Object.keys(mcpServers).length === 0 ? (
-            <p>No MCP servers configured.</p>
-          ) : (
-            <ul className="plain-list">
-              {Object.entries(mcpServers).map(([key, value]) => (
-                <li key={key}>
-                  <span className={tone(value.status)}>{String(value.status ?? "unknown").toUpperCase()}</span>{" "}
-                  {value.name ?? key} | tools: {value.tool_count ?? 0}
-                </li>
-              ))}
-            </ul>
-          )}
+        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">MCP Connectivity</h3>
+          <div className="mt-4 space-y-3">
+            {Object.keys(mcpServers).length === 0 ? (
+              <p className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">
+                No MCP servers configured.
+              </p>
+            ) : (
+              Object.entries(mcpServers).map(([key, value]) => (
+                <article key={key} className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-base font-semibold text-slate-100">{value.name ?? key}</h4>
+                      <p className="mt-1 text-sm text-slate-400">Available tools: {value.tool_count ?? 0}</p>
+                    </div>
+                    <div className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-wide ${statusTone(value.status)}`}>
+                      {String(value.status ?? "unknown")}
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
         </article>
       </div>
 
-      <article className="mini-panel" style={{ marginTop: "10px" }}>
-        <h4>Recent Logs</h4>
+      <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Recent Logs</h3>
         {logs.length === 0 ? (
-          <p>No logs in current filter window.</p>
+          <p className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">
+            No logs in current filter window.
+          </p>
         ) : (
-          <ul className="plain-list">
-            {logs.map((log) => (
-              <li key={`${log.timestamp ?? ""}-${log.event ?? ""}`}>
-                <span className={tone(log.level)}>{String(log.level ?? "info").toUpperCase()}</span>{" "}
-                [{log.service ?? "gateway"}] {log.event ?? ""} ({log.timestamp ?? "n/a"})
-              </li>
-            ))}
-          </ul>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="border-b border-slate-800 px-3 py-2">Time</th>
+                  <th className="border-b border-slate-800 px-3 py-2">Level</th>
+                  <th className="border-b border-slate-800 px-3 py-2">Service</th>
+                  <th className="border-b border-slate-800 px-3 py-2">Event</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr key={`${log.timestamp ?? ""}-${log.event ?? ""}`} className="border-b border-slate-900">
+                    <td className="px-3 py-3 text-slate-400">{log.timestamp ?? "n/a"}</td>
+                    <td className="px-3 py-3">
+                      <span className={`rounded-full border px-2 py-1 text-xs uppercase tracking-wide ${statusTone(log.level)}`}>
+                        {String(log.level ?? "info")}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-slate-300">{log.service ?? "gateway"}</td>
+                    <td className="px-3 py-3 text-slate-300">{log.event ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </article>
     </section>
   );
 }
-

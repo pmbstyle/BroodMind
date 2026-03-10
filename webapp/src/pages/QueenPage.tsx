@@ -29,15 +29,15 @@ type HealthView = {
   reasons?: string[];
 };
 
-function tone(value?: string): string {
+function statusTone(value?: string): string {
   const v = String(value ?? "").toLowerCase();
   if (v === "ok" || v === "idle") {
-    return "tone-ok";
+    return "border-emerald-400/30 bg-emerald-500/10 text-emerald-300";
   }
   if (v === "warning" || v === "thinking") {
-    return "tone-warn";
+    return "border-amber-300/30 bg-amber-500/10 text-amber-300";
   }
-  return "tone-bad";
+  return "border-rose-300/30 bg-rose-500/10 text-rose-300";
 }
 
 function metric(value: unknown): string {
@@ -88,27 +88,27 @@ export function QueenPage() {
 
   if (loading) {
     return (
-      <section className="panel">
-        <h2>Queen</h2>
-        <p>Loading Queen operational state...</p>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-slate-300">
+        <h2 className="text-2xl font-semibold text-slate-100">Queen</h2>
+        <p className="mt-2">Loading Queen operational state...</p>
       </section>
     );
   }
 
   if (error) {
     return (
-      <section className="panel panel-error">
-        <h2>Queen</h2>
-        <p>Failed to load queen telemetry: {error}</p>
+      <section className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-rose-200">
+        <h2 className="text-2xl font-semibold text-rose-100">Queen</h2>
+        <p className="mt-2">Failed to load queen telemetry: {error}</p>
       </section>
     );
   }
 
   if (!data) {
     return (
-      <section className="panel">
-        <h2>Queen</h2>
-        <p>No data returned.</p>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-slate-300">
+        <h2 className="text-2xl font-semibold text-slate-100">Queen</h2>
+        <p className="mt-2">No data returned.</p>
       </section>
     );
   }
@@ -120,55 +120,90 @@ export function QueenPage() {
   const lastAck = control.last_ack ?? {};
 
   return (
-    <section className="panel">
-      <h2>Queen</h2>
-      <p className="overview-meta">Operational state for orchestration core and control pressure.</p>
-
-      <article className="headline-card">
-        <div className={`headline-status ${tone(queen.state)}`}>{String(queen.state ?? "unknown").toUpperCase()}</div>
-        <div>
-          <h3>{health.summary ?? "No health summary"}</h3>
-          <p>{(health.reasons ?? []).join(" | ") || "No active degradation reasons."}</p>
+    <section className="grid gap-5">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/60">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Queen</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-100">
+              {health.summary ?? "Orchestration core"}
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm text-slate-400">
+              {(health.reasons ?? []).join(" | ") || "No active degradation reasons."}
+            </p>
+          </div>
+          <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] ${statusTone(queen.state)}`}>
+            {String(queen.state ?? "unknown")}
+          </div>
         </div>
-      </article>
+      </section>
 
-      <div className="kpi-grid">
-        <article className="kpi-card">
-          <h4>Followup Queues</h4>
-          <strong>{metric(queen.followup_queues)}</strong>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Followup queues</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-100">{metric(queen.followup_queues)}</p>
         </article>
-        <article className="kpi-card">
-          <h4>Internal Queues</h4>
-          <strong>{metric(queen.internal_queues)}</strong>
+        <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Internal queues</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-100">{metric(queen.internal_queues)}</p>
         </article>
-        <article className="kpi-card">
-          <h4>Followup Tasks</h4>
-          <strong>{metric(queen.followup_tasks)}</strong>
+        <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Followup tasks</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-100">{metric(queen.followup_tasks)}</p>
         </article>
-        <article className="kpi-card">
-          <h4>Internal Tasks</h4>
-          <strong>{metric(queen.internal_tasks)}</strong>
+        <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Internal tasks</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-100">{metric(queen.internal_tasks)}</p>
         </article>
-      </div>
+      </section>
 
-      <div className="overview-columns">
-        <article className="mini-panel">
-          <h4>Queues and Sessions</h4>
-          <p>Telegram queues: {metric(queues.telegram_queues)}</p>
-          <p>Telegram send tasks: {metric(queues.telegram_send_tasks)}</p>
-          <p>Exec sessions running: {metric(queues.exec_sessions_running)}</p>
-          <p>Exec sessions total: {metric(queues.exec_sessions_total)}</p>
+      <div className="grid gap-5 xl:grid-cols-2">
+        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Queues and Sessions</h3>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Telegram queues</div>
+              <div className="mt-2 text-xl font-semibold text-slate-100">{metric(queues.telegram_queues)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Telegram send tasks</div>
+              <div className="mt-2 text-xl font-semibold text-slate-100">{metric(queues.telegram_send_tasks)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Exec sessions running</div>
+              <div className="mt-2 text-xl font-semibold text-slate-100">{metric(queues.exec_sessions_running)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Exec sessions total</div>
+              <div className="mt-2 text-xl font-semibold text-slate-100">{metric(queues.exec_sessions_total)}</div>
+            </div>
+          </div>
         </article>
 
-        <article className="mini-panel">
-          <h4>Control Channel</h4>
-          <p>Pending requests: {metric(control.pending_requests)}</p>
-          <p>Last ack request: {metric(lastAck.request_id)}</p>
-          <p>Last ack status: <span className={tone(lastAck.status)}>{metric(lastAck.status)}</span></p>
-          <p>Last ack timestamp: {metric(lastAck.timestamp)}</p>
+        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Control Channel</h3>
+          <div className="mt-4 space-y-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Pending requests</div>
+              <div className="mt-2 text-xl font-semibold text-slate-100">{metric(control.pending_requests)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Last ack request</div>
+              <div className="mt-2 text-sm font-medium text-slate-200">{metric(lastAck.request_id)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Last ack status</div>
+              <div className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs uppercase tracking-wide ${statusTone(lastAck.status)}`}>
+                {metric(lastAck.status)}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Last ack timestamp</div>
+              <div className="mt-2 text-sm font-medium text-slate-200">{metric(lastAck.timestamp)}</div>
+            </div>
+          </div>
         </article>
       </div>
     </section>
   );
 }
-

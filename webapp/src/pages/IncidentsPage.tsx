@@ -17,15 +17,15 @@ type IncidentItem = {
   latest_at?: string;
 };
 
-function severityClass(value?: string): string {
+function severityTone(value?: string): string {
   const v = String(value ?? "").toLowerCase();
   if (v === "critical") {
-    return "tone-bad";
+    return "border-rose-300/30 bg-rose-500/10 text-rose-300";
   }
   if (v === "warning") {
-    return "tone-warn";
+    return "border-amber-300/30 bg-amber-500/10 text-amber-300";
   }
-  return "tone-ok";
+  return "border-emerald-400/30 bg-emerald-500/10 text-emerald-300";
 }
 
 export function IncidentsPage() {
@@ -69,18 +69,18 @@ export function IncidentsPage() {
 
   if (loading) {
     return (
-      <section className="panel">
-        <h2>Incidents</h2>
-        <p>Loading incident stream...</p>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-slate-300">
+        <h2 className="text-2xl font-semibold text-slate-100">Incidents</h2>
+        <p className="mt-2">Loading incident stream...</p>
       </section>
     );
   }
 
   if (error) {
     return (
-      <section className="panel panel-error">
-        <h2>Incidents</h2>
-        <p>Failed to load incidents: {error}</p>
+      <section className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-rose-200">
+        <h2 className="text-2xl font-semibold text-rose-100">Incidents</h2>
+        <p className="mt-2">Failed to load incidents: {error}</p>
       </section>
     );
   }
@@ -94,35 +94,62 @@ export function IncidentsPage() {
   const items = incidentsNode.items ?? [];
 
   return (
-    <section className="panel">
-      <h2>Incidents</h2>
-      <p className="overview-meta">
-        Open: {summary.open ?? 0} | Critical: {summary.critical ?? 0} | Warning: {summary.warning ?? 0}
-      </p>
+    <section className="grid gap-5">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/60">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Incidents</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-100">Incident Groups</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Deduped warnings and critical signals for the current filter set.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-sm">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-center">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Open</div>
+              <div className="mt-1 text-xl font-semibold text-slate-100">{summary.open ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-rose-300/20 bg-rose-500/5 px-3 py-2 text-center">
+              <div className="text-xs uppercase tracking-wide text-rose-300/80">Critical</div>
+              <div className="mt-1 text-xl font-semibold text-rose-300">{summary.critical ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-amber-300/20 bg-amber-500/5 px-3 py-2 text-center">
+              <div className="text-xs uppercase tracking-wide text-amber-300/80">Warning</div>
+              <div className="mt-1 text-xl font-semibold text-amber-300">{summary.warning ?? 0}</div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {items.length === 0 ? (
-        <article className="mini-panel">
-          <h4>No incidents</h4>
-          <p>No incident groups for current filters.</p>
-        </article>
+        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/60">
+          <p className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">
+            No incident groups for current filters.
+          </p>
+        </section>
       ) : (
-        <div className="incident-list">
+        <section className="grid gap-4 xl:grid-cols-2">
           {items.map((item) => (
-            <article key={item.id ?? item.title} className="incident-card">
-              <div className="incident-head">
-                <strong className={severityClass(item.severity)}>
-                  {String(item.severity ?? "unknown").toUpperCase()}
-                </strong>
-                <span>Impact {item.impact ?? 0}</span>
+            <article
+              key={item.id ?? item.title}
+              className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-wide ${severityTone(item.severity)}`}>
+                  {String(item.severity ?? "unknown")}
+                </div>
+                <div className="text-xs text-slate-500">Impact {item.impact ?? 0}</div>
               </div>
-              <h4>{item.title ?? "Incident"}</h4>
-              <p>{item.summary ?? "No summary"}</p>
-              <p className="incident-meta">
-                Service: <strong>{item.service ?? "unknown"}</strong> | Count: {item.count ?? 0}
-              </p>
+              <h3 className="mt-4 text-lg font-semibold text-slate-100">{item.title ?? "Incident"}</h3>
+              <p className="mt-2 text-sm text-slate-400">{item.summary ?? "No summary"}</p>
+              <div className="mt-4 flex flex-wrap gap-3 text-xs text-slate-500">
+                <span>Service: {item.service ?? "unknown"}</span>
+                <span>Count: {item.count ?? 0}</span>
+                <span>Latest: {item.latest_at ?? "n/a"}</span>
+              </div>
               <button
                 type="button"
-                className="drill-btn"
+                className="mt-4 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200 transition hover:border-cyan-300/60 hover:bg-cyan-400/15"
                 onClick={() =>
                   setFilters({
                     ...filters,
@@ -134,9 +161,8 @@ export function IncidentsPage() {
               </button>
             </article>
           ))}
-        </div>
+        </section>
       )}
     </section>
   );
 }
-

@@ -154,8 +154,7 @@ export function WorkersPage() {
         </div>
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+      <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Recent Workers</h3>
             <p className="text-xs text-slate-500">Click a row to inspect the worker reply</p>
@@ -266,35 +265,34 @@ export function WorkersPage() {
               </table>
             </div>
           )}
-        </article>
+      </article>
 
-        <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
-          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Topology Snapshot</h3>
-          {topology.length === 0 ? (
-            <p className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">
-              No active topology nodes.
-            </p>
-          ) : (
-            <ul className="mt-4 space-y-2">
-              {topology.slice(0, 20).map((node) => (
-                <li
-                  key={node.id ?? node.updated_at}
-                  className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3 text-sm text-slate-300"
+      <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Topology Snapshot</h3>
+        {topology.length === 0 ? (
+          <p className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-slate-400">
+            No active topology nodes.
+          </p>
+        ) : (
+          <ul className="mt-4 space-y-2">
+            {topology.slice(0, 20).map((node) => (
+              <li
+                key={node.id ?? node.updated_at}
+                className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3 text-sm text-slate-300"
+              >
+                <span
+                  className="block"
+                  style={{ marginLeft: `${Math.min(64, (node.spawn_depth ?? 0) * 12)}px` }}
                 >
-                  <span
-                    className="block"
-                    style={{ marginLeft: `${Math.min(64, (node.spawn_depth ?? 0) * 12)}px` }}
-                  >
-                    <strong className="font-mono text-cyan-300">{short(node.id)}</strong>{" "}
-                    <span className={tone(node.status)}>[{String(node.status ?? "unknown")}]</span>{" "}
-                    {node.parent_worker_id ? `child of ${short(node.parent_worker_id)}` : "root"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </article>
-      </div>
+                  <strong className="font-mono text-cyan-300">{short(node.id)}</strong>{" "}
+                  <span className={tone(node.status)}>[{String(node.status ?? "unknown")}]</span>{" "}
+                  {node.parent_worker_id ? `child of ${short(node.parent_worker_id)}` : "root"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </article>
     </section>
   );
 }
