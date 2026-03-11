@@ -4,6 +4,7 @@ import { useOutletContext } from "react-router-dom";
 import { fetchQueen } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
+import { formatLocalDateTime } from "../utils/dateTime";
 
 type QueenPayload = components["schemas"]["DashboardQueenV2"];
 type QueenView = {
@@ -199,7 +200,7 @@ export function QueenPage() {
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
               <div className="text-xs uppercase tracking-wide text-slate-500">Last ack timestamp</div>
-              <div className="mt-2 text-sm font-medium text-slate-200">{metric(lastAck.timestamp)}</div>
+              <div className="mt-2 text-sm font-medium text-slate-200">{formatLocalDateTime(lastAck.timestamp)}</div>
             </div>
           </div>
         </article>

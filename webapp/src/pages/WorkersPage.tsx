@@ -4,6 +4,7 @@ import { useOutletContext } from "react-router-dom";
 import { fetchWorkers } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
+import { formatLocalDateTime } from "../utils/dateTime";
 
 type WorkersPayload = components["schemas"]["DashboardWorkersV2"];
 type WorkerItem = {
@@ -213,7 +214,7 @@ export function WorkersPage() {
                           <td colSpan={5} className="px-3 pb-3">
                             <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950/90 p-4">
                               <div className="flex flex-wrap gap-3 text-xs text-slate-400">
-                                <span>Updated: {worker.updated_at ?? "n/a"}</span>
+                                <span>Updated: {formatLocalDateTime(worker.updated_at)}</span>
                                 <span>Lineage: {short(worker.lineage_id ?? undefined)}</span>
                                 <span>
                                   Parent:{" "}

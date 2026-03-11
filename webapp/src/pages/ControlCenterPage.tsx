@@ -4,6 +4,7 @@ import { Link, useOutletContext } from "react-router-dom";
 import { fetchOverview, fetchQueen, fetchSystem, fetchWorkers } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
+import { formatLocalDateTime, formatLocalTime } from "../utils/dateTime";
 
 type OverviewPayload = components["schemas"]["DashboardOverviewV2"];
 type WorkersPayload = components["schemas"]["DashboardWorkersV2"];
@@ -139,17 +140,6 @@ function workerIssue(worker: WorkerRow): string | null {
   return null;
 }
 
-function prettyTime(value?: string): string {
-  if (!value) {
-    return "n/a";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
 function buildLine(points: number[], width: number, height: number, max: number): string {
   if (points.length === 0) {
     return "";
@@ -186,12 +176,8 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
   const queenLine = buildLine(queenQueue, width, height, yAxisMax);
   const firstPoint = points[0];
   const lastPoint = points[points.length - 1];
-  const startLabel = firstPoint
-    ? new Date(firstPoint.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "--:--";
-  const endLabel = lastPoint
-    ? new Date(lastPoint.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "--:--";
+  const startLabel = firstPoint ? formatLocalTime(firstPoint.at) : "--:--";
+  const endLabel = lastPoint ? formatLocalTime(lastPoint.at) : "--:--";
   const tzLabel = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const activeIndex = hoverIndex !== null && hoverIndex >= 0 && hoverIndex < points.length ? hoverIndex : null;
   const activePoint = activeIndex !== null ? points[activeIndex] : null;
@@ -264,14 +250,8 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
       </svg>
       {activePoint ? (
         <div className="pointer-events-none absolute right-6 top-16 rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs text-slate-200 shadow-xl">
-          <p className="mb-1 text-[11px] text-slate-400">
-            {new Date(activePoint.at).toLocaleString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-              month: "short",
-              day: "2-digit",
-            })}{" "}
+            <p className="mb-1 text-[11px] text-slate-400">
+            {formatLocalDateTime(activePoint.at)}{" "}
             ({tzLabel})
           </p>
           <p className="text-cyan-300">Workers: {activePoint.activeWorkers}</p>
@@ -492,7 +472,7 @@ export function ControlCenterPage() {
               </div>
               <div className="rounded-lg bg-slate-950/70 px-3 py-2">
                 <p className="text-xs uppercase tracking-wider text-slate-500">Last update</p>
-                <p className="mt-1 text-sm text-slate-300">{prettyTime(bundle?.overview.generated_at)} (local)</p>
+                <p className="mt-1 text-sm text-slate-300">{formatLocalDateTime(bundle?.overview.generated_at)} (local)</p>
               </div>
             </div>
           </section>
@@ -505,7 +485,7 @@ export function ControlCenterPage() {
               ) : (
                 queenNotes.map((note, index) => (
                   <article key={`${note.timestamp}-${index}`} className="rounded-lg bg-slate-950/70 px-3 py-2">
-                    <p className="text-[11px] text-slate-500">{prettyTime(note.timestamp)} (local)</p>
+                    <p className="text-[11px] text-slate-500">{formatLocalDateTime(note.timestamp)} (local)</p>
                     <p className="mt-1 text-xs text-slate-200">{String(note.event ?? "").slice(0, 140)}</p>
                   </article>
                 ))
@@ -568,7 +548,7 @@ export function ControlCenterPage() {
                                 `ID: ${worker.id ?? "n/a"}`,
                                 `Template: ${worker.template_name ?? "n/a"}`,
                                 `Status: ${String(worker.status ?? "unknown")}`,
-                                `Updated: ${prettyTime(worker.updated_at)} (local)`,
+                                `Updated: ${formatLocalDateTime(worker.updated_at)} (local)`,
                               ],
                             })
                           }
@@ -580,7 +560,7 @@ export function ControlCenterPage() {
                                 `ID: ${worker.id ?? "n/a"}`,
                                 `Template: ${worker.template_name ?? "n/a"}`,
                                 `Status: ${String(worker.status ?? "unknown")}`,
-                                `Updated: ${prettyTime(worker.updated_at)} (local)`,
+                                `Updated: ${formatLocalDateTime(worker.updated_at)} (local)`,
                               ],
                             })
                           }
@@ -646,7 +626,7 @@ export function ControlCenterPage() {
                         </p>
                       ) : null}
                     </td>
-                    <td className="rounded-r-lg px-3 py-3 text-slate-400">{prettyTime(worker.updated_at)}</td>
+                    <td className="rounded-r-lg px-3 py-3 text-slate-400">{formatLocalDateTime(worker.updated_at)}</td>
                   </tr>
                 )})
               )}

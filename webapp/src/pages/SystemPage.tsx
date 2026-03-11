@@ -4,6 +4,7 @@ import { useOutletContext } from "react-router-dom";
 import { fetchSystem } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
+import { formatLocalDateTime } from "../utils/dateTime";
 
 type SystemPayload = components["schemas"]["DashboardSystemV2"];
 type ServiceItem = { id?: string; name?: string; status?: string; reason?: string; updated_at?: string };
@@ -198,7 +199,7 @@ export function SystemPage() {
               <tbody>
                 {logs.map((log) => (
                   <tr key={`${log.timestamp ?? ""}-${log.event ?? ""}`} className="border-b border-slate-900">
-                    <td className="px-3 py-3 text-slate-400">{log.timestamp ?? "n/a"}</td>
+                    <td className="px-3 py-3 text-slate-400">{formatLocalDateTime(log.timestamp)}</td>
                     <td className="px-3 py-3">
                       <span className={`rounded-full border px-2 py-1 text-xs uppercase tracking-wide ${statusTone(log.level)}`}>
                         {String(log.level ?? "info")}

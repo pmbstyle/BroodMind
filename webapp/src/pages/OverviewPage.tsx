@@ -4,6 +4,7 @@ import { useOutletContext } from "react-router-dom";
 import { fetchOverview } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
+import { formatLocalDateTime } from "../utils/dateTime";
 
 type OverviewPayload = components["schemas"]["DashboardOverviewV2"];
 type KpiItem = { value?: unknown; unit?: string; status?: string };
@@ -223,7 +224,7 @@ export function OverviewPage() {
         <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Service Health</h3>
-            <p className="text-xs text-slate-500">Generated at {data.generated_at}</p>
+            <p className="text-xs text-slate-500">Generated at {formatLocalDateTime(data.generated_at)}</p>
           </div>
           <div className="space-y-3">
             {services.length === 0 ? (

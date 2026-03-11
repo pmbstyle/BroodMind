@@ -4,6 +4,7 @@ import { useOutletContext } from "react-router-dom";
 import { fetchIncidents } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
+import { formatLocalDateTime } from "../utils/dateTime";
 
 type IncidentsPayload = components["schemas"]["DashboardIncidentsV2"];
 type IncidentItem = {
@@ -145,7 +146,7 @@ export function IncidentsPage() {
               <div className="mt-4 flex flex-wrap gap-3 text-xs text-slate-500">
                 <span>Service: {item.service ?? "unknown"}</span>
                 <span>Count: {item.count ?? 0}</span>
-                <span>Latest: {item.latest_at ?? "n/a"}</span>
+                <span>Latest: {formatLocalDateTime(item.latest_at)}</span>
               </div>
               <button
                 type="button"

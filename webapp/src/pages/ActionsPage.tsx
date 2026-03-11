@@ -5,6 +5,7 @@ import { useOutletContext } from "react-router-dom";
 import { fetchActions, runDashboardAction } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
+import { formatLocalDateTime } from "../utils/dateTime";
 
 type ActionsPayload = components["schemas"]["DashboardActionsV2"];
 type ActionHistoryItem = {
@@ -174,7 +175,7 @@ export function ActionsPage() {
                 <tbody>
                   {history.slice(0, 12).map((item, index) => (
                     <tr key={`${item.timestamp ?? "n/a"}-${index}`} className="border-b border-slate-900">
-                      <td className="px-3 py-3 text-slate-400">{item.timestamp ?? "n/a"}</td>
+                      <td className="px-3 py-3 text-slate-400">{formatLocalDateTime(item.timestamp)}</td>
                       <td className="px-3 py-3 text-slate-200">
                         {item.action ?? "action"}
                         {item.worker_id ? ` (${item.worker_id})` : ""}
