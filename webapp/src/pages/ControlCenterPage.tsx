@@ -452,49 +452,46 @@ export function ControlCenterPage() {
         ))}
       </section>
 
-      <div className="grid items-stretch gap-5 xl:grid-cols-3">
-        <div className="xl:col-span-2 xl:h-full">
-          <RealtimeGraph points={history} />
-        </div>
-        <div className="grid gap-4 xl:h-full xl:auto-rows-fr">
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 xl:flex xl:h-full xl:flex-col">
-            <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Incidents</h3>
-            <div className="mt-4 space-y-3 text-sm xl:flex-1">
-              <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2">
-                <span className="text-slate-400">Open</span>
-                <span className="font-semibold text-slate-100">{incidents.open}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2">
-                <span className="text-slate-400">Critical</span>
-                <span className="font-semibold text-rose-300">{incidents.critical}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2">
-                <span className="text-slate-400">Warning</span>
-                <span className="font-semibold text-amber-300">{incidents.warning}</span>
-              </div>
-              <div className="rounded-lg bg-slate-950/70 px-3 py-2">
-                <p className="text-xs uppercase tracking-wider text-slate-500">Last update</p>
-                <p className="mt-1 text-sm text-slate-300">{formatLocalDateTime(bundle?.overview.generated_at)} (local)</p>
-              </div>
-            </div>
-          </section>
+      <RealtimeGraph points={history} />
 
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 xl:flex xl:h-full xl:flex-col">
-            <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Queen Notes</h3>
-            <div className="mt-3 space-y-2 xl:flex-1">
-              {queenNotes.length === 0 ? (
-                <p className="rounded-lg bg-slate-950/70 px-3 py-2 text-xs text-slate-400">No notable notes in current window.</p>
-              ) : (
-                queenNotes.map((note, index) => (
-                  <article key={`${note.timestamp}-${index}`} className="rounded-lg bg-slate-950/70 px-3 py-2">
-                    <p className="text-[11px] text-slate-500">{formatLocalDateTime(note.timestamp)} (local)</p>
-                    <p className="mt-1 text-xs text-slate-200">{String(note.event ?? "").slice(0, 140)}</p>
-                  </article>
-                ))
-              )}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 xl:flex xl:h-full xl:flex-col">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Incidents</h3>
+          <div className="mt-4 space-y-3 text-sm xl:flex-1">
+            <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2">
+              <span className="text-slate-400">Open</span>
+              <span className="font-semibold text-slate-100">{incidents.open}</span>
             </div>
-          </section>
-        </div>
+            <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2">
+              <span className="text-slate-400">Critical</span>
+              <span className="font-semibold text-rose-300">{incidents.critical}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2">
+              <span className="text-slate-400">Warning</span>
+              <span className="font-semibold text-amber-300">{incidents.warning}</span>
+            </div>
+            <div className="rounded-lg bg-slate-950/70 px-3 py-2">
+              <p className="text-xs uppercase tracking-wider text-slate-500">Last update</p>
+              <p className="mt-1 text-sm text-slate-300">{formatLocalDateTime(bundle?.overview.generated_at)} (local)</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 xl:flex xl:h-full xl:flex-col">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Queen Notes</h3>
+          <div className="mt-3 space-y-2 xl:flex-1">
+            {queenNotes.length === 0 ? (
+              <p className="rounded-lg bg-slate-950/70 px-3 py-2 text-xs text-slate-400">No notable notes in current window.</p>
+            ) : (
+              queenNotes.map((note, index) => (
+                <article key={`${note.timestamp}-${index}`} className="rounded-lg bg-slate-950/70 px-3 py-2">
+                  <p className="text-[11px] text-slate-500">{formatLocalDateTime(note.timestamp)} (local)</p>
+                  <p className="mt-1 text-xs text-slate-200">{String(note.event ?? "").slice(0, 140)}</p>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
       </div>
 
       <section className="relative rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
