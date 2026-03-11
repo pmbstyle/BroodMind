@@ -185,7 +185,7 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
   const markerX = activeIndex !== null ? activeIndex * step : 0;
 
   return (
-    <section className="relative rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60">
+    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60 xl:flex xl:h-full xl:min-h-[31rem] xl:flex-col">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Realtime Signal</h3>
         <span className="text-xs text-slate-400">Last {points.length} samples</span>
@@ -193,72 +193,74 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
       <p className="mb-2 text-xs text-slate-500">
         Y-axis = shared metric count scale (integer counts, 0 to {yAxisMax}). X-axis = local browser time.
       </p>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="h-52 w-full rounded-lg bg-slate-950/80"
-        onMouseMove={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          if (rect.width <= 0 || points.length === 0) {
-            setHoverIndex(null);
-            return;
-          }
-          const ratio = (event.clientX - rect.left) / rect.width;
-          const clamped = Math.min(1, Math.max(0, ratio));
-          const nextIndex = Math.round(clamped * (points.length - 1));
-          setHoverIndex(nextIndex);
-        }}
-        onMouseLeave={() => setHoverIndex(null)}
-      >
-        {yTicks.map((tick) => {
-          const y = GRAPH_TOP_PAD + plotHeight - (tick / yAxisMax) * plotHeight;
-          return (
-          <line
-            key={tick}
-            x1={0}
-            x2={width}
-            y1={y}
-            y2={y}
-            stroke="#1e293b"
-            strokeWidth={1}
-          />
-        )})}
-        {yTicks.map((tick) => {
-          const y = GRAPH_TOP_PAD + plotHeight - (tick / yAxisMax) * plotHeight;
-          return (
-          <text
-            key={`label-${tick}`}
-            x={width - 8}
-            y={y - 4}
-            fill="#64748b"
-            fontSize="10"
-            textAnchor="end"
-          >
-            {tick}
+      <div className="relative mt-3 xl:flex xl:min-h-[20rem] xl:flex-1 xl:flex-col">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="h-52 w-full rounded-lg bg-slate-950/80 xl:h-full"
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            if (rect.width <= 0 || points.length === 0) {
+              setHoverIndex(null);
+              return;
+            }
+            const ratio = (event.clientX - rect.left) / rect.width;
+            const clamped = Math.min(1, Math.max(0, ratio));
+            const nextIndex = Math.round(clamped * (points.length - 1));
+            setHoverIndex(nextIndex);
+          }}
+          onMouseLeave={() => setHoverIndex(null)}
+        >
+          {yTicks.map((tick) => {
+            const y = GRAPH_TOP_PAD + plotHeight - (tick / yAxisMax) * plotHeight;
+            return (
+            <line
+              key={tick}
+              x1={0}
+              x2={width}
+              y1={y}
+              y2={y}
+              stroke="#1e293b"
+              strokeWidth={1}
+            />
+          )})}
+          {yTicks.map((tick) => {
+            const y = GRAPH_TOP_PAD + plotHeight - (tick / yAxisMax) * plotHeight;
+            return (
+            <text
+              key={`label-${tick}`}
+              x={width - 8}
+              y={y - 4}
+              fill="#64748b"
+              fontSize="10"
+              textAnchor="end"
+            >
+              {tick}
+            </text>
+          )})}
+          <text x={width - 8} y={height - 4} fill="#64748b" fontSize="10" textAnchor="end">
+            0
           </text>
-        )})}
-        <text x={width - 8} y={height - 4} fill="#64748b" fontSize="10" textAnchor="end">
-          0
-        </text>
-        <path d={workerLine} fill="none" stroke="#06b6d4" strokeWidth={3} strokeLinecap="round" />
-        <path d={queueLine} fill="none" stroke="#f59e0b" strokeWidth={2.5} strokeLinecap="round" />
-        <path d={queenLine} fill="none" stroke="#22c55e" strokeWidth={2.5} strokeLinecap="round" />
+          <path d={workerLine} fill="none" stroke="#06b6d4" strokeWidth={3} strokeLinecap="round" />
+          <path d={queueLine} fill="none" stroke="#f59e0b" strokeWidth={2.5} strokeLinecap="round" />
+          <path d={queenLine} fill="none" stroke="#22c55e" strokeWidth={2.5} strokeLinecap="round" />
+          {activePoint ? (
+            <>
+              <line x1={markerX} x2={markerX} y1={0} y2={height} stroke="#64748b" strokeWidth={1} strokeDasharray="5 4" />
+            </>
+          ) : null}
+        </svg>
         {activePoint ? (
-          <>
-            <line x1={markerX} x2={markerX} y1={0} y2={height} stroke="#64748b" strokeWidth={1} strokeDasharray="5 4" />
-          </>
-        ) : null}
-      </svg>
-      {activePoint ? (
-        <div className="pointer-events-none absolute right-6 top-16 rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs text-slate-200 shadow-xl">
+          <div className="pointer-events-none absolute right-4 top-4 rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs text-slate-200 shadow-xl">
             <p className="mb-1 text-[11px] text-slate-400">
-            {formatLocalDateTime(activePoint.at)}{" "}
-            ({tzLabel})
-          </p>
-          <p className="text-cyan-300">Workers: {activePoint.activeWorkers}</p>
-          <p className="text-amber-300">System queue: {activePoint.queueDepth}</p>
-          <p className="text-emerald-300">Queen queue: {activePoint.queenQueue}</p>
-        </div>
-      ) : null}
+              {formatLocalDateTime(activePoint.at)}{" "}
+              ({tzLabel})
+            </p>
+            <p className="text-cyan-300">Workers: {activePoint.activeWorkers}</p>
+            <p className="text-amber-300">System queue: {activePoint.queueDepth}</p>
+            <p className="text-emerald-300">Queen queue: {activePoint.queenQueue}</p>
+          </div>
+        ) : null}
+      </div>
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
         <span>{startLabel}</span>
         <span>
@@ -450,14 +452,14 @@ export function ControlCenterPage() {
         ))}
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-3">
-        <div className="xl:col-span-2">
+      <div className="grid items-stretch gap-5 xl:grid-cols-3">
+        <div className="xl:col-span-2 xl:h-full">
           <RealtimeGraph points={history} />
         </div>
-        <div className="grid gap-4">
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+        <div className="grid gap-4 xl:h-full xl:auto-rows-fr">
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 xl:flex xl:h-full xl:flex-col">
             <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Incidents</h3>
-            <div className="mt-4 space-y-3 text-sm">
+            <div className="mt-4 space-y-3 text-sm xl:flex-1">
               <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2">
                 <span className="text-slate-400">Open</span>
                 <span className="font-semibold text-slate-100">{incidents.open}</span>
@@ -477,9 +479,9 @@ export function ControlCenterPage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 xl:flex xl:h-full xl:flex-col">
             <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Queen Notes</h3>
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 space-y-2 xl:flex-1">
               {queenNotes.length === 0 ? (
                 <p className="rounded-lg bg-slate-950/70 px-3 py-2 text-xs text-slate-400">No notable notes in current window.</p>
               ) : (
