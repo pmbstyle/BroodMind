@@ -185,7 +185,7 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
   const markerX = activeIndex !== null ? activeIndex * step : 0;
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60 xl:flex xl:h-full xl:min-h-[31rem] xl:flex-col">
+    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60 xl:flex xl:h-full xl:flex-col">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">Realtime Signal</h3>
         <span className="text-xs text-slate-400">Last {points.length} samples</span>
@@ -193,10 +193,10 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
       <p className="mb-2 text-xs text-slate-500">
         Y-axis = shared metric count scale (integer counts, 0 to {yAxisMax}). X-axis = local browser time.
       </p>
-      <div className="relative mt-3 xl:flex xl:min-h-[20rem] xl:flex-1 xl:flex-col">
+      <div className="relative mt-3">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="h-52 w-full rounded-lg bg-slate-950/80 xl:h-full"
+          className="h-64 w-full rounded-lg bg-slate-950/80 xl:h-72"
           onMouseMove={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             if (rect.width <= 0 || points.length === 0) {
@@ -268,7 +268,7 @@ function RealtimeGraph({ points }: { points: MetricPoint[] }) {
         </span>
         <span>{endLabel}</span>
       </div>
-      <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-300">
+      <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-300 xl:mt-auto">
         <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />Workers</span>
         <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />System queue</span>
         <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />Queen queue</span>
