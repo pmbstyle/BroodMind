@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import base64
+import re
 import uuid
 from pathlib import Path
 from collections.abc import Awaitable, Callable
@@ -56,6 +57,11 @@ _ALWAYS_INCLUDE_TOOL_NAMES = {
     "get_worker_output_path",
     "stop_worker",
 }
+_TEXTUAL_TOOL_NAME_RE = re.compile(r"^(?:mcp__[\w-]+__)?[a-z][a-z0-9_]{1,63}$", re.IGNORECASE)
+_TEXTUAL_TOOL_PREVIEW_RE = re.compile(
+    r"^(?P<tool>(?:mcp__[\w-]+__)?[a-z][a-z0-9_]{1,63})(?P<rest>(?:,\s*[a-z_][a-z0-9_ -]{0,31}:\s*[^,\n]{1,200})+)$",
+    re.IGNORECASE,
+)
 
 
 async def route_or_reply(
@@ -259,6 +265,15 @@ async def route_or_reply(
 
                 content_raw = result.get("content", "")
                 tool_calls = result.get("tool_calls") or []
+                if not tool_calls and content_raw:
+                    recovered_call = _recover_textual_tool_call(content_raw, active_tool_specs)
+                    if recovered_call is not None:
+                        logger.warning(
+                            "Recovered textual tool invocation from model content",
+                            tool_name=recovered_call.get("function", {}).get("name"),
+                            raw_content=str(content_raw)[:200],
+                        )
+                        tool_calls = [recovered_call]
                 
                 if tool_calls:
                     had_tool_calls = True
@@ -670,6 +685,85 @@ async def _handle_queen_tool_call(call: dict, tools: list[ToolSpec], ctx: dict[s
             logger.debug("Queen tool result", tool_name=name, result_preview=f"{str(result)[:200]}...")
             return result
     return f"Unknown tool: {name}"
+
+
+def _recover_textual_tool_call(content: str, tools: list[ToolSpec]) -> dict[str, Any] | None:
+    """Recover a malformed tool invocation when the model emits tool syntax as plain text."""
+    raw = normalize_plain_text(content or "")
+    if not raw or "\n" in raw or len(raw) > 300:
+        return None
+
+    trimmed = re.sub(r"^[\s\W_]+", "", raw, flags=re.UNICODE)
+    trimmed = re.sub(r"[\s\W_]+$", "", trimmed, flags=re.UNICODE).strip()
+    if not trimmed:
+        return None
+
+    tool_by_name = {str(spec.name).lower(): spec for spec in tools}
+
+    if _TEXTUAL_TOOL_NAME_RE.fullmatch(trimmed):
+        spec = tool_by_name.get(trimmed.lower())
+        if spec is None:
+            return None
+        required = _required_tool_fields(spec)
+        if required:
+            return None
+        return {
+            "id": f"recovered-{spec.name}",
+            "type": "function",
+            "function": {"name": spec.name, "arguments": "{}"},
+        }
+
+    match = _TEXTUAL_TOOL_PREVIEW_RE.fullmatch(trimmed)
+    if not match:
+        return None
+
+    spec = tool_by_name.get(str(match.group("tool") or "").lower())
+    if spec is None:
+        return None
+
+    args = _parse_textual_tool_preview_args(match.group("rest") or "", spec)
+    if args is None:
+        return None
+
+    required = _required_tool_fields(spec)
+    if any(field not in args for field in required):
+        return None
+
+    return {
+        "id": f"recovered-{spec.name}",
+        "type": "function",
+        "function": {"name": spec.name, "arguments": json.dumps(args, ensure_ascii=False)},
+    }
+
+
+def _parse_textual_tool_preview_args(preview: str, spec: ToolSpec) -> dict[str, Any] | None:
+    args: dict[str, Any] = {}
+    properties = ((spec.parameters or {}).get("properties") or {}) if isinstance(spec.parameters, dict) else {}
+    alias_map = {"file": "path"}
+
+    for chunk in preview.split(","):
+        piece = chunk.strip()
+        if not piece or ":" not in piece:
+            continue
+        key_raw, value_raw = piece.split(":", 1)
+        key = key_raw.strip().lower().replace(" ", "_")
+        value = value_raw.strip()
+        if not key or not value:
+            continue
+        key = alias_map.get(key, key)
+        if properties and key not in properties:
+            return None
+        args[key] = value
+
+    return args or None
+
+
+def _required_tool_fields(spec: ToolSpec) -> set[str]:
+    params = spec.parameters if isinstance(spec.parameters, dict) else {}
+    required = params.get("required") or []
+    if not isinstance(required, list):
+        return set()
+    return {str(item) for item in required if str(item).strip()}
 
 
 async def _build_plan(

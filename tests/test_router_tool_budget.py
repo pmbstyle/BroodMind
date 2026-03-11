@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
-from broodmind.queen.router import _budget_tool_specs, _shrink_tool_specs_for_retry
+from broodmind.queen.router import (
+    _budget_tool_specs,
+    _recover_textual_tool_call,
+    _shrink_tool_specs_for_retry,
+)
 from broodmind.providers.base import Message
 from broodmind.tools.tools import get_tools
 from broodmind.tools.registry import ToolSpec
@@ -237,3 +241,50 @@ def test_plain_completion_can_stream_for_websocket(monkeypatch) -> None:
         assert queen.progress == [("partial", "partial text")]
 
     asyncio.run(scenario())
+
+
+def test_recover_textual_tool_name_without_args() -> None:
+    spec = ToolSpec(
+        name="check_schedule",
+        description="check schedule",
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        permission="self_control",
+        handler=lambda args, ctx: {"ok": True},
+    )
+
+    recovered = _recover_textual_tool_call("check_schedule", [spec])
+    assert recovered is not None
+    assert recovered["function"]["name"] == "check_schedule"
+    assert recovered["function"]["arguments"] == "{}"
+
+
+def test_recover_textual_tool_preview_with_file_alias() -> None:
+    spec = ToolSpec(
+        name="fs_read",
+        description="read file",
+        parameters={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        permission="filesystem_read",
+        handler=lambda args, ctx: {"ok": True},
+    )
+
+    recovered = _recover_textual_tool_call("fs_read, file: memory/2026-03-11.md", [spec])
+    assert recovered is not None
+    assert recovered["function"]["name"] == "fs_read"
+    assert recovered["function"]["arguments"] == '{"path": "memory/2026-03-11.md"}'
+
+
+def test_do_not_recover_human_text_wrapped_around_tool_name() -> None:
+    spec = ToolSpec(
+        name="check_schedule",
+        description="check schedule",
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        permission="self_control",
+        handler=lambda args, ctx: {"ok": True},
+    )
+
+    assert _recover_textual_tool_call("Checking schedule... check_schedule", [spec]) is None
