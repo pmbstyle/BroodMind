@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import structlog
 from dataclasses import dataclass, field
@@ -591,7 +592,20 @@ def _connection_hint(error: Exception) -> str:
 
 def _classify_mcp_call_error(error: Exception) -> dict[str, Any]:
     text = str(error).lower()
-    if "-32602" in text or "invalid tools/call result" in text or "structuredcontent" in text:
+    if "invalid arguments for tool" in text:
+        missing_fields = _extract_mcp_missing_argument_names(str(error))
+        field_suffix = ""
+        if missing_fields:
+            field_suffix = f" Missing required fields: {', '.join(missing_fields)}."
+        return {
+            "classification": "invalid_arguments",
+            "retryable": False,
+            "hint": (
+                "Remote MCP server rejected the tool arguments before execution."
+                f"{field_suffix}"
+            ),
+        }
+    if "invalid tools/call result" in text or "structuredcontent" in text:
         return {
             "classification": "schema_mismatch",
             "retryable": False,
@@ -626,6 +640,16 @@ def _classify_mcp_call_error(error: Exception) -> dict[str, Any]:
         "retryable": True,
         "hint": "MCP call failed with an unclassified error.",
     }
+
+
+def _extract_mcp_missing_argument_names(error_text: str) -> list[str]:
+    matches = re.findall(r'"path"\s*:\s*\[\s*"([^"]+)"\s*\]', error_text, flags=re.IGNORECASE)
+    unique: list[str] = []
+    for match in matches:
+        name = str(match).strip()
+        if name and name not in unique:
+            unique.append(name)
+    return unique
 
 
 def _alternate_tool_name(tool_name: str) -> str | None:

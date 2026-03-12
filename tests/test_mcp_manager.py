@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from broodmind.mcp.manager import MCPManager, MCPServerConfig
+from broodmind.mcp.manager import MCPManager, MCPServerConfig, _classify_mcp_call_error
 
 
 def test_mcp_manager_schedules_self_healing_reconnect(tmp_path, monkeypatch) -> None:
@@ -93,3 +93,44 @@ def test_mcp_manager_statuses_report_reconnecting_and_reason(tmp_path) -> None:
     assert payload["reconnecting"] is True
     assert payload["reason"] == "Background reconnect scheduled"
     assert payload["reconnect_attempts"] == 2
+
+
+def test_classify_mcp_invalid_arguments_preserves_missing_fields() -> None:
+    error = RuntimeError(
+        """MCP error -32602: Invalid arguments for tool analyze_image: [
+  {
+    "code": "invalid_type",
+    "expected": "string",
+    "received": "undefined",
+    "path": [
+      "image_source"
+    ],
+    "message": "Required"
+  },
+  {
+    "code": "invalid_type",
+    "expected": "string",
+    "received": "undefined",
+    "path": [
+      "prompt"
+    ],
+    "message": "Required"
+  }
+]"""
+    )
+
+    info = _classify_mcp_call_error(error)
+
+    assert info["classification"] == "invalid_arguments"
+    assert info["retryable"] is False
+    assert "image_source" in info["hint"]
+    assert "prompt" in info["hint"]
+
+
+def test_classify_mcp_schema_mismatch_stays_distinct() -> None:
+    error = RuntimeError("invalid tools/call result: structuredContent did not match schema")
+
+    info = _classify_mcp_call_error(error)
+
+    assert info["classification"] == "schema_mismatch"
+    assert "structuredContent" in info["hint"]
