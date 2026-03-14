@@ -17,9 +17,9 @@ from broodmind.runtime.memory.canon import CanonService
 from broodmind.runtime.memory.memchain import memchain_record
 from broodmind.runtime.memory.service import MemoryService
 from broodmind.runtime.scheduler.service import SchedulerService
-from broodmind.mcp.manager import MCPManager
+from broodmind.infrastructure.mcp.manager import MCPManager
 from broodmind.runtime.policy.engine import PolicyEngine
-from broodmind.providers.base import InferenceProvider
+from broodmind.infrastructure.providers.base import InferenceProvider
 from broodmind.browser.manager import get_browser_manager
 from broodmind.runtime.housekeeping import cleanup_workspace_tmp, rotate_canon_events
 from broodmind.infrastructure.logging import correlation_id_var
@@ -36,8 +36,8 @@ from broodmind.runtime.queen.router import (
     should_send_worker_followup,
 )
 from broodmind.runtime.metrics import update_component_gauges
-from broodmind.store.base import Store
-from broodmind.store.models import AuditEvent
+from broodmind.infrastructure.store.base import Store
+from broodmind.infrastructure.store.models import AuditEvent
 from broodmind.channels.telegram.approvals import ApprovalManager
 from broodmind.utils import is_control_response, should_suppress_user_delivery, utc_now
 from broodmind.runtime.workers.contracts import TaskRequest, WorkerResult
@@ -450,7 +450,7 @@ class Queen:
         
         # Update system status file if possible
         try:
-            from broodmind.config.settings import load_settings
+            from broodmind.infrastructure.config.settings import load_settings
             from broodmind.runtime.state import read_status, _status_path
             import json
 

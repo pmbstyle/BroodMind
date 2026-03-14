@@ -14,7 +14,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
 
-from broodmind.config.settings import Settings
+from broodmind.infrastructure.config.settings import Settings
 from broodmind.infrastructure.logging import correlation_id_var
 from broodmind.runtime.queen.core import Queen, QueenReply
 from broodmind.runtime.metrics import update_component_gauges

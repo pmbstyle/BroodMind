@@ -16,8 +16,8 @@ from typing import Any
 
 import httpx
 
-from broodmind.config.settings import load_settings
-from broodmind.providers.profile_resolver import resolve_litellm_profile
+from broodmind.infrastructure.config.settings import load_settings
+from broodmind.infrastructure.providers.profile_resolver import resolve_litellm_profile
 from broodmind.infrastructure.jsonl import read_jsonl_dicts
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from broodmind.providers.base import Message
+from broodmind.infrastructure.providers.base import Message
 from broodmind.runtime.queen.router import (
     _build_insufficient_evidence_response,
     _messages_to_text,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from broodmind.providers.base import Message
+from broodmind.infrastructure.providers.base import Message
 from broodmind.runtime.queen.router import _sanitize_messages_for_complete
 
 

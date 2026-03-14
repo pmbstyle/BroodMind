@@ -11,8 +11,8 @@ import structlog
 from broodmind.utils import utc_now
 
 if TYPE_CHECKING:
-    from broodmind.providers.embeddings import EmbeddingsProvider
-    from broodmind.store.base import Store
+    from broodmind.infrastructure.providers.embeddings import EmbeddingsProvider
+    from broodmind.infrastructure.store.base import Store
 
 
 logger = structlog.get_logger(__name__)

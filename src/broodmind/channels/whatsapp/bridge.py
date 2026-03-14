@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from broodmind.config.settings import Settings
+from broodmind.infrastructure.config.settings import Settings
 
 
 class WhatsAppBridgeError(RuntimeError):

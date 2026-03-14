@@ -12,7 +12,7 @@ import structlog
 from datetime import UTC, datetime
 from pathlib import Path
 
-from broodmind.store.models import WorkerTemplateRecord
+from broodmind.infrastructure.store.models import WorkerTemplateRecord
 
 logger = structlog.get_logger(__name__)
 _WORKER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")

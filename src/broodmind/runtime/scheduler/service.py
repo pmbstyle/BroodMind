@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from broodmind.store.base import Store
+from broodmind.infrastructure.store.base import Store
 from broodmind.utils import utc_now
 
 logger = structlog.get_logger(__name__)

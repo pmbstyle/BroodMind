@@ -4,7 +4,7 @@ import asyncio
 import json
 from datetime import UTC, datetime
 
-from broodmind.store.models import WorkerRecord, WorkerTemplateRecord
+from broodmind.infrastructure.store.models import WorkerRecord, WorkerTemplateRecord
 from broodmind.tools.workers.management import (
     _tool_start_workers_parallel,
     _tool_synthesize_worker_results,

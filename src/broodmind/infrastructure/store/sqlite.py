@@ -7,9 +7,9 @@ import threading
 from datetime import datetime, timedelta
 from typing import Any
 
-from broodmind.config.settings import Settings
-from broodmind.store.base import Store
-from broodmind.store.models import (
+from broodmind.infrastructure.config.settings import Settings
+from broodmind.infrastructure.store.base import Store
+from broodmind.infrastructure.store.models import (
     AuditEvent,
     IntentRecord,
     MemoryEntry,

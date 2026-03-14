@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from broodmind.channels import user_channel_label
-from broodmind.config.settings import Settings
+from broodmind.infrastructure.config.settings import Settings
 
 
 def _status_path(settings: Settings) -> Path:

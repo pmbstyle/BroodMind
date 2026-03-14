@@ -7,9 +7,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from broodmind.providers.embeddings import EmbeddingsProvider
-from broodmind.store.base import Store
-from broodmind.store.models import MemoryEntry
+from broodmind.infrastructure.providers.embeddings import EmbeddingsProvider
+from broodmind.infrastructure.store.base import Store
+from broodmind.infrastructure.store.models import MemoryEntry
 from broodmind.utils import utc_now
 
 _ASSERTION_RE = re.compile(

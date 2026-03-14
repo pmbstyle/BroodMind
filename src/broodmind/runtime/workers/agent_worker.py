@@ -21,8 +21,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from broodmind.config.settings import load_settings
-from broodmind.providers.litellm_provider import LiteLLMProvider
+from broodmind.infrastructure.config.settings import load_settings
+from broodmind.infrastructure.providers.litellm_provider import LiteLLMProvider
 from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, apply_tool_policy_pipeline
 from broodmind.tools.tools import get_tools
 from broodmind.worker_sdk.worker import Worker

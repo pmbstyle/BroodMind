@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from broodmind.providers.base import InferenceProvider, Message
+from broodmind.infrastructure.providers.base import InferenceProvider, Message
 
 # We need a JSON schema validator. `fastapi` depends on `pydantic`, which has
 # its own validation, but for arbitrary schemas, a dedicated library is better.

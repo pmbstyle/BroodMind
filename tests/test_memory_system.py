@@ -5,8 +5,8 @@ import uuid
 from pathlib import Path
 
 from broodmind.runtime.memory.canon import CanonService
-from broodmind.store.models import MemoryEntry
-from broodmind.store.sqlite import SQLiteStore
+from broodmind.infrastructure.store.models import MemoryEntry
+from broodmind.infrastructure.store.sqlite import SQLiteStore
 from broodmind.utils import utc_now
 
 

@@ -13,7 +13,7 @@ from typing import Any
 
 import structlog
 
-from broodmind.providers.base import InferenceProvider, Message
+from broodmind.infrastructure.providers.base import InferenceProvider, Message
 from broodmind.runtime.memory.service import MemoryService
 from broodmind.runtime.memory.canon import CanonService
 from broodmind.runtime.queen.prompt_builder import build_queen_prompt, build_bootstrap_context_prompt

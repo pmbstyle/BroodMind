@@ -5,7 +5,7 @@ import uuid
 from datetime import timedelta
 
 from broodmind.runtime.memory.service import MemoryService
-from broodmind.store.models import MemoryEntry
+from broodmind.infrastructure.store.models import MemoryEntry
 from broodmind.utils import utc_now
 
 

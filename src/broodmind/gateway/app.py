@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from fastapi import FastAPI
-from broodmind.config.settings import Settings
+from broodmind.infrastructure.config.settings import Settings
 from broodmind.gateway.dashboard import register_dashboard_routes
 from broodmind.gateway.ws import register_ws_routes
 from broodmind.runtime.queen.core import Queen

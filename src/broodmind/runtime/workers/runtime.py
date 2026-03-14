@@ -20,10 +20,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from broodmind.runtime.intents.types import ActionIntent
-from broodmind.mcp.manager import MCPManager
+from broodmind.infrastructure.mcp.manager import MCPManager
 from broodmind.runtime.policy.engine import PolicyEngine
-from broodmind.store.base import Store
-from broodmind.store.models import AuditEvent, WorkerRecord
+from broodmind.infrastructure.store.base import Store
+from broodmind.infrastructure.store.models import AuditEvent, WorkerRecord
 from broodmind.utils import utc_now
 from broodmind.runtime.workers.contracts import TaskRequest, WorkerResult, WorkerSpec
 from broodmind.runtime.workers.launcher import WorkerLauncher
@@ -518,7 +518,7 @@ class WorkerRuntime:
             if msg_type == "intent_request":
                 from broodmind.runtime.intents.registry import IntentValidationError, validate_intent
                 from broodmind.runtime.intents.types import IntentRequest
-                from broodmind.store.models import IntentRecord, PermitRecord
+                from broodmind.infrastructure.store.models import IntentRecord, PermitRecord
 
                 try:
                     req_data = payload.get("intent")

@@ -13,8 +13,8 @@ from broodmind.runtime.memory.memchain import memchain_verify
 if TYPE_CHECKING:
     from broodmind.runtime.memory.canon import CanonService
     from broodmind.runtime.memory.service import MemoryService
-    from broodmind.providers.base import Message
-    from broodmind.store.base import Store
+    from broodmind.infrastructure.providers.base import Message
+    from broodmind.infrastructure.store.base import Store
 
 
 _QUEEN_SYSTEM_PROMPT_CONTENT = ""
@@ -277,7 +277,7 @@ async def build_queen_prompt(
 ) -> list[Message]:
     """Assembles all the pieces into the final message list for the LLM."""
 
-    from broodmind.providers.base import Message
+    from broodmind.infrastructure.providers.base import Message
 
     system_prompt = await _load_system_prompt_file()
 

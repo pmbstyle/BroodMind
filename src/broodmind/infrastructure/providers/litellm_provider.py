@@ -13,9 +13,9 @@ from typing import Any
 
 from litellm import acompletion
 
-from broodmind.config.settings import Settings
-from broodmind.providers.base import Message
-from broodmind.providers.profile_resolver import resolve_litellm_profile
+from broodmind.infrastructure.config.settings import Settings
+from broodmind.infrastructure.providers.base import Message
+from broodmind.infrastructure.providers.profile_resolver import resolve_litellm_profile
 
 logger = logging.getLogger(__name__)
 

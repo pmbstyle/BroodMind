@@ -5,7 +5,7 @@ import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from broodmind.store.models import WorkerTemplateRecord
+from broodmind.infrastructure.store.models import WorkerTemplateRecord
 from broodmind.tools.workers.management import _select_worker_template, _tool_start_worker
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol
 
-from broodmind.store.models import (
+from broodmind.infrastructure.store.models import (
     AuditEvent,
     IntentRecord,
     MemoryEntry,

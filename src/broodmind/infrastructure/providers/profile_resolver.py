@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from broodmind.config.settings import Settings
-from broodmind.providers.catalog import ProviderCatalogEntry, get_provider_catalog_entry
+from broodmind.infrastructure.config.settings import Settings
+from broodmind.infrastructure.providers.catalog import ProviderCatalogEntry, get_provider_catalog_entry
 
 
 @dataclass(frozen=True)

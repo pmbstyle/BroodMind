@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import os
 
-from broodmind.config.settings import Settings
-from broodmind.mcp.manager import MCPManager
+from broodmind.infrastructure.config.settings import Settings
+from broodmind.infrastructure.mcp.manager import MCPManager
 from broodmind.runtime.memory.canon import CanonService
 from broodmind.runtime.memory.service import MemoryService
 from broodmind.runtime.policy.engine import PolicyEngine
-from broodmind.providers.litellm_provider import LiteLLMProvider
-from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
+from broodmind.infrastructure.providers.litellm_provider import LiteLLMProvider
+from broodmind.infrastructure.providers.openai_embeddings import OpenAIEmbeddingsProvider
 from broodmind.runtime.queen.core import Queen
 from broodmind.runtime.scheduler.service import SchedulerService
-from broodmind.store.sqlite import SQLiteStore
+from broodmind.infrastructure.store.sqlite import SQLiteStore
 from broodmind.channels.telegram.approvals import ApprovalManager
 from broodmind.tools.skills.management import ensure_skills_layout
 from broodmind.runtime.workers.launcher_factory import build_launcher

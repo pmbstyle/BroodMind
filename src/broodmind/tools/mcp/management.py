@@ -4,7 +4,7 @@ import json
 import structlog
 from typing import Any, Dict
 
-from broodmind.mcp.manager import MCPServerConfig
+from broodmind.infrastructure.mcp.manager import MCPServerConfig
 from broodmind.tools.registry import ToolSpec
 
 logger = structlog.get_logger(__name__)

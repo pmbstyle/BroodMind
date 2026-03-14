@@ -8,8 +8,8 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
-from broodmind.config.settings import Settings
-from broodmind.providers.base import Message
+from broodmind.infrastructure.config.settings import Settings
+from broodmind.infrastructure.providers.base import Message
 
 logger = logging.getLogger(__name__)
 

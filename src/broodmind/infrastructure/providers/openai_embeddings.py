@@ -4,7 +4,7 @@ import logging
 
 import httpx
 
-from broodmind.config.settings import Settings
+from broodmind.infrastructure.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 

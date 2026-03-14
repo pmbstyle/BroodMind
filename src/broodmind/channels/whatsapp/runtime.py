@@ -6,7 +6,7 @@ from typing import Any
 import structlog
 
 from broodmind.runtime.app import build_queen
-from broodmind.config.settings import Settings
+from broodmind.infrastructure.config.settings import Settings
 from broodmind.runtime.queen.core import Queen
 from broodmind.runtime.metrics import update_component_gauges
 from broodmind.runtime.state import update_last_message

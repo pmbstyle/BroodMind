@@ -9,7 +9,7 @@ from broodmind.runtime.queen.router import (
     _sanitize_messages_for_complete,
     _shrink_tool_specs_for_retry,
 )
-from broodmind.providers.base import Message
+from broodmind.infrastructure.providers.base import Message
 from broodmind.tools.tools import get_tools
 from broodmind.tools.registry import ToolSpec
 

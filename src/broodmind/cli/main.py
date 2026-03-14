@@ -22,10 +22,10 @@ from rich.table import Table
 
 from broodmind.channels import normalize_user_channel, user_channel_label
 from broodmind.cli.branding import print_banner
-from broodmind.config.settings import Settings, load_settings
+from broodmind.infrastructure.config.settings import Settings, load_settings
 from broodmind.gateway.app import build_app
 from broodmind.infrastructure.logging import configure_logging
-from broodmind.providers.profile_resolver import resolve_litellm_profile
+from broodmind.infrastructure.providers.profile_resolver import resolve_litellm_profile
 from broodmind.runtime.metrics import read_metrics_snapshot
 from broodmind.runtime.state import (
     is_pid_running,
@@ -34,7 +34,7 @@ from broodmind.runtime.state import (
     read_status,
     write_start_status,
 )
-from broodmind.store.sqlite import SQLiteStore
+from broodmind.infrastructure.store.sqlite import SQLiteStore
 from broodmind.channels.whatsapp.bridge import WhatsAppBridgeController, WhatsAppBridgeError
 from broodmind.channels.whatsapp.ids import parse_allowed_whatsapp_numbers
 from broodmind.channels.whatsapp.runtime import WhatsAppRuntime
