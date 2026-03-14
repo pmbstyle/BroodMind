@@ -6,7 +6,7 @@ import os
 import structlog
 from aiogram import Bot, Dispatcher
 
-from broodmind.app_runtime import build_queen
+from broodmind.runtime.app import build_queen
 from broodmind.config.settings import Settings
 from broodmind.queen.core import Queen, QueenReply
 from broodmind.channels.telegram.approvals import ApprovalManager

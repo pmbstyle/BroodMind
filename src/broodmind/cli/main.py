@@ -24,10 +24,10 @@ from broodmind.channels import normalize_user_channel, user_channel_label
 from broodmind.cli.branding import print_banner
 from broodmind.config.settings import Settings, load_settings
 from broodmind.gateway.app import build_app
-from broodmind.logging_config import configure_logging
+from broodmind.infrastructure.logging import configure_logging
 from broodmind.providers.profile_resolver import resolve_litellm_profile
-from broodmind.runtime_metrics import read_metrics_snapshot
-from broodmind.state import (
+from broodmind.runtime.metrics import read_metrics_snapshot
+from broodmind.runtime.state import (
     is_pid_running,
     list_broodmind_runtime_pids,
     pid_command_line,

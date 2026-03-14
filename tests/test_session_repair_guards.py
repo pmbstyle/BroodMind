@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from broodmind.jsonl_guard import read_jsonl_dicts
+from broodmind.infrastructure.jsonl import read_jsonl_dicts
 from broodmind.workers.runtime import _repair_worker_result_payload
 
 

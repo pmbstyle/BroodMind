@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from broodmind.runtime_metrics import update_component_gauges
+from broodmind.runtime.metrics import update_component_gauges
 
 # Registry for background processes: {session_id: {"process": Popen, "start_time": float, "buffer": list}}
 _PROCESS_REGISTRY: dict[str, dict[str, Any]] = {}

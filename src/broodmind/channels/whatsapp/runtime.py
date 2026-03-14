@@ -5,11 +5,11 @@ from typing import Any
 
 import structlog
 
-from broodmind.app_runtime import build_queen
+from broodmind.runtime.app import build_queen
 from broodmind.config.settings import Settings
 from broodmind.queen.core import Queen
-from broodmind.runtime_metrics import update_component_gauges
-from broodmind.state import update_last_message
+from broodmind.runtime.metrics import update_component_gauges
+from broodmind.runtime.state import update_last_message
 from broodmind.utils import should_suppress_user_delivery
 from broodmind.channels.whatsapp.bridge import WhatsAppBridgeController
 from broodmind.channels.whatsapp.ids import (

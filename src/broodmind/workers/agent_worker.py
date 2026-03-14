@@ -223,7 +223,7 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 
 async def run_agent_worker(spec_path: str) -> None:
     """Main entry point for simplified agent worker."""
-    from broodmind.logging_config import correlation_id_var
+        from broodmind.infrastructure.logging import correlation_id_var
 
     worker = Worker.from_spec_file(spec_path)
     base_dir = Path(spec_path).parent

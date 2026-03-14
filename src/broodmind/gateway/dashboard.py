@@ -17,8 +17,8 @@ from pydantic import BaseModel, ConfigDict
 
 from broodmind.channels import normalize_user_channel, user_channel_label
 from broodmind.config.settings import Settings
-from broodmind.runtime_metrics import read_metrics_snapshot
-from broodmind.state import is_pid_running, read_status
+from broodmind.runtime.metrics import read_metrics_snapshot
+from broodmind.runtime.state import is_pid_running, read_status
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.store.models import AuditEvent, WorkerRecord
 

@@ -6,22 +6,22 @@ import os
 from pathlib import Path
 
 from broodmind.memory.memchain import memchain_init, memchain_record, memchain_status, memchain_verify
-from broodmind.tools.browser_tools import (
+from broodmind.tools.browser.actions import (
     browser_click,
     browser_close,
     browser_open,
     browser_snapshot,
     browser_type,
 )
-from broodmind.tools.canon_tools import manage_canon, search_canon
-from broodmind.tools.download_file import download_file
-from broodmind.tools.exec_run import exec_run
-from broodmind.tools.experiments_tools import queen_experiment_log
-from broodmind.tools.fetch_plan import fetch_plan_tool
-from broodmind.tools.filesystem import fs_delete, fs_list, fs_move, fs_read, fs_write
-from broodmind.tools.llm_task import run_llm_subtask
-from broodmind.tools.skills_tools import get_registered_skill_tools, get_skill_management_tools
-from broodmind.tools.ops_tools import (
+from broodmind.tools.memory.canon import manage_canon, search_canon
+from broodmind.tools.filesystem.download import download_file
+from broodmind.tools.ops.exec_run import exec_run
+from broodmind.tools.memory.experiments import queen_experiment_log
+from broodmind.tools.web.plan import fetch_plan_tool
+from broodmind.tools.filesystem.files import fs_delete, fs_list, fs_move, fs_read, fs_write
+from broodmind.tools.llm.subtask import run_llm_subtask
+from broodmind.tools.skills.management import get_registered_skill_tools, get_skill_management_tools
+from broodmind.tools.ops.management import (
     artifact_collect,
     config_audit,
     coverage_report,
@@ -41,10 +41,10 @@ from broodmind.tools.ops_tools import (
     test_run,
 )
 from broodmind.tools.registry import ToolSpec
-from broodmind.tools.web_fetch import markdown_new_fetch, web_fetch
-from broodmind.tools.web_search import web_search
-from broodmind.tools.worker_tools import get_worker_tools
-from broodmind.tools.mcp_tools import get_mcp_mgmt_tools
+from broodmind.tools.web.fetch import markdown_new_fetch, web_fetch
+from broodmind.tools.web.search import web_search
+from broodmind.tools.workers.management import get_worker_tools
+from broodmind.tools.mcp.management import get_mcp_mgmt_tools
 
 from broodmind.utils import utc_now
 import structlog

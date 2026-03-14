@@ -4,8 +4,8 @@ import json
 import time
 from typing import Any
 
-from broodmind.tools.browser_tools import browser_close, browser_open, browser_snapshot
-from broodmind.tools.web_fetch import markdown_new_fetch, web_fetch
+from broodmind.tools.browser.actions import browser_close, browser_open, browser_snapshot
+from broodmind.tools.web.fetch import markdown_new_fetch, web_fetch
 
 
 async def fetch_plan_tool(args: dict[str, Any], ctx: dict[str, Any]) -> str:
@@ -223,4 +223,3 @@ def _bounded_int(value: Any, *, default: int, low: int, high: int) -> int:
 
 def _to_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
-

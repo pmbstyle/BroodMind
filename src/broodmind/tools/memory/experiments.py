@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from broodmind.jsonl_guard import read_jsonl_dicts
+from broodmind.infrastructure.jsonl import read_jsonl_dicts
 from broodmind.utils import utc_now
 
 

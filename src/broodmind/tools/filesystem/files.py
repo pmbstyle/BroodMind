@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from broodmind.tools.path_safety import WorkspacePathError, resolve_workspace_path
+from broodmind.tools.filesystem.path_safety import WorkspacePathError, resolve_workspace_path
 
 
 def fs_read(args: dict[str, Any], base_dir: Path) -> str:

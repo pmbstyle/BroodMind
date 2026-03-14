@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 
 from broodmind.queen.core import Queen
-from broodmind.tools.ops_tools import docker_compose_control, test_run
-from broodmind.tools.worker_tools import _tool_create_worker_template
+from broodmind.tools.ops.management import docker_compose_control, test_run
+from broodmind.tools.workers.management import _tool_create_worker_template
 from broodmind.workers.contracts import WorkerResult
+import broodmind.tools.ops.management as ops_tools
 
 
 def test_test_run_rejects_shell_chaining(tmp_path: Path) -> None:
@@ -45,8 +46,6 @@ def test_docker_exec_preserves_quoted_args(monkeypatch, tmp_path: Path) -> None:
     def fake_run_command(command: list[str], cwd: Path | None = None, timeout_seconds: int = 30):
         captured[:] = command
         return 0, "ok", ""
-
-    import broodmind.tools.ops_tools as ops_tools
 
     monkeypatch.setattr(ops_tools, "_run_command", fake_run_command)
     monkeypatch.setenv("BROODMIND_ALLOWED_SERVICES", "api")

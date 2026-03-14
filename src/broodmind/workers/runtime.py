@@ -441,7 +441,7 @@ class WorkerRuntime:
                     arguments = {}
 
                 try:
-                    from broodmind.tools.worker_tools import get_worker_tools
+                    from broodmind.tools.workers.management import get_worker_tools
 
                     specs = {t.name: t for t in get_worker_tools()}
                     spec_tool = specs.get(tool_name)

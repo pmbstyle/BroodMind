@@ -18,7 +18,7 @@ import httpx
 
 from broodmind.config.settings import load_settings
 from broodmind.providers.profile_resolver import resolve_litellm_profile
-from broodmind.jsonl_guard import read_jsonl_dicts
+from broodmind.infrastructure.jsonl import read_jsonl_dicts
 
 
 def service_health(args: dict[str, Any], ctx: dict[str, Any]) -> str:

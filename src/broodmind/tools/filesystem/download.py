@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from broodmind.tools.path_safety import WorkspacePathError, resolve_workspace_path
+from broodmind.tools.filesystem.path_safety import WorkspacePathError, resolve_workspace_path
 
 
 async def download_file(args: dict[str, Any], ctx: dict[str, Any]) -> str:

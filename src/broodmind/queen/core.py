@@ -21,8 +21,8 @@ from broodmind.mcp.manager import MCPManager
 from broodmind.policy.engine import PolicyEngine
 from broodmind.providers.base import InferenceProvider
 from broodmind.browser.manager import get_browser_manager
-from broodmind.housekeeping import cleanup_workspace_tmp, rotate_canon_events
-from broodmind.logging_config import correlation_id_var
+from broodmind.runtime.housekeeping import cleanup_workspace_tmp, rotate_canon_events
+from broodmind.infrastructure.logging import correlation_id_var
 from broodmind.queen.prompt_builder import (
     build_bootstrap_context_prompt,
     build_queen_prompt,
@@ -35,7 +35,7 @@ from broodmind.queen.router import (
     should_force_worker_followup,
     should_send_worker_followup,
 )
-from broodmind.runtime_metrics import update_component_gauges
+from broodmind.runtime.metrics import update_component_gauges
 from broodmind.store.base import Store
 from broodmind.store.models import AuditEvent
 from broodmind.channels.telegram.approvals import ApprovalManager
@@ -451,8 +451,9 @@ class Queen:
         # Update system status file if possible
         try:
             from broodmind.config.settings import load_settings
-            from broodmind.state import read_status, _status_path
+            from broodmind.runtime.state import read_status, _status_path
             import json
+
             settings = load_settings()
             status_data = read_status(settings) or {}
             status_data["active_channel"] = "WebSocket" if is_ws else "Telegram"
@@ -517,7 +518,8 @@ class Queen:
                 logger.exception("Periodic worker cleanup failed")
 
     async def _periodic_metrics_publish(self, interval_seconds: int):
-        from broodmind.runtime_metrics import update_component_gauges
+        from broodmind.runtime.metrics import update_component_gauges
+
         while True:
             await asyncio.sleep(interval_seconds)
             try:

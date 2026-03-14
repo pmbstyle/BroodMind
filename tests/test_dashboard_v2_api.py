@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from broodmind.config.settings import Settings
 from broodmind.gateway.app import build_app
 from broodmind.store.sqlite import SQLiteStore
-from broodmind.state import write_start_status
+from broodmind.runtime.state import write_start_status
 from broodmind.store.models import WorkerRecord
 from broodmind.utils import utc_now
 
