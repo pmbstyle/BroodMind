@@ -18,6 +18,11 @@ const DisconnectReason = baileys.DisconnectReason ?? baileys.default?.Disconnect
 const fetchLatestBaileysVersion =
   baileys.fetchLatestBaileysVersion ?? baileys.default?.fetchLatestBaileysVersion;
 const useMultiFileAuthState = baileys.useMultiFileAuthState ?? baileys.default?.useMultiFileAuthState;
+const downloadMediaMessage =
+  baileys.downloadMediaMessage ?? baileys.default?.downloadMediaMessage;
+const getContentType =
+  baileys.getContentType ?? baileys.default?.getContentType;
+const bridgeLogger = pino({ level: "silent" });
 
 if (
   typeof makeWASocket !== "function" ||
@@ -109,6 +114,41 @@ function extractText(message) {
   );
 }
 
+async function extractImagePayload(item) {
+  if (!item?.message || !sock || typeof downloadMediaMessage !== "function") {
+    return null;
+  }
+  const contentType =
+    typeof getContentType === "function"
+      ? getContentType(item.message)
+      : (item.message.imageMessage ? "imageMessage" : "");
+  if (contentType !== "imageMessage") {
+    return null;
+  }
+  try {
+    const buffer = await downloadMediaMessage(
+      item,
+      "buffer",
+      {},
+      {
+        logger: bridgeLogger,
+        reuploadRequest: sock.updateMediaMessage,
+      }
+    );
+    if (!buffer || !buffer.length) {
+      return null;
+    }
+    const mimeType = item.message?.imageMessage?.mimetype || "image/jpeg";
+    return {
+      imageMimeType: mimeType,
+      imageDataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+    };
+  } catch (error) {
+    console.error("failed to download inbound whatsapp image", error);
+    return null;
+  }
+}
+
 async function bootstrapSocket() {
   await ensureAuthDir();
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
@@ -176,8 +216,9 @@ async function bootstrapSocket() {
       const actualSender = senderFromJid(senderJid);
       const conversation = sender;
       const text = extractText(item.message).trim();
+      const imagePayload = await extractImagePayload(item);
       const selfChat = Boolean(fromMe && selfNumber && conversation && selfNumber === conversation);
-      if (!actualSender || !conversation || !text) continue;
+      if (!actualSender || !conversation || (!text && !imagePayload)) continue;
       await postInbound({
         sender: actualSender,
         conversation,
@@ -187,6 +228,7 @@ async function bootstrapSocket() {
         remoteJid,
         text,
         messageId,
+        ...imagePayload,
       });
     }
   });

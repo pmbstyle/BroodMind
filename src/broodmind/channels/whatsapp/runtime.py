@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import os
+import uuid
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -90,8 +94,9 @@ class WhatsAppRuntime:
         from_me = bool(payload.get("fromMe"))
         self_chat = bool(payload.get("selfChat"))
         text = str(payload.get("text", "") or "").strip()
-        if not sender or not text:
-            return {"accepted": False, "reason": "missing_sender_or_text"}
+        images, saved_file_paths = self._extract_images(payload)
+        if not sender or (not text and not images):
+            return {"accepted": False, "reason": "missing_sender_or_content"}
         if from_me and not self._is_personal_mode():
             logger.debug("Ignoring WhatsApp fromMe message outside personal mode", sender=sender, conversation=conversation)
             return {"accepted": False, "reason": "from_me_ignored"}
@@ -117,7 +122,12 @@ class WhatsAppRuntime:
         lock = self._lock_by_chat_id.setdefault(chat_id, asyncio.Lock())
 
         async with lock:
-            reply = await self.queen.handle_message(text, chat_id)
+            reply = await self.queen.handle_message(
+                text,
+                chat_id,
+                images=images,
+                saved_file_paths=saved_file_paths,
+            )
         update_last_message(self.settings)
         immediate = getattr(reply, "immediate", "")
         if immediate and not should_suppress_user_delivery(immediate):
@@ -142,6 +152,43 @@ class WhatsAppRuntime:
 
     def _is_personal_mode(self) -> bool:
         return str(getattr(self.settings, "whatsapp_mode", "separate") or "separate").strip().lower() == "personal"
+
+    def _extract_images(self, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+        image_data_url = str(payload.get("imageDataUrl", "") or "").strip()
+        if not image_data_url:
+            return [], []
+
+        mime_type = str(payload.get("imageMimeType", "") or "").strip() or "image/jpeg"
+        try:
+            _, b64_payload = image_data_url.split(",", 1)
+        except ValueError:
+            return [], []
+
+        try:
+            binary = base64.b64decode(b64_payload)
+        except Exception:
+            logger.warning("Failed to decode inbound WhatsApp image payload")
+            return [], []
+
+        workspace_root = Path(os.getenv("BROODMIND_WORKSPACE_DIR", str(self.settings.workspace_dir))).resolve()
+        image_dir = workspace_root / "tmp" / "whatsapp_images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = ".jpg"
+        lowered_mime = mime_type.lower()
+        if "png" in lowered_mime:
+            suffix = ".png"
+        elif "webp" in lowered_mime:
+            suffix = ".webp"
+
+        file_path = (image_dir / f"img_{uuid.uuid4()}{suffix}").resolve()
+        try:
+            file_path.write_bytes(binary)
+        except Exception:
+            logger.exception("Failed to persist inbound WhatsApp image", path=str(file_path))
+            return [], []
+
+        return [image_data_url], [str(file_path)]
 
 
 def _chunk_text(text: str, limit: int) -> list[str]:

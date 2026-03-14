@@ -56,6 +56,7 @@ def test_queen_passes_approval_requester_to_runtime(monkeypatch) -> None:
         chat_id: int,
         bootstrap_context: str,
         show_typing: bool = True,
+        saved_file_paths=None,
     ):
         return "ok"
 

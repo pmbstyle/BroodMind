@@ -1133,6 +1133,7 @@ class Queen:
         show_typing: bool = True,
         is_ws: bool = False,
         images: list[str] | None = None,
+        saved_file_paths: list[str] | None = None,
         persist_to_memory: bool = True,
         track_progress: bool = True,
         include_wakeup: bool = True,
@@ -1169,6 +1170,7 @@ class Queen:
             route_kwargs: dict[str, Any] = {
                 "show_typing": show_typing,
                 "images": images,
+                "saved_file_paths": saved_file_paths,
                 "include_wakeup": include_wakeup,
             }
             while True:

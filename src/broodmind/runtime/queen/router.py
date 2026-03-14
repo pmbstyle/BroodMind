@@ -101,6 +101,7 @@ async def route_or_reply(
     internal_followup: bool = False,
     show_typing: bool = True,
     images: list[str] | None = None,
+    saved_file_paths: list[str] | None = None,
     include_wakeup: bool = True,
 ) -> str:
     """Core routing logic: decide whether to use tools or reply to user."""
@@ -124,6 +125,7 @@ async def route_or_reply(
             bootstrap_context=bootstrap_context,
             is_ws=is_ws,
             images=images,
+            saved_file_paths=saved_file_paths,
             wake_notice=wake_notice,
         )
         if not internal_followup:

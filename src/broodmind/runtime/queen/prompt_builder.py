@@ -273,6 +273,7 @@ async def build_queen_prompt(
     bootstrap_context: str,
     is_ws: bool = False,
     images: list[str] | None = None,
+    saved_file_paths: list[str] | None = None,
     wake_notice: str = "",
 ) -> list[Message]:
     """Assembles all the pieces into the final message list for the LLM."""
@@ -358,7 +359,22 @@ async def build_queen_prompt(
             messages.append(Message(role=role, content=content))
     
     if images:
-        text_content = user_text if user_text.strip() else "User uploaded an image."
+        text_segments: list[str] = []
+        if user_text.strip():
+            text_segments.append(user_text.strip())
+        else:
+            text_segments.append("User uploaded an image.")
+
+        normalized_paths = [str(path).strip() for path in (saved_file_paths or []) if str(path).strip()]
+        if normalized_paths:
+            path_lines = "\n".join(f"- {path}" for path in normalized_paths)
+            text_segments.append(
+                "Image received and saved locally for tool-based inspection.\n"
+                f"{path_lines}\n"
+                "If you need filesystem or vision tools, use these exact absolute paths."
+            )
+
+        text_content = "\n\n".join(segment for segment in text_segments if segment)
         content_blocks = [{"type": "text", "text": text_content}]
         for img in images:
             content_blocks.append({"type": "image_url", "image_url": {"url": img, "detail": "auto"}})

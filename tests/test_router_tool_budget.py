@@ -213,6 +213,64 @@ def test_route_retries_image_message_with_saved_file_paths(monkeypatch, tmp_path
     asyncio.run(scenario())
 
 
+def test_route_passes_saved_file_paths_into_prompt(monkeypatch) -> None:
+    class DummyProvider:
+        async def complete(self, messages, **kwargs):
+            return "Looks good."
+
+        async def complete_stream(self, messages, *, on_partial, **kwargs):
+            raise AssertionError("streaming should not be used in this test")
+
+    class DummyMemory:
+        async def add_message(self, role, content, metadata=None):
+            return None
+
+    class DummyQueen:
+        store = object()
+        canon = object()
+        internal_progress_send = None
+        is_ws_active = False
+
+        async def set_typing(self, chat_id: int, active: bool) -> None:
+            return None
+
+        async def set_thinking(self, active: bool) -> None:
+            return None
+
+        def peek_context_wakeup(self, chat_id: int) -> str:
+            return ""
+
+    captured_kwargs = {}
+
+    async def fake_build_queen_prompt(**kwargs):
+        captured_kwargs.update(kwargs)
+        return [Message(role="user", content=str(kwargs["user_text"]))]
+
+    async def fake_build_plan(provider, messages, has_tools):
+        return None
+
+    import broodmind.runtime.queen.router as router
+
+    monkeypatch.setattr(router, "build_queen_prompt", fake_build_queen_prompt)
+    monkeypatch.setattr(router, "_build_plan", fake_build_plan)
+
+    async def scenario() -> None:
+        response = await router.route_or_reply(
+            DummyQueen(),
+            DummyProvider(),
+            DummyMemory(),
+            "what is in this image?",
+            123,
+            "",
+            images=["data:image/jpeg;base64,SGVsbG8="],
+            saved_file_paths=["/tmp/telegram_images/img_test.jpg"],
+        )
+        assert response == "Looks good."
+        assert captured_kwargs["saved_file_paths"] == ["/tmp/telegram_images/img_test.jpg"]
+
+    asyncio.run(scenario())
+
+
 def test_plain_completion_does_not_stream_for_telegram(monkeypatch) -> None:
     class DummyProvider:
         async def complete(self, messages, **kwargs):

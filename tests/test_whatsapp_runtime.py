@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import broodmind.channels.whatsapp.runtime as whatsapp_runtime_module
@@ -33,15 +34,15 @@ class _FakeReply:
 
 class _FakeQueen:
     def __init__(self) -> None:
-        self.handled: list[tuple[str, int]] = []
+        self.handled: list[dict] = []
         self.initialized: list[int] = []
         self.internal_send = None
 
     async def initialize_system(self, *, bot=None, allowed_chat_ids=None) -> None:
         self.initialized = list(allowed_chat_ids or [])
 
-    async def handle_message(self, text: str, chat_id: int):
-        self.handled.append((text, chat_id))
+    async def handle_message(self, text: str, chat_id: int, **kwargs):
+        self.handled.append({"text": text, "chat_id": chat_id, "kwargs": kwargs})
         return _FakeReply("hello back")
 
     async def stop_background_tasks(self) -> None:
@@ -143,5 +144,43 @@ def test_whatsapp_runtime_ignores_from_me_non_self_chat(monkeypatch) -> None:
         assert result == {"accepted": False, "reason": "not_self_chat"}
         assert fake_queen.handled == []
         assert runtime.bridge.sent == []
+
+    asyncio.run(scenario())
+
+
+def test_whatsapp_runtime_accepts_image_only_payload_and_saves_path(monkeypatch, tmp_path) -> None:
+    fake_queen = _FakeQueen()
+    monkeypatch.setattr(whatsapp_runtime_module, "build_queen", lambda settings: fake_queen)
+    monkeypatch.setattr(whatsapp_runtime_module, "WhatsAppBridgeController", _FakeBridgeController)
+    monkeypatch.setattr(whatsapp_runtime_module, "update_component_gauges", lambda *args, **kwargs: None)
+    monkeypatch.setattr(whatsapp_runtime_module, "update_last_message", lambda *args, **kwargs: None)
+
+    settings = _make_settings(mode="personal", allowed_numbers="+15551234567")
+    settings.workspace_dir = tmp_path
+    runtime = WhatsAppRuntime(settings)
+    runtime.attach_queen_output()
+
+    async def scenario() -> None:
+        result = await runtime.handle_inbound(
+            {
+                "sender": "+15551234567",
+                "conversation": "+15551234567",
+                "self": "+15551234567",
+                "fromMe": True,
+                "selfChat": True,
+                "text": "",
+                "imageMimeType": "image/jpeg",
+                "imageDataUrl": "data:image/jpeg;base64,SGVsbG8=",
+            }
+        )
+        assert result["accepted"] is True
+        handled = fake_queen.handled[-1]
+        assert handled["text"] == ""
+        assert handled["kwargs"]["images"] == ["data:image/jpeg;base64,SGVsbG8="]
+        saved_paths = handled["kwargs"]["saved_file_paths"]
+        assert len(saved_paths) == 1
+        assert saved_paths[0].endswith(".jpg")
+        assert Path(saved_paths[0]).is_file()
+        assert str(tmp_path) in saved_paths[0]
 
     asyncio.run(scenario())

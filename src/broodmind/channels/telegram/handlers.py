@@ -6,6 +6,8 @@ import re
 import structlog
 import uuid
 import asyncio
+import os
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import telegramify_markdown
@@ -247,19 +249,28 @@ def register_handlers(
         # 1. Extract text and images
         text = message.text or message.caption or ""
         images: list[str] = []
+        saved_file_paths: list[str] = []
 
         if message.photo:
             try:
                 # Use the largest available photo size
                 photo = message.photo[-1]
                 logger.debug("Downloading photo", file_id=photo.file_id, width=photo.width, height=photo.height)
-                
+
                 with io.BytesIO() as buffer:
                     await bot.download(photo, destination=buffer)
-                    buffer.seek(0)
-                    b64_data = base64.b64encode(buffer.read()).decode("utf-8")
-                    # Assume JPEG for Telegram photos
-                    images.append(f"data:image/jpeg;base64,{b64_data}")
+                    payload = buffer.getvalue()
+
+                workspace_dir = Path(os.getenv("BROODMIND_WORKSPACE_DIR", "workspace")).resolve()
+                img_dir = workspace_dir / "tmp" / "telegram_images"
+                img_dir.mkdir(parents=True, exist_ok=True)
+                file_path = (img_dir / f"img_{uuid.uuid4()}.jpg").resolve()
+                file_path.write_bytes(payload)
+                saved_file_paths.append(str(file_path))
+
+                b64_data = base64.b64encode(payload).decode("utf-8")
+                # Assume JPEG for Telegram photos
+                images.append(f"data:image/jpeg;base64,{b64_data}")
             except Exception:
                 logger.exception("Failed to process image from Telegram")
                 # Continue processing even if image fails, just treat as text-only (or empty)
@@ -291,7 +302,12 @@ def register_handlers(
 
             # 3. Normal Queen Processing
             try:
-                reply = await queen.handle_message(text, message.chat.id, images=images)
+                reply = await queen.handle_message(
+                    text,
+                    message.chat.id,
+                    images=images,
+                    saved_file_paths=saved_file_paths,
+                )
             except Exception:
                 logger.exception("Failed to handle message")
                 await _enqueue_send(
