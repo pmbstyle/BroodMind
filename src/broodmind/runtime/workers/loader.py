@@ -1,7 +1,7 @@
 """
 Filesystem-based Worker Template Loader
 
-Auto-discovers worker templates from workspace/workers/ directory.
+Auto-discovers worker templates from the configured workspace's workers directory.
 Each worker is defined in a worker.json file with JSON configuration.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ _WORKER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 def discover_worker_templates(workspace_dir: Path) -> list[WorkerTemplateRecord]:
     """
-    Discover all worker templates from workspace/workers/ directory.
+    Discover all worker templates from the configured workspace directory.
 
     Each worker directory should contain a worker.json file.
     """

@@ -627,7 +627,7 @@ class SQLiteStore(Store):
         """Upsert a worker template by writing to filesystem.
 
         Note: This is now a no-op for database storage. Workers are managed
-        as files in workspace/workers/{id}/worker.py
+        as files under the configured workspace in workers/{id}/worker.json.
         """
         # Worker templates are now managed as files in the workspace
         # This method is kept for API compatibility but does nothing
@@ -649,7 +649,7 @@ class SQLiteStore(Store):
         # Worker templates are now managed as files - use file operations to delete
         raise NotImplementedError(
             "Worker templates are managed as files. Delete the worker directory directly: "
-            f"workspace/workers/{template_id}/"
+            f"{self._workspace_dir / 'workers' / template_id}"
         )
 
     def add_memory_entry(self, entry: MemoryEntry) -> None:

@@ -299,7 +299,7 @@ def start(
     foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground mode (showing logs)"),
 ) -> None:
     """Start the BroodMind Queen."""
-        from broodmind.channels.telegram.bot import run_bot, build_dispatcher
+    from broodmind.channels.telegram.bot import run_bot, build_dispatcher
 
     try:
         settings = load_settings()
@@ -1169,7 +1169,7 @@ def dashboard(
 def sync_worker_templates(
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing workspace worker templates"),
 ) -> None:
-    """Copy default worker templates into workspace/workers."""
+    """Copy default worker templates into the configured workspace workers directory."""
     settings = load_settings()
     result = sync_default_templates(settings.workspace_dir, overwrite=overwrite)
     console.print(

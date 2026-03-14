@@ -2,7 +2,7 @@
 Worker Templates - Now Filesystem-Based
 
 Worker templates are now discovered from the filesystem at runtime.
-Templates are stored in: workspace/workers/{worker_id}/worker.json
+Templates are stored in the configured workspace at workers/{worker_id}/worker.json.
 
 This module is kept for backwards compatibility but worker templates
 are now managed as JSON files in the workspace directory.
@@ -22,7 +22,7 @@ def _workspace_worker_template_root() -> Path:
 
 def sync_default_templates(workspace_dir: Path, *, overwrite: bool = False) -> dict[str, int]:
     """
-    Copy default worker templates into workspace/workers.
+    Copy default worker templates into the configured workspace workers directory.
 
     Returns counts:
     - copied: newly copied templates
@@ -66,13 +66,13 @@ def initialize_templates(store) -> None:
     Initialize default worker templates.
 
     This is now a no-op since worker templates are auto-discovered
-    from the filesystem at: workspace/workers/{id}/worker.json
+    from the filesystem at: <workspace>/workers/{id}/worker.json
 
     Default templates are provided from:
     workspace_templates/workers/
 
     To add them to your workspace, sync workspace_templates/workers
-    into workspace/workers.
+    into <workspace>/workers.
 
     For Docker:
         docker exec -it <container> python /app/scripts/sync_worker_templates.py

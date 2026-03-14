@@ -394,7 +394,7 @@ def get_worker_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="delete_worker_template",
-            description="Delete a worker template by removing its directory from workspace/workers/.",
+            description="Delete a worker template by removing its directory from the configured workspace workers folder.",
             parameters={
                 "type": "object",
                 "properties": {

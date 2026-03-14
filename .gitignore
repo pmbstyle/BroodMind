@@ -47,3 +47,7 @@ HEARTBEAT.md
 /src/broodmind/tools/web/__pycache__
 /src/broodmind/tools/workers/__pycache__
 /src/broodmind/runtime/scheduler/__pycache__
+/src/broodmind/infrastructure/config/__pycache__
+/src/broodmind/infrastructure/mcp/__pycache__
+/src/broodmind/infrastructure/providers/__pycache__
+/src/broodmind/infrastructure/store/__pycache__
