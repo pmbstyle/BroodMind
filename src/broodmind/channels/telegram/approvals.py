@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from broodmind.intents.types import ActionIntent
+from broodmind.runtime.intents.types import ActionIntent
 
 
 @dataclass

@@ -12,7 +12,7 @@ from broodmind.tools.registry import ToolSpec
 from broodmind.utils import utc_now
 
 if TYPE_CHECKING:
-    from broodmind.queen.core import Queen
+    from broodmind.runtime.queen.core import Queen
 
 _WORKER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")

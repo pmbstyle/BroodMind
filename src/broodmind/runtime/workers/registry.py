@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from broodmind.workers.contracts import Capability
+from broodmind.runtime.workers.contracts import Capability
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,7 @@ class WorkerTypeSpec:
 WORKER_REGISTRY: dict[str, WorkerTypeSpec] = {
     "web_fetch": WorkerTypeSpec(
         type="web_fetch",
-        module="broodmind.workers.reference.web_fetch_worker",
+        module="broodmind.runtime.workers.reference.web_fetch_worker",
         description="Fetch a URL and summarize the contents.",
         default_capabilities=[Capability(type="network", scope="*", read_only=True)],
     ),

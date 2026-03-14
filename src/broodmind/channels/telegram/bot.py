@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 
 from broodmind.runtime.app import build_queen
 from broodmind.config.settings import Settings
-from broodmind.queen.core import Queen, QueenReply
+from broodmind.runtime.queen.core import Queen, QueenReply
 from broodmind.channels.telegram.approvals import ApprovalManager
 from broodmind.channels.telegram.handlers import register_handlers
 from broodmind.utils import is_heartbeat_ok, is_control_response

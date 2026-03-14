@@ -38,7 +38,7 @@ from broodmind.store.sqlite import SQLiteStore
 from broodmind.channels.whatsapp.bridge import WhatsAppBridgeController, WhatsAppBridgeError
 from broodmind.channels.whatsapp.ids import parse_allowed_whatsapp_numbers
 from broodmind.channels.whatsapp.runtime import WhatsAppRuntime
-from broodmind.workers.templates import sync_default_templates
+from broodmind.runtime.workers.templates import sync_default_templates
 from aiogram import Bot
 
 app = typer.Typer(add_completion=False)

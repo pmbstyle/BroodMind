@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from datetime import timedelta
 from uuid import uuid4
 
-from broodmind.intents.registry import normalize_payload
-from broodmind.intents.types import ActionIntent
-from broodmind.policy.capabilities import DEFAULT_CAPABILITY_WHITELIST
-from broodmind.policy.permits import ApprovalRequirement, Permit
+from broodmind.runtime.intents.registry import normalize_payload
+from broodmind.runtime.intents.types import ActionIntent
+from broodmind.runtime.policy.capabilities import DEFAULT_CAPABILITY_WHITELIST
+from broodmind.runtime.policy.permits import ApprovalRequirement, Permit
 from broodmind.utils import utc_now
-from broodmind.workers.contracts import Capability
+from broodmind.runtime.workers.contracts import Capability
 
 
 @dataclass
@@ -66,5 +66,5 @@ def _scope_allowed(scope: str, allowed_scopes: list[str]) -> bool:
 def _hash_payload(payload: dict) -> str:
     import hashlib
 
-    from broodmind.intents.registry import canonical_json
+    from broodmind.runtime.intents.registry import canonical_json
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()

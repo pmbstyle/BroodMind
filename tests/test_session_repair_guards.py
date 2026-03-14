@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from broodmind.infrastructure.jsonl import read_jsonl_dicts
-from broodmind.workers.runtime import _repair_worker_result_payload
+from broodmind.runtime.workers.runtime import _repair_worker_result_payload
 
 
 def test_jsonl_guard_repairs_malformed_lines(tmp_path: Path) -> None:

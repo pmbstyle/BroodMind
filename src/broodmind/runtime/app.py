@@ -4,18 +4,18 @@ import os
 
 from broodmind.config.settings import Settings
 from broodmind.mcp.manager import MCPManager
-from broodmind.memory.canon import CanonService
-from broodmind.memory.service import MemoryService
-from broodmind.policy.engine import PolicyEngine
+from broodmind.runtime.memory.canon import CanonService
+from broodmind.runtime.memory.service import MemoryService
+from broodmind.runtime.policy.engine import PolicyEngine
 from broodmind.providers.litellm_provider import LiteLLMProvider
 from broodmind.providers.openai_embeddings import OpenAIEmbeddingsProvider
-from broodmind.queen.core import Queen
-from broodmind.scheduler.service import SchedulerService
+from broodmind.runtime.queen.core import Queen
+from broodmind.runtime.scheduler.service import SchedulerService
 from broodmind.store.sqlite import SQLiteStore
 from broodmind.channels.telegram.approvals import ApprovalManager
 from broodmind.tools.skills.management import ensure_skills_layout
-from broodmind.workers.launcher_factory import build_launcher
-from broodmind.workers.runtime import WorkerRuntime
+from broodmind.runtime.workers.launcher_factory import build_launcher
+from broodmind.runtime.workers.runtime import WorkerRuntime
 
 
 def build_queen(settings: Settings) -> Queen:
@@ -26,7 +26,7 @@ def build_queen(settings: Settings) -> Queen:
     provider = LiteLLMProvider(settings)
     store = SQLiteStore(settings)
 
-    from broodmind.workers.templates import initialize_templates
+    from broodmind.runtime.workers.templates import initialize_templates
 
     initialize_templates(store)
 

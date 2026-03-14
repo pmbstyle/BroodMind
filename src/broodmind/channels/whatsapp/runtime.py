@@ -7,7 +7,7 @@ import structlog
 
 from broodmind.runtime.app import build_queen
 from broodmind.config.settings import Settings
-from broodmind.queen.core import Queen
+from broodmind.runtime.queen.core import Queen
 from broodmind.runtime.metrics import update_component_gauges
 from broodmind.runtime.state import update_last_message
 from broodmind.utils import should_suppress_user_delivery

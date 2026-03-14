@@ -26,7 +26,7 @@ from broodmind.providers.litellm_provider import LiteLLMProvider
 from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, apply_tool_policy_pipeline
 from broodmind.tools.tools import get_tools
 from broodmind.worker_sdk.worker import Worker
-from broodmind.workers.contracts import WorkerResult
+from broodmind.runtime.workers.contracts import WorkerResult
 
 _LOG_MAX_CHARS = 2000
 _MAX_TOOL_ITERS = 10
@@ -223,7 +223,7 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 
 async def run_agent_worker(spec_path: str) -> None:
     """Main entry point for simplified agent worker."""
-        from broodmind.infrastructure.logging import correlation_id_var
+    from broodmind.infrastructure.logging import correlation_id_var
 
     worker = Worker.from_spec_file(spec_path)
     base_dir = Path(spec_path).parent

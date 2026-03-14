@@ -18,8 +18,8 @@ from broodmind.store.models import (
     WorkerTemplateRecord,
 )
 from broodmind.utils import utc_now
-from broodmind.workers.loader import discover_worker_templates
-from broodmind.workers.loader import get_worker_template as get_template_from_fs
+from broodmind.runtime.workers.loader import discover_worker_templates
+from broodmind.runtime.workers.loader import get_worker_template as get_template_from_fs
 
 
 class LockedCursor:

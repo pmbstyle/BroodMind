@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-from broodmind.workers.agent_worker import run_agent_worker
+from broodmind.runtime.workers.agent_worker import run_agent_worker
 
 
 def main() -> None:

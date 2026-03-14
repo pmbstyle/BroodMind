@@ -12,22 +12,22 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from broodmind.intents.types import ActionIntent
-from broodmind.memory.canon import CanonService
-from broodmind.memory.memchain import memchain_record
-from broodmind.memory.service import MemoryService
-from broodmind.scheduler.service import SchedulerService
+from broodmind.runtime.intents.types import ActionIntent
+from broodmind.runtime.memory.canon import CanonService
+from broodmind.runtime.memory.memchain import memchain_record
+from broodmind.runtime.memory.service import MemoryService
+from broodmind.runtime.scheduler.service import SchedulerService
 from broodmind.mcp.manager import MCPManager
-from broodmind.policy.engine import PolicyEngine
+from broodmind.runtime.policy.engine import PolicyEngine
 from broodmind.providers.base import InferenceProvider
 from broodmind.browser.manager import get_browser_manager
 from broodmind.runtime.housekeeping import cleanup_workspace_tmp, rotate_canon_events
 from broodmind.infrastructure.logging import correlation_id_var
-from broodmind.queen.prompt_builder import (
+from broodmind.runtime.queen.prompt_builder import (
     build_bootstrap_context_prompt,
     build_queen_prompt,
 )
-from broodmind.queen.router import (
+from broodmind.runtime.queen.router import (
     build_forced_worker_followup,
     normalize_plain_text,
     route_or_reply,
@@ -40,8 +40,8 @@ from broodmind.store.base import Store
 from broodmind.store.models import AuditEvent
 from broodmind.channels.telegram.approvals import ApprovalManager
 from broodmind.utils import is_control_response, should_suppress_user_delivery, utc_now
-from broodmind.workers.contracts import TaskRequest, WorkerResult
-from broodmind.workers.runtime import WorkerRuntime
+from broodmind.runtime.workers.contracts import TaskRequest, WorkerResult
+from broodmind.runtime.workers.runtime import WorkerRuntime
 
 logger = structlog.get_logger(__name__)
 _FOLLOWUP_QUEUES: dict[int, asyncio.Queue] = {}

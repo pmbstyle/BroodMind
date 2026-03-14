@@ -8,12 +8,12 @@ import sys
 import types
 
 from broodmind.config.settings import Settings
-from broodmind.queen.core import Queen
+from broodmind.runtime.queen.core import Queen
 from broodmind.channels.telegram.access import is_allowed_chat, parse_allowed_chat_ids
 from broodmind.gateway.ws import _resolve_ws_chat_id
 from broodmind.tools.registry import ToolSpec
-from broodmind.workers.contracts import Capability, TaskRequest, WorkerResult
-from broodmind.workers.runtime import WorkerRuntime
+from broodmind.runtime.workers.contracts import Capability, TaskRequest, WorkerResult
+from broodmind.runtime.workers.runtime import WorkerRuntime
 from broodmind.store.models import WorkerTemplateRecord
 
 

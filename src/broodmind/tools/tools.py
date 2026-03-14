@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from broodmind.memory.memchain import memchain_init, memchain_record, memchain_status, memchain_verify
+from broodmind.runtime.memory.memchain import memchain_init, memchain_record, memchain_status, memchain_verify
 from broodmind.tools.browser.actions import (
     browser_click,
     browser_close,

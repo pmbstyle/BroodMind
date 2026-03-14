@@ -19,18 +19,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from broodmind.intents.types import ActionIntent
+from broodmind.runtime.intents.types import ActionIntent
 from broodmind.mcp.manager import MCPManager
-from broodmind.policy.engine import PolicyEngine
+from broodmind.runtime.policy.engine import PolicyEngine
 from broodmind.store.base import Store
 from broodmind.store.models import AuditEvent, WorkerRecord
 from broodmind.utils import utc_now
-from broodmind.workers.contracts import TaskRequest, WorkerResult, WorkerSpec
-from broodmind.workers.launcher import WorkerLauncher
+from broodmind.runtime.workers.contracts import TaskRequest, WorkerResult, WorkerSpec
+from broodmind.runtime.workers.launcher import WorkerLauncher
 
 logger = structlog.get_logger(__name__)
 
-WORKER_MODULE = "broodmind.workers.agent_worker"
+WORKER_MODULE = "broodmind.runtime.workers.agent_worker"
 _MAX_RECOVERY_ATTEMPTS = 1
 _RECOVERY_BACKOFF_SECONDS = 0.2
 
@@ -516,8 +516,8 @@ class WorkerRuntime:
                     await self._write_to_worker(process, {"type": "error", "message": str(e)})
                 return None
             if msg_type == "intent_request":
-                from broodmind.intents.registry import IntentValidationError, validate_intent
-                from broodmind.intents.types import IntentRequest
+                from broodmind.runtime.intents.registry import IntentValidationError, validate_intent
+                from broodmind.runtime.intents.types import IntentRequest
                 from broodmind.store.models import IntentRecord, PermitRecord
 
                 try:
@@ -722,7 +722,7 @@ class WorkerRuntime:
 
     def _build_capabilities(self, permissions: list[str]) -> list[Any]:
         """Build capability objects from permission strings."""
-        from broodmind.workers.contracts import Capability
+        from broodmind.runtime.workers.contracts import Capability
 
         caps = []
         for perm in permissions:

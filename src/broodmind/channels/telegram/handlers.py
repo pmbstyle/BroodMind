@@ -16,7 +16,7 @@ from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
 
 from broodmind.config.settings import Settings
 from broodmind.infrastructure.logging import correlation_id_var
-from broodmind.queen.core import Queen, QueenReply
+from broodmind.runtime.queen.core import Queen, QueenReply
 from broodmind.runtime.metrics import update_component_gauges
 from broodmind.runtime.state import update_last_message
 from broodmind.channels.telegram.access import is_allowed_chat, parse_allowed_chat_ids

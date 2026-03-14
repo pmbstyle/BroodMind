@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from broodmind.memory.memchain import memchain_verify
+from broodmind.runtime.memory.memchain import memchain_verify
 
 if TYPE_CHECKING:
-    from broodmind.memory.canon import CanonService
-    from broodmind.memory.service import MemoryService
+    from broodmind.runtime.memory.canon import CanonService
+    from broodmind.runtime.memory.service import MemoryService
     from broodmind.providers.base import Message
     from broodmind.store.base import Store
 

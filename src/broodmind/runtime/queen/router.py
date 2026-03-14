@@ -14,9 +14,9 @@ from typing import Any
 import structlog
 
 from broodmind.providers.base import InferenceProvider, Message
-from broodmind.memory.service import MemoryService
-from broodmind.memory.canon import CanonService
-from broodmind.queen.prompt_builder import build_queen_prompt, build_bootstrap_context_prompt
+from broodmind.runtime.memory.service import MemoryService
+from broodmind.runtime.memory.canon import CanonService
+from broodmind.runtime.queen.prompt_builder import build_queen_prompt, build_bootstrap_context_prompt
 from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec, filter_tools
 from broodmind.tools.tools import get_tools
 from broodmind.utils import (
@@ -24,7 +24,7 @@ from broodmind.utils import (
     looks_like_textual_tool_invocation,
     should_suppress_user_delivery,
 )
-from broodmind.workers.contracts import WorkerResult
+from broodmind.runtime.workers.contracts import WorkerResult
 
 logger = structlog.get_logger(__name__)
 _MAX_PLAN_STEPS = 10

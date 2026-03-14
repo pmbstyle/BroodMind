@@ -4,10 +4,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from broodmind.queen.core import Queen
+from broodmind.runtime.queen.core import Queen
 from broodmind.tools.ops.management import docker_compose_control, test_run
 from broodmind.tools.workers.management import _tool_create_worker_template
-from broodmind.workers.contracts import WorkerResult
+from broodmind.runtime.workers.contracts import WorkerResult
 import broodmind.tools.ops.management as ops_tools
 
 
@@ -89,7 +89,7 @@ def test_queen_passes_approval_requester_to_runtime(monkeypatch) -> None:
             return None
 
     async def fake_bootstrap_context(store, chat_id: int):
-        from broodmind.queen.prompt_builder import BootstrapContext
+        from broodmind.runtime.queen.prompt_builder import BootstrapContext
 
         return BootstrapContext(content="", hash="", files=[])
 
@@ -104,7 +104,7 @@ def test_queen_passes_approval_requester_to_runtime(monkeypatch) -> None:
     ):
         return "ok"
 
-    import broodmind.queen.core as queen_core
+    import broodmind.runtime.queen.core as queen_core
 
     monkeypatch.setattr(queen_core, "build_bootstrap_context_prompt", fake_bootstrap_context)
     monkeypatch.setattr(queen_core, "route_or_reply", fake_route_or_reply)

@@ -18,7 +18,7 @@ class WorkerLauncher(Protocol):
 
 @dataclass
 class SameEnvLauncher:
-    entrypoint_module: str = "broodmind.workers.entrypoint"
+    entrypoint_module: str = "broodmind.runtime.workers.entrypoint"
 
     async def launch(
         self,
@@ -44,7 +44,7 @@ class DockerLauncher:
     image: str
     host_workspace: str
     container_workspace: str = "/workspace"
-    entrypoint_module: str = "broodmind.workers.entrypoint"
+    entrypoint_module: str = "broodmind.runtime.workers.entrypoint"
 
     async def launch(
         self,

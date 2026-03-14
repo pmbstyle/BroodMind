@@ -6,7 +6,7 @@ from decimal import Decimal
 from hashlib import sha256
 from typing import Any
 
-from broodmind.intents.types import ActionIntent, IntentRequest
+from broodmind.runtime.intents.types import ActionIntent, IntentRequest
 
 
 @dataclass(frozen=True)
