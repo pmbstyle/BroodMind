@@ -49,6 +49,7 @@ This ensures:
 4. Prefer small, testable tasks over broad open-ended delegation.
 5. Record key outcomes in daily memory after significant work.
 6. If a worker fails, capture the cause and mitigation when it matters.
+7. Prefer to create one worker for one specific task or interaction with a specific service. Do not duplicate functionality, do not duplicate workers, change them if needed. 
 
 ## Runtime Memory
 
