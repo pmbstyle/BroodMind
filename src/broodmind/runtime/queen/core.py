@@ -1413,13 +1413,23 @@ class Queen:
                                 run_id=run_id,
                                 worker_status=worker_status,
                             )
-                    if not failed:
+                    progress_state = "completed"
+                    progress_text = f"Worker {run_id} completed."
+                    if failed:
+                        normalized_status = str(worker_status or "failed").strip().lower()
+                        progress_state = "stopped" if normalized_status == "stopped" else "failed"
+                        progress_text = f"Worker {run_id} {normalized_status}."
+                    else:
                         self._register_progress(chat_id, "worker_completed")
                     await self._emit_progress(
                         chat_id,
-                        "completed",
-                        f"Worker {run_id} completed.",
-                        {"worker_id": run_id, "worker_template_id": worker_id},
+                        progress_state,
+                        progress_text,
+                        {
+                            "worker_id": run_id,
+                            "worker_template_id": worker_id,
+                            "worker_status": worker_status,
+                        },
                     )
                 except Exception as exc:
                     failed = True

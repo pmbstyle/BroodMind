@@ -196,3 +196,61 @@ def test_start_worker_async_releases_duplicate_reservation_after_run(monkeypatch
             correlation_id_var.reset(token)
 
     asyncio.run(scenario())
+
+
+def test_start_worker_async_emits_failed_progress_when_store_marks_failed(monkeypatch) -> None:
+    class _Memory:
+        async def add_message(self, role: str, content: str, metadata: dict):
+            return None
+
+    class _Store:
+        def get_worker(self, worker_id: str):
+            return SimpleNamespace(status="failed")
+
+    class _Runtime:
+        async def run_task(self, task_request, approval_requester=None):
+            return WorkerResult(
+                status="failed",
+                summary="Task failed: remote MCP tool response schema is incompatible.",
+                output={"error": "schema mismatch"},
+            )
+
+    import broodmind.runtime.queen.core as queen_core
+
+    monkeypatch.setattr(queen_core, "_enqueue_internal_result", lambda *args, **kwargs: None)
+
+    progress_events: list[tuple[str, str, dict]] = []
+
+    async def _progress_sender(chat_id: int, state: str, text: str, meta: dict) -> None:
+        progress_events.append((state, text, dict(meta)))
+
+    queen = Queen(
+        provider=object(),
+        store=_Store(),
+        policy=object(),
+        runtime=_Runtime(),
+        approvals=object(),
+        memory=_Memory(),
+        canon=object(),
+        internal_progress_send=_progress_sender,
+    )
+
+    async def scenario() -> None:
+        launch = await queen._start_worker_async(
+            worker_id="analyst",
+            task="check inbox",
+            chat_id=1,
+            inputs={},
+            tools=None,
+            model=None,
+            timeout_seconds=30,
+        )
+        assert launch["status"] == "started"
+        await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+
+    final_state, final_text, final_meta = progress_events[-1]
+    assert final_state == "failed"
+    assert "failed" in final_text.lower()
+    assert final_meta["worker_status"] == "failed"
