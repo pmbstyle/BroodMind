@@ -24,6 +24,7 @@ import structlog
 
 from broodmind.infrastructure.config.settings import load_settings
 from broodmind.infrastructure.providers.litellm_provider import LiteLLMProvider
+from broodmind.runtime.tool_errors import ToolBridgeError
 from broodmind.runtime.tool_payloads import render_tool_result_for_llm
 from broodmind.runtime.workers.contracts import WorkerResult
 from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, apply_tool_policy_pipeline
@@ -76,10 +77,12 @@ _UPSTREAM_UNAVAILABLE_HINTS = (
     "bad gateway",
     "gateway timeout",
 )
+_SYSTEMIC_TOOL_ERROR_CLASSIFICATIONS = {"schema_mismatch"}
 _RESULT_SCHEMA = {
     "type": "object",
     "properties": {
         "type": {"type": "string", "const": "result"},
+        "status": {"type": "string", "enum": ["completed", "failed"]},
         "summary": {"type": "string"},
         "output": {"type": ["object", "array", "string", "number", "boolean", "null"]},
         "questions": {"type": "array", "items": {"type": "string"}},
@@ -246,6 +249,7 @@ async def run_agent_worker(spec_path: str) -> None:
         await worker.log("error", f"AgentWorker failed: id={worker.spec.id} error={error_text}")
         await worker.complete(
             WorkerResult(
+                status="failed",
                 summary=f"Worker failed: {error_text}",
                 output={
                     "error": error_text,
@@ -468,6 +472,25 @@ If you need clarification from the Queen, include:
 
                 if tool_meta.get("had_error"):
                     error_text = _extract_error_text(tool_result)
+                    if _is_systemic_tool_bridge_failure(tool_meta):
+                        return WorkerResult(
+                            status="failed",
+                            summary="Task failed: remote MCP tool response schema is incompatible.",
+                            output=_attach_telemetry(
+                                {
+                                    "degraded": True,
+                                    "reason": "mcp_schema_mismatch",
+                                    "failed_tool": tool_name,
+                                    "bridge": tool_meta.get("error_bridge"),
+                                    "error_classification": tool_meta.get("error_classification"),
+                                    "error": _truncate_text(error_text, 500),
+                                },
+                                telemetry,
+                            ),
+                            knowledge_proposals=worker.knowledge_proposals,
+                            thinking_steps=thinking_steps,
+                            tools_used=tools_used,
+                        )
                     if _is_upstream_unavailable_error(error_text):
                         signature = f"{tool_name}:{_upstream_error_bucket(error_text)}"
                         upstream_failures[signature] = upstream_failures.get(signature, 0) + 1
@@ -508,6 +531,7 @@ If you need clarification from the Queen, include:
             result_block = _extract_result_block(content)
             if result_block is not None:
                 return WorkerResult(
+                    status=str(result_block.get("status", "completed")) if result_block.get("status") in {"completed", "failed"} else "completed",
                     summary=str(result_block.get("summary", "Task completed")).strip() or "Task completed",
                     output=_attach_telemetry(result_block.get("output"), telemetry),
                     questions=result_block.get("questions", []),
@@ -684,7 +708,13 @@ async def _execute_tool(
             except Exception as exc:
                 await worker.log("error", f"Tool execution failed: {tool_name}: {exc}")
                 error_text = str(exc)
-                error_type = _classify_tool_error(error_text)
+                error_info = _tool_error_info(
+                    error_text,
+                    classification=exc.classification if isinstance(exc, ToolBridgeError) else None,
+                    bridge=exc.bridge if isinstance(exc, ToolBridgeError) else None,
+                    retryable=exc.retryable if isinstance(exc, ToolBridgeError) else None,
+                )
+                error_type = str(error_info["error_type"])
                 if attempt < max_attempts - 1 and error_type == "transient":
                     retries += 1
                     await asyncio.sleep(_retry_backoff(attempt))
@@ -693,12 +723,28 @@ async def _execute_tool(
                     "retries": retries,
                     "timed_out": False,
                     "had_error": True,
-                    "error_type": error_type,
+                    **error_info,
                 }
 
             if _result_has_error(result):
                 error_text = _extract_error_text(result)
-                error_type = _classify_tool_error(error_text)
+                classification = None
+                bridge = None
+                retryable = None
+                if isinstance(result, dict):
+                    if isinstance(result.get("classification"), str):
+                        classification = result["classification"]
+                    if isinstance(result.get("bridge"), str):
+                        bridge = result["bridge"]
+                    if isinstance(result.get("retryable"), bool):
+                        retryable = result["retryable"]
+                error_info = _tool_error_info(
+                    error_text,
+                    classification=classification,
+                    bridge=bridge,
+                    retryable=retryable,
+                )
+                error_type = str(error_info["error_type"])
                 if attempt < max_attempts - 1 and error_type == "transient":
                     retries += 1
                     await asyncio.sleep(_retry_backoff(attempt))
@@ -707,7 +753,7 @@ async def _execute_tool(
                     "retries": retries,
                     "timed_out": False,
                     "had_error": True,
-                    "error_type": error_type,
+                    **error_info,
                 }
 
             return result, {
@@ -718,11 +764,17 @@ async def _execute_tool(
             }
     except Exception as exc:
         await worker.log("error", f"Tool execution failed: {tool_name}: {exc}")
+        error_info = _tool_error_info(
+            str(exc),
+            classification=exc.classification if isinstance(exc, ToolBridgeError) else None,
+            bridge=exc.bridge if isinstance(exc, ToolBridgeError) else None,
+            retryable=exc.retryable if isinstance(exc, ToolBridgeError) else None,
+        )
         return {"error": str(exc)}, {
             "retries": 0,
             "timed_out": False,
             "had_error": True,
-            "error_type": "unknown",
+            **error_info,
         }
 
 
@@ -809,6 +861,34 @@ def _classify_tool_error(text: str) -> str:
     if any(token in lowered for token in _PERMANENT_ERROR_HINTS):
         return "permanent"
     return "unknown"
+
+
+def _tool_error_info(
+    error_text: str,
+    *,
+    classification: str | None = None,
+    bridge: str | None = None,
+    retryable: bool | None = None,
+) -> dict[str, Any]:
+    if retryable is True:
+        error_type = "transient"
+    elif retryable is False:
+        error_type = "permanent"
+    else:
+        error_type = _classify_tool_error(error_text)
+    return {
+        "error_type": error_type,
+        "error_classification": classification or "unknown",
+        "error_bridge": bridge or "tool",
+        "retryable": retryable,
+    }
+
+
+def _is_systemic_tool_bridge_failure(tool_meta: dict[str, Any]) -> bool:
+    return (
+        tool_meta.get("error_bridge") == "mcp"
+        and tool_meta.get("error_classification") in _SYSTEMIC_TOOL_ERROR_CLASSIFICATIONS
+    )
 
 
 def _result_has_error(result: Any) -> bool:

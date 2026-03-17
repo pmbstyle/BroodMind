@@ -11,6 +11,7 @@ class _StoreStub:
     def __init__(self) -> None:
         self.status_updates: list[str] = []
         self.result_errors: list[str] = []
+        self.result_summaries: list[str] = []
 
     def create_worker(self, record):
         return None
@@ -19,6 +20,8 @@ class _StoreStub:
         self.status_updates.append(status)
 
     def update_worker_result(self, _worker_id: str, **kwargs):
+        if kwargs.get("summary"):
+            self.result_summaries.append(str(kwargs["summary"]))
         if kwargs.get("error"):
             self.result_errors.append(str(kwargs["error"]))
 
@@ -151,7 +154,7 @@ def test_runtime_fails_after_recovery_exhausted(tmp_path: Path) -> None:
 
     try:
         asyncio.run(scenario())
-        assert False, "Expected RuntimeError"
+        raise AssertionError("Expected RuntimeError")
     except RuntimeError as exc:
         assert "after recovery attempts" in str(exc)
     assert launcher.calls == 2
@@ -207,3 +210,31 @@ def test_worker_mcp_call_restores_configured_session(tmp_path: Path) -> None:
     assert result.summary == "done"
     assert runtime.mcp_manager.ensure_calls == [["demo"]]
     assert writes[0]["type"] == "mcp_result"
+
+
+def test_worker_failed_result_marks_store_failed(tmp_path: Path) -> None:
+    store = _StoreStub()
+    launcher = _LauncherStub()
+    runtime = WorkerRuntime(
+        store=store,
+        policy=_PolicyStub(),
+        workspace_dir=tmp_path,
+        launcher=launcher,
+        mcp_manager=None,
+    )
+
+    process = _FakeProcess(pid=1)
+    process.stdout = _FakeReader(
+        [
+            b'{"type":"result","result":{"status":"failed","summary":"Worker failed: MCP schema mismatch","output":{"error":"schema mismatch"}}}\n',
+        ]
+    )
+
+    async def scenario():
+        return await runtime._read_loop(_spec(), process)
+
+    result = asyncio.run(scenario())
+    assert result.status == "failed"
+    assert store.status_updates == ["failed"]
+    assert store.result_summaries == ["Worker failed: MCP schema mismatch"]
+    assert store.result_errors == ["schema mismatch"]

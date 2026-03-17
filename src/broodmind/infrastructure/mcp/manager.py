@@ -5,30 +5,34 @@ import json
 import os
 import re
 import time
-import structlog
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
+
+import structlog
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.sse import sse_client
+from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
+
+from broodmind.runtime.tool_errors import MCPToolCallError
+
+if TYPE_CHECKING:
+    from broodmind.tools.registry import ToolSpec
+
 
 @dataclass
 class MCPServerConfig:
     id: str
     name: str
-    command: Optional[str] = None
-    args: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
-    url: Optional[str] = None
-    headers: Dict[str, str] = field(default_factory=dict)
-    transport: Optional[Literal["auto", "sse", "streamable-http", "stdio"]] = None
-    last_error: Optional[str] = None
-
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-
-from broodmind.tools.registry import ToolSpec
+    command: str | None = None
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    transport: Literal["auto", "sse", "streamable-http", "stdio"] | None = None
+    last_error: str | None = None
 
 logger = structlog.get_logger(__name__)
 _MCP_PERMANENT_ERROR_THRESHOLD = 2
@@ -39,6 +43,12 @@ _MCP_DEFAULT_TIMEOUT_SECONDS = 120.0
 _MCP_SLOW_TIMEOUT_SECONDS = 300.0
 _MCP_RECONNECT_BASE_SECONDS = 2.0
 _MCP_RECONNECT_MAX_SECONDS = 60.0
+_MCP_RETRYABLE_CLASSIFICATIONS = {
+    "timeout",
+    "rate_limited",
+    "upstream_5xx",
+    "unknown_error",
+}
 _MCP_SLOW_TOOL_HINTS = (
     "search",
     "fetch",
@@ -53,22 +63,22 @@ _MCP_SLOW_TOOL_HINTS = (
 class MCPManager:
     def __init__(self, workspace_dir: Path):
         self.workspace_dir = workspace_dir
-        self.sessions: Dict[str, ClientSession] = {}
+        self.sessions: dict[str, ClientSession] = {}
         # Stores the background task that keeps the session alive
-        self._tasks: Dict[str, asyncio.Task] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
         # Communication queues for disconnect signals
-        self._stop_events: Dict[str, asyncio.Event] = {}
-        self._tools: Dict[str, List[ToolSpec]] = {}
-        self._server_configs: Dict[str, MCPServerConfig] = {}
-        self._tool_failure_state: Dict[tuple[str, str], Dict[str, Any]] = {}
-        self._reconnect_tasks: Dict[str, asyncio.Task] = {}
-        self._reconnect_attempts: Dict[str, int] = {}
+        self._stop_events: dict[str, asyncio.Event] = {}
+        self._tools: dict[str, list[ToolSpec]] = {}
+        self._server_configs: dict[str, MCPServerConfig] = {}
+        self._tool_failure_state: dict[tuple[str, str], dict[str, Any]] = {}
+        self._reconnect_tasks: dict[str, asyncio.Task] = {}
+        self._reconnect_attempts: dict[str, int] = {}
         self._manual_disconnects: set[str] = set()
         self._shutdown_requested = False
         self.config_path = workspace_dir / "mcp_servers.json"
         self._configs_loaded = False
 
-    def _load_configs_from_disk(self) -> Dict[str, MCPServerConfig]:
+    def _load_configs_from_disk(self) -> dict[str, MCPServerConfig]:
         if self._configs_loaded:
             return dict(self._server_configs)
         if not self.config_path.exists():
@@ -76,7 +86,7 @@ class MCPManager:
             return dict(self._server_configs)
 
         config_data = json.loads(self.config_path.read_text(encoding="utf-8"))
-        loaded: Dict[str, MCPServerConfig] = {}
+        loaded: dict[str, MCPServerConfig] = {}
         for server_id, cfg in config_data.items():
             existing = self._server_configs.get(server_id)
             loaded[server_id] = MCPServerConfig(
@@ -109,7 +119,7 @@ class MCPManager:
     async def ensure_configured_servers_connected(
         self,
         server_ids: list[str] | None = None,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Reconnect configured MCP servers that should already be available."""
         try:
             configs = self._load_configs_from_disk()
@@ -119,7 +129,7 @@ class MCPManager:
 
         requested_ids = [str(server_id).strip() for server_id in (server_ids or []) if str(server_id).strip()]
         target_ids = requested_ids or list(configs.keys())
-        results: Dict[str, str] = {}
+        results: dict[str, str] = {}
         for server_id in target_ids:
             cfg = configs.get(server_id)
             if cfg is None:
@@ -141,7 +151,7 @@ class MCPManager:
                 )
         return results
 
-    async def connect_server(self, config: MCPServerConfig) -> List[ToolSpec]:
+    async def connect_server(self, config: MCPServerConfig) -> list[ToolSpec]:
         self._shutdown_requested = False
         self._server_configs[config.id] = config
         self._manual_disconnects.discard(config.id)
@@ -156,11 +166,11 @@ class MCPManager:
         ready_event = asyncio.Event()
         stop_event = asyncio.Event()
         self._stop_events[config.id] = stop_event
-        
+
         # Start background task to manage the lifecycle
         task = asyncio.create_task(self._run_server_lifecycle(config, ready_event, stop_event))
         self._tasks[config.id] = task
-        
+
         # Wait for the session to be initialized or task to fail
         try:
             # Monitor both the ready event and the task itself
@@ -169,10 +179,11 @@ class MCPManager:
                 return_when=asyncio.FIRST_COMPLETED,
                 timeout=45.0
             )
-            
+
             # Check if we timed out
             if not done:
-                for p in pending: p.cancel()
+                for pending_task in pending:
+                    pending_task.cancel()
                 config.last_error = "Connection timed out after 45s"
                 raise RuntimeError(f"Connection to MCP server '{config.id}' timed out after 45s.")
 
@@ -181,7 +192,7 @@ class MCPManager:
                 config.last_error = None
                 self._reconnect_attempts.pop(config.id, None)
                 return self._tools.get(config.id, [])
-            
+
             # If the task finished but ready_event is not set, it failed
             if task in done:
                 exc = task.exception()
@@ -190,7 +201,7 @@ class MCPManager:
                     raise exc
                 config.last_error = "Exited unexpectedly"
                 raise RuntimeError(f"MCP server task '{config.id}' exited unexpectedly.")
-            
+
             config.last_error = "Failed (unknown state)"
             raise RuntimeError(f"Connection to MCP server '{config.id}' failed (unknown state).")
 
@@ -207,7 +218,7 @@ class MCPManager:
         """Manages the lifetime of a single MCP server connection."""
         from contextlib import AsyncExitStack
         exit_stack = AsyncExitStack()
-        
+
         try:
             selected_transport = _resolve_transport(config)
             if selected_transport == "sse":
@@ -238,21 +249,23 @@ class MCPManager:
 
             logger.info("Initializing MCP session", server_id=config.id)
             session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
-            
+
             await session.initialize()
             self.sessions[config.id] = session
-            
+
             # Fetch tools
             logger.info("Fetching tools from MCP server", server_id=config.id)
             mcp_tools_list = await session.list_tools()
-            
+
             specs = []
+            from broodmind.tools.registry import ToolSpec
+
             for tool in mcp_tools_list.tools:
                 # Normalize tool name: replace dashes with underscores for better LLM compatibility
                 safe_id = config.id.replace("-", "_")
                 safe_tool_name = tool.name.replace("-", "_")
                 mcp_tool_name = f"mcp_{safe_id}_{safe_tool_name}"
-                
+
                 spec = ToolSpec(
                     name=mcp_tool_name,
                     description=f"[MCP Tool from {config.name}] {tool.description}. Call this tool directly by using the name '{mcp_tool_name}' in your tool call block.",
@@ -264,17 +277,17 @@ class MCPManager:
                     remote_tool_name=tool.name,
                 )
                 specs.append(spec)
-            
+
             self._tools[config.id] = specs
             logger.info("MCP server connected and tools ready", server_id=config.id, tool_count=len(specs))
-            
+
             # Signal that we are ready
             ready_event.set()
-            
+
             # Keep alive until signaled to stop
             await stop_event.wait()
             logger.info("Shutting down MCP server session (signaled)", server_id=config.id)
-            
+
         except Exception as e:
             hint = _connection_hint(e)
             logger.exception("MCP server lifecycle error", server_id=config.id, transport=config.transport or "auto", hint=hint)
@@ -288,7 +301,7 @@ class MCPManager:
             self._tools.pop(config.id, None)
             self._tasks.pop(config.id, None)
             self._stop_events.pop(config.id, None)
-            
+
             # Closing the stack will close the context managers (stdio/sse clients)
             # This happens in the same task that created them, which anyio requires.
             await exit_stack.aclose()
@@ -305,7 +318,7 @@ class MCPManager:
         self,
         server_id: str,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         *,
         allow_name_fallback: bool = False,
     ) -> Any:
@@ -327,9 +340,17 @@ class MCPManager:
             if state and float(state.get("open_until", 0.0)) > now:
                 remaining = max(1, int(float(state["open_until"]) - now))
                 last_class = str(state.get("classification", "unknown"))
-                raise RuntimeError(
-                    f"MCP tool '{candidate_name}' on '{server_id}' is temporarily paused for {remaining}s "
-                    f"after repeated '{last_class}' failures. Try a fallback path or a different tool."
+                raise MCPToolCallError(
+                    classification=last_class,
+                    hint="Previous failures keep this MCP tool circuit open.",
+                    retryable=_is_retryable_mcp_classification(last_class),
+                    server_id=server_id,
+                    tool_name=candidate_name,
+                    message=(
+                        f"MCP tool '{candidate_name}' on '{server_id}' is temporarily paused for {remaining}s "
+                        f"after repeated '{last_class}' failures. Try a fallback path or a different tool."
+                    ),
+                    details={"cooldown_seconds": remaining, "circuit_open": True},
                 )
 
             try:
@@ -346,7 +367,7 @@ class MCPManager:
                         resolved_tool=candidate_name,
                     )
                 return result
-            except asyncio.TimeoutError as exc:
+            except TimeoutError:
                 last_exc = RuntimeError(
                     f"MCP call timed out after {int(timeout_seconds)}s for '{candidate_name}' on '{server_id}'."
                 )
@@ -395,9 +416,12 @@ class MCPManager:
                     failure_count=entry["count"],
                 )
 
-            raise RuntimeError(
-                f"[{error_info['classification']}] {error_info['hint']} "
-                f"(server={server_id}, tool={candidate_name})"
+            raise MCPToolCallError(
+                classification=str(error_info["classification"]),
+                hint=str(error_info["hint"]),
+                retryable=bool(error_info["retryable"]),
+                server_id=server_id,
+                tool_name=candidate_name,
             ) from exc_to_classify
 
         if last_exc is not None:
@@ -405,7 +429,7 @@ class MCPManager:
         raise RuntimeError(f"MCP call failed for '{tool_name}' on '{server_id}'")
 
     def _generate_handler(self, server_id: str, tool_name: str):
-        async def handler(args: Dict[str, Any], ctx: Dict[str, Any]) -> Any:
+        async def handler(args: dict[str, Any], ctx: dict[str, Any]) -> Any:
             worker = ctx.get("worker")
             if worker:
                 logger.info("Worker requesting MCP tool call", server_id=server_id, tool=tool_name)
@@ -418,7 +442,7 @@ class MCPManager:
             session = self.sessions.get(server_id)
             if not session:
                 return f"Error: MCP session {server_id} not active."
-            
+
             logger.info("Calling MCP tool", server_id=server_id, tool=tool_name)
             try:
                 result = await self.call_tool(server_id, tool_name, args)
@@ -431,7 +455,7 @@ class MCPManager:
                     "server_id": server_id,
                     "tool": tool_name,
                 }
-        
+
         return handler
 
     def _schedule_reconnect(self, server_id: str) -> None:
@@ -485,18 +509,18 @@ class MCPManager:
         event = self._stop_events.get(server_id)
         if event:
             event.set()
-        
+
         task = self._tasks.get(server_id)
         if task:
             try:
                 # Wait for cleanup to finish
                 await asyncio.wait_for(task, timeout=5.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 if not task.done():
                     task.cancel()
             logger.info("Disconnected MCP server", server_id=server_id)
 
-    def get_all_tools(self) -> List[ToolSpec]:
+    def get_all_tools(self) -> list[ToolSpec]:
         all_specs = []
         for specs in self._tools.values():
             all_specs.extend(specs)
@@ -512,7 +536,7 @@ class MCPManager:
         for server_id in list(self._stop_events.keys()):
             await self.disconnect_server(server_id)
 
-    def get_server_statuses(self) -> Dict[str, Dict[str, Any]]:
+    def get_server_statuses(self) -> dict[str, dict[str, Any]]:
         statuses = {}
         for server_id, config in self._server_configs.items():
             is_connected = server_id in self.sessions
@@ -652,6 +676,10 @@ def _extract_mcp_missing_argument_names(error_text: str) -> list[str]:
     return unique
 
 
+def _is_retryable_mcp_classification(classification: str) -> bool:
+    return classification in _MCP_RETRYABLE_CLASSIFICATIONS
+
+
 def _alternate_tool_name(tool_name: str) -> str | None:
     if "_" in tool_name:
         alt = tool_name.replace("_", "-")
@@ -667,7 +695,7 @@ def _is_tool_not_found_error(error: Exception) -> bool:
     return "unknown tool" in text or "not found" in text
 
 
-def _mcp_timeout_seconds(tool_name: str, args: Dict[str, Any]) -> float:
+def _mcp_timeout_seconds(tool_name: str, args: dict[str, Any]) -> float:
     if isinstance(args, dict):
         explicit = args.get("timeout_seconds")
         if explicit is not None:

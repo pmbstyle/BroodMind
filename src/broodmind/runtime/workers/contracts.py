@@ -7,7 +7,7 @@ Queen assigns tasks to workers with input data.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -87,6 +87,7 @@ class WorkerResult(BaseModel):
     """Worker result with optional questions for Queen."""
     model_config = ConfigDict(frozen=True)
 
+    status: Literal["completed", "failed"] = "completed"
     summary: str
     output: dict[str, Any] | None = None
     questions: list[str] = Field(default_factory=list)  # Questions for Queen

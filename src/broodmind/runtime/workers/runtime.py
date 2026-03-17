@@ -7,26 +7,28 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import os
 import shutil
-import structlog
 import uuid
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from broodmind.runtime.intents.types import ActionIntent
+import structlog
+
 from broodmind.infrastructure.mcp.manager import MCPManager
-from broodmind.runtime.policy.engine import PolicyEngine
 from broodmind.infrastructure.store.base import Store
 from broodmind.infrastructure.store.models import AuditEvent, WorkerRecord
-from broodmind.utils import utc_now
+from broodmind.runtime.intents.types import ActionIntent
+from broodmind.runtime.policy.engine import PolicyEngine
+from broodmind.runtime.tool_errors import ToolBridgeError
 from broodmind.runtime.workers.contracts import TaskRequest, WorkerResult, WorkerSpec
 from broodmind.runtime.workers.launcher import WorkerLauncher
+from broodmind.utils import utc_now
 
 logger = structlog.get_logger(__name__)
 
@@ -83,10 +85,10 @@ class WorkerRuntime:
         # Get all tools to find MCP tool definitions
         from broodmind.tools.tools import get_tools
         all_tools = get_tools(mcp_manager=self.mcp_manager)
-        
+
         mcp_tools_data = []
         known_server_ids = list(self.mcp_manager.sessions.keys()) if self.mcp_manager else []
-        
+
         # 1. Add explicitly requested MCP tools
         for tool_name in requested_tool_names:
             if tool_name.startswith("mcp_"):
@@ -412,14 +414,13 @@ class WorkerRuntime:
                     self._log_non_json_output(text_line)
                 invalid_lines += 1
                 consecutive_invalid_lines += 1
-                if consecutive_invalid_lines >= max_invalid_lines:
-                    if not invalid_limit_reached:
-                        logger.warning(
-                            "Worker emitted too many non-JSON lines; continuing to wait for structured result",
-                            worker_id=spec.id,
-                            invalid_lines=invalid_lines,
-                        )
-                        invalid_limit_reached = True
+                if consecutive_invalid_lines >= max_invalid_lines and not invalid_limit_reached:
+                    logger.warning(
+                        "Worker emitted too many non-JSON lines; continuing to wait for structured result",
+                        worker_id=spec.id,
+                        invalid_lines=invalid_lines,
+                    )
+                    invalid_limit_reached = True
                 return None
             consecutive_invalid_lines = 0
 
@@ -478,11 +479,11 @@ class WorkerRuntime:
                 server_id = payload.get("server_id")
                 tool_name = payload.get("tool_name")
                 args = payload.get("arguments", {})
-                
+
                 if not self.mcp_manager:
                     await self._write_to_worker(process, {"type": "error", "message": "MCP Manager not available in runtime."})
                     return None
-                
+
                 session = self.mcp_manager.sessions.get(server_id)
                 if not session:
                     try:
@@ -499,7 +500,7 @@ class WorkerRuntime:
                 if not session:
                     await self._write_to_worker(process, {"type": "error", "message": f"MCP session {server_id} not active."})
                     return None
-                
+
                 try:
                     logger.info("Executing MCP call for worker", worker_id=spec.id, server_id=server_id, tool=tool_name)
                     result = await self.mcp_manager.call_tool(
@@ -513,12 +514,16 @@ class WorkerRuntime:
                     await self._write_to_worker(process, {"type": "mcp_result", "result": content})
                 except Exception as e:
                     logger.exception("Worker MCP call failed")
-                    await self._write_to_worker(process, {"type": "error", "message": str(e)})
+                    payload = e.to_payload() if isinstance(e, ToolBridgeError) else {"type": "error", "message": str(e)}
+                    await self._write_to_worker(process, payload)
                 return None
             if msg_type == "intent_request":
-                from broodmind.runtime.intents.registry import IntentValidationError, validate_intent
-                from broodmind.runtime.intents.types import IntentRequest
                 from broodmind.infrastructure.store.models import IntentRecord, PermitRecord
+                from broodmind.runtime.intents.registry import (
+                    IntentValidationError,
+                    validate_intent,
+                )
+                from broodmind.runtime.intents.types import IntentRequest
 
                 try:
                     req_data = payload.get("intent")
@@ -678,13 +683,14 @@ class WorkerRuntime:
                         correlation_id=spec.id,
                         data={"reason": "malformed_worker_result_payload"},
                     )
-                await asyncio.to_thread(self.store.update_worker_status, spec.id, "completed")
+                worker_status = "failed" if result.status == "failed" else "completed"
+                await asyncio.to_thread(self.store.update_worker_status, spec.id, worker_status)
                 await asyncio.to_thread(
                     self.store.update_worker_result,
                     spec.id,
                     summary=result.summary,
                     output=result.output,
-                    error=None,
+                    error=_worker_result_error_text(result) if worker_status == "failed" else None,
                     tools_used=result.tools_used,
                 )
                 return result
@@ -772,11 +778,11 @@ class WorkerRuntime:
         # Strip ANSI escape sequences (color codes)
         ansi_escape = re.compile(r'\x1b\[[0-9;]*[mK]')
         clean_text = ansi_escape.sub('', text)
-        
+
         # Keywords that suggest an actual error
         error_keywords = {"error", "exception", "failed", "traceback", "critical"}
         lower_text = clean_text.lower()
-        
+
         if any(kw in lower_text for kw in error_keywords):
             logger.error("Worker output (error?): %s", clean_text)
         elif "info" in lower_text:
@@ -812,6 +818,7 @@ def _safe_parse_json(line: bytes) -> dict[str, Any] | None:
 def _repair_worker_result_payload(raw_result: Any) -> dict[str, Any]:
     if not isinstance(raw_result, dict):
         return {
+            "status": "failed",
             "summary": "Worker returned malformed result payload",
             "output": {"raw_result": _truncate_text(str(raw_result), 4000)},
         }
@@ -822,6 +829,9 @@ def _repair_worker_result_payload(raw_result: Any) -> dict[str, Any]:
         output = {"repr": _truncate_text(repr(output), 4000)}
 
     repaired: dict[str, Any] = {"summary": summary}
+    status = raw_result.get("status")
+    if status in {"completed", "failed"}:
+        repaired["status"] = status
     if output is not None:
         repaired["output"] = output
 
@@ -850,6 +860,15 @@ def _is_json_serializable(value: Any) -> bool:
         return True
     except Exception:
         return False
+
+
+def _worker_result_error_text(result: WorkerResult) -> str:
+    if isinstance(result.output, dict):
+        error = result.output.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+    summary = str(result.summary or "").strip()
+    return summary or "Worker reported failure"
 
 
 def _truncate_text(text: str, max_chars: int) -> str:
