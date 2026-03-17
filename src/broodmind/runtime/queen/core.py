@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -12,20 +13,23 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
+
+from broodmind.browser.manager import get_browser_manager
+from broodmind.channels.telegram.approvals import ApprovalManager
+from broodmind.infrastructure.logging import correlation_id_var
+from broodmind.infrastructure.mcp.manager import MCPManager
+from broodmind.infrastructure.providers.base import InferenceProvider
+from broodmind.infrastructure.store.base import Store
+from broodmind.infrastructure.store.models import AuditEvent
+from broodmind.runtime.housekeeping import cleanup_workspace_tmp, rotate_canon_events
 from broodmind.runtime.intents.types import ActionIntent
 from broodmind.runtime.memory.canon import CanonService
 from broodmind.runtime.memory.memchain import memchain_record
 from broodmind.runtime.memory.service import MemoryService
-from broodmind.runtime.scheduler.service import SchedulerService
-from broodmind.infrastructure.mcp.manager import MCPManager
+from broodmind.runtime.metrics import update_component_gauges
 from broodmind.runtime.policy.engine import PolicyEngine
-from broodmind.infrastructure.providers.base import InferenceProvider
-from broodmind.browser.manager import get_browser_manager
-from broodmind.runtime.housekeeping import cleanup_workspace_tmp, rotate_canon_events
-from broodmind.infrastructure.logging import correlation_id_var
 from broodmind.runtime.queen.prompt_builder import (
     build_bootstrap_context_prompt,
-    build_queen_prompt,
 )
 from broodmind.runtime.queen.router import (
     build_forced_worker_followup,
@@ -35,13 +39,15 @@ from broodmind.runtime.queen.router import (
     should_force_worker_followup,
     should_send_worker_followup,
 )
-from broodmind.runtime.metrics import update_component_gauges
-from broodmind.infrastructure.store.base import Store
-from broodmind.infrastructure.store.models import AuditEvent
-from broodmind.channels.telegram.approvals import ApprovalManager
-from broodmind.utils import has_no_user_response_suffix, is_control_response, should_suppress_user_delivery, utc_now
+from broodmind.runtime.scheduler.service import SchedulerService
 from broodmind.runtime.workers.contracts import TaskRequest, WorkerResult
 from broodmind.runtime.workers.runtime import WorkerRuntime
+from broodmind.utils import (
+    has_no_user_response_suffix,
+    is_control_response,
+    should_suppress_user_delivery,
+    utc_now,
+)
 
 logger = structlog.get_logger(__name__)
 _FOLLOWUP_QUEUES: dict[int, asyncio.Queue] = {}
@@ -105,6 +111,13 @@ _PENDING_CONVERSATIONAL_CLOSURE_TTL_SECONDS = _env_int(
     "BROODMIND_PENDING_CONVERSATIONAL_CLOSURE_TTL_SECONDS",
     3600,
     minimum=60,
+)
+_RECENT_WORKER_TASK_TTL_SECONDS = float(
+    _env_int(
+        "BROODMIND_RECENT_WORKER_TASK_TTL_SECONDS",
+        1800,
+        minimum=60,
+    )
 )
 
 
@@ -323,7 +336,7 @@ class Queen:
     internal_typing_control: callable | None = None
     _cleanup_task: asyncio.Task | None = None
     _metrics_task: asyncio.Task | None = None
-    _recent_tasks: set[str] = None  # Track tasks in current conversation to detect duplicates
+    _recent_tasks: dict[tuple[int, str, str], float] = None  # Track in-flight worker launches per chat/correlation scope
     _approval_requesters: dict[int, Callable[[Any], Awaitable[bool]]] | None = None
     _thinking_count: int = 0
     _ws_active: bool = False
@@ -352,7 +365,7 @@ class Queen:
 
     def __post_init__(self):
         if self._recent_tasks is None:
-            self._recent_tasks = set()
+            self._recent_tasks = {}
         if self._approval_requesters is None:
             self._approval_requesters = {}
         if self._worker_children is None:
@@ -387,6 +400,38 @@ class Queen:
             self._self_queue_by_chat = {}
         if self._last_opportunities_by_chat is None:
             self._last_opportunities_by_chat = {}
+
+    def _reserve_recent_task(
+        self,
+        *,
+        chat_id: int,
+        correlation_id: str | None,
+        task_signature: str,
+    ) -> bool:
+        self._prune_recent_tasks()
+        scope_id = str(correlation_id or f"chat:{chat_id}")
+        key = (chat_id, scope_id, task_signature)
+        if key in self._recent_tasks:
+            return False
+        self._recent_tasks[key] = time.monotonic()
+        return True
+
+    def _release_recent_task(
+        self,
+        *,
+        chat_id: int,
+        correlation_id: str | None,
+        task_signature: str,
+    ) -> None:
+        scope_id = str(correlation_id or f"chat:{chat_id}")
+        self._recent_tasks.pop((chat_id, scope_id, task_signature), None)
+
+    def _prune_recent_tasks(self) -> None:
+        now = time.monotonic()
+        cutoff = now - _RECENT_WORKER_TASK_TTL_SECONDS
+        stale_keys = [key for key, seen_at in self._recent_tasks.items() if seen_at < cutoff]
+        for key in stale_keys:
+            self._recent_tasks.pop(key, None)
         if self._spawn_limits is None:
             max_depth = _env_int("BROODMIND_WORKER_MAX_SPAWN_DEPTH", 2, minimum=0)
             max_total = _env_int("BROODMIND_WORKER_MAX_CHILDREN_TOTAL", 20, minimum=1)
@@ -457,12 +502,13 @@ class Queen:
             self.internal_typing_control = self._tg_typing
             self._ws_owner = None
             logger.info("Queen switched to Telegram output channel")
-        
+
         # Update system status file if possible
         try:
-            from broodmind.infrastructure.config.settings import load_settings
-            from broodmind.runtime.state import read_status, _status_path
             import json
+
+            from broodmind.infrastructure.config.settings import load_settings
+            from broodmind.runtime.state import _status_path, read_status
 
             settings = load_settings()
             status_data = read_status(settings) or {}
@@ -537,7 +583,7 @@ class Queen:
                 mcp_status = {}
                 if self.mcp_manager:
                     mcp_status = self.mcp_manager.get_server_statuses()
-                
+
                 update_component_gauges(
                     "connectivity",
                     {
@@ -671,18 +717,18 @@ class Queen:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 logger.info("Stopped periodic worker cleanup task")
-        
+
         if self._metrics_task and not self._metrics_task.done():
             self._metrics_task.cancel()
             try:
                 await self._metrics_task
             except asyncio.CancelledError:
                 logger.info("Stopped periodic metrics publishing task")
-        
+
         # Shutdown MCP sessions
         if self.mcp_manager:
             await self.mcp_manager.shutdown()
-        
+
         # Shutdown browser sessions
         await get_browser_manager().shutdown()
 
@@ -690,11 +736,11 @@ class Queen:
         system_chat_id = 0
         logger.info("Queen waking up")
         self.start_background_tasks()
-        
+
         # Load and connect MCP servers
         if self.mcp_manager:
             await self.mcp_manager.load_and_connect_all()
-        
+
         wake_up_prompt = (
             "You are waking up. Read AGENTS.md and inspect available workers internally. "
             "Use tools if needed, but never output a tool name or tool syntax as your final answer. "
@@ -735,7 +781,7 @@ class Queen:
                     "Queen is online. Initialization is complete and I am ready for your tasks."
                 )
             logger.info("Queen wake up complete", result_preview=f"{result[:60]}..." if result else "empty")
-            
+
             # Send the Queen's own response to allowed chats if configured.
             if result and self.internal_send and chat_ids:
                 try:
@@ -1161,8 +1207,6 @@ class Queen:
             correlation_token = correlation_id_var.set(correlation_id)
 
         try:
-            # Clear recent tasks at the start of each new user message
-            self._recent_tasks.clear()
             if callable(approval_requester):
                 self._approval_requesters[chat_id] = approval_requester
             logger.info("Handling message", chat_id=chat_id, is_ws=is_ws, has_images=bool(images))
@@ -1276,7 +1320,12 @@ class Queen:
         schedule_sig = scheduled_task_id or "-"
         parent_sig = parent_worker_id or "-"
         task_signature = f"{worker_id}:{schedule_sig}:{parent_sig}:{task[:100]}"  # Keep duplicate detection strict per schedule/task pair.
-        if task_signature in self._recent_tasks:
+        correlation_id = correlation_id_var.get()
+        if not self._reserve_recent_task(
+            chat_id=chat_id,
+            correlation_id=correlation_id,
+            task_signature=task_signature,
+        ):
             logger.warning("Duplicate worker task detected, skipping", worker_id=worker_id, task_prefix=task[:50])
             skipped_id = f"skipped-duplicate-{uuid4().hex[:8]}"
             await self._emit_progress(
@@ -1290,135 +1339,147 @@ class Queen:
                 "run_id": skipped_id,
                 "worker_id": None,
             }
-
-        self._recent_tasks.add(task_signature)
-
-        run_id = str(uuid4())
-        effective_lineage_id = lineage_id or run_id
-        effective_root_task_id = root_task_id or run_id
-        effective_spawn_depth = max(0, int(spawn_depth))
-        self._register_worker_lineage(
-            run_id=run_id,
-            lineage_id=effective_lineage_id,
-            spawn_depth=effective_spawn_depth,
-            parent_worker_id=parent_worker_id,
-        )
-        await self._emit_progress(
-            chat_id,
-            "queued",
-            f"Queued worker '{worker_id}' as {run_id}.",
-            {
-                "worker_id": run_id,
-                "worker_template_id": worker_id,
-                "lineage_id": effective_lineage_id,
-                "parent_worker_id": parent_worker_id,
-                "spawn_depth": effective_spawn_depth,
-            },
-        )
-        task_request = TaskRequest(
-            worker_id=worker_id,
-            task=task,
-            inputs=inputs or {},
-            tools=tools,
-            model=model,
-            timeout_seconds=timeout_seconds,
-            run_id=run_id,
-            correlation_id=correlation_id_var.get(),
-            parent_worker_id=parent_worker_id,
-            lineage_id=effective_lineage_id,
-            root_task_id=effective_root_task_id,
-            spawn_depth=effective_spawn_depth,
-        )
-
-        requester = self._approval_requesters.get(chat_id)
-        if requester is None and getattr(self.approvals, "bot", None):
-            async def _telegram_requester(intent: ActionIntent) -> bool:
-                return await self.approvals.request_approval(chat_id, intent)
-
-            requester = _telegram_requester
-
-        async def _runner() -> None:
-            failed = False
-            try:
-                await self._emit_progress(
-                    chat_id,
-                    "running",
-                    f"Worker {run_id} is running.",
-                    {"worker_id": run_id, "worker_template_id": worker_id},
-                )
-                result = await self.runtime.run_task(task_request, approval_requester=requester)
-                worker_record = await asyncio.to_thread(self.store.get_worker, run_id)
-                worker_status = getattr(worker_record, "status", None)
-                failed = worker_status in {"failed", "stopped"}
-                if scheduled_task_id and self.scheduler:
-                    if not failed:
-                        self.scheduler.mark_executed(scheduled_task_id)
-                        logger.info(
-                            "Marked scheduled task as executed after worker completion",
-                            task_id=scheduled_task_id,
-                            run_id=run_id,
-                            worker_status=worker_status,
-                        )
-                    else:
-                        logger.warning(
-                            "Skipped scheduled task execution mark due to non-completed worker state",
-                            task_id=scheduled_task_id,
-                            run_id=run_id,
-                            worker_status=worker_status,
-                        )
-                if not failed:
-                    self._register_progress(chat_id, "worker_completed")
-                await self._emit_progress(
-                    chat_id,
-                    "completed",
-                    f"Worker {run_id} completed.",
-                    {"worker_id": run_id, "worker_template_id": worker_id},
-                )
-            except Exception as exc:
-                failed = True
-                result = WorkerResult(summary=f"Worker error: {exc}", output={"error": str(exc)})
-                await self._emit_progress(
-                    chat_id,
-                    "failed",
-                    f"Worker {run_id} failed: {exc}",
-                    {"worker_id": run_id, "worker_template_id": worker_id},
-                )
-            if failed:
-                await self._cleanup_orphan_children(
-                    parent_run_id=run_id,
-                    chat_id=chat_id,
-                    reason="parent_failed",
-                )
-            self._mark_worker_inactive(run_id)
-            _enqueue_internal_result(
-                self,
-                chat_id,
-                task,
-                result,
-                correlation_id=task_request.correlation_id,
+        try:
+            run_id = str(uuid4())
+            effective_lineage_id = lineage_id or run_id
+            effective_root_task_id = root_task_id or run_id
+            effective_spawn_depth = max(0, int(spawn_depth))
+            self._register_worker_lineage(
+                run_id=run_id,
+                lineage_id=effective_lineage_id,
+                spawn_depth=effective_spawn_depth,
+                parent_worker_id=parent_worker_id,
             )
-        asyncio.create_task(_runner())
-        await self._emit_progress(
-            chat_id,
-            "worker_started",
-            f"Worker started: {run_id}",
-            {
+            await self._emit_progress(
+                chat_id,
+                "queued",
+                f"Queued worker '{worker_id}' as {run_id}.",
+                {
+                    "worker_id": run_id,
+                    "worker_template_id": worker_id,
+                    "lineage_id": effective_lineage_id,
+                    "parent_worker_id": parent_worker_id,
+                    "spawn_depth": effective_spawn_depth,
+                },
+            )
+            task_request = TaskRequest(
+                worker_id=worker_id,
+                task=task,
+                inputs=inputs or {},
+                tools=tools,
+                model=model,
+                timeout_seconds=timeout_seconds,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                parent_worker_id=parent_worker_id,
+                lineage_id=effective_lineage_id,
+                root_task_id=effective_root_task_id,
+                spawn_depth=effective_spawn_depth,
+            )
+
+            requester = self._approval_requesters.get(chat_id)
+            if requester is None and getattr(self.approvals, "bot", None):
+                async def _telegram_requester(intent: ActionIntent) -> bool:
+                    return await self.approvals.request_approval(chat_id, intent)
+
+                requester = _telegram_requester
+
+            async def _runner() -> None:
+                failed = False
+                try:
+                    await self._emit_progress(
+                        chat_id,
+                        "running",
+                        f"Worker {run_id} is running.",
+                        {"worker_id": run_id, "worker_template_id": worker_id},
+                    )
+                    result = await self.runtime.run_task(task_request, approval_requester=requester)
+                    worker_record = await asyncio.to_thread(self.store.get_worker, run_id)
+                    worker_status = getattr(worker_record, "status", None)
+                    failed = worker_status in {"failed", "stopped"}
+                    if scheduled_task_id and self.scheduler:
+                        if not failed:
+                            self.scheduler.mark_executed(scheduled_task_id)
+                            logger.info(
+                                "Marked scheduled task as executed after worker completion",
+                                task_id=scheduled_task_id,
+                                run_id=run_id,
+                                worker_status=worker_status,
+                            )
+                        else:
+                            logger.warning(
+                                "Skipped scheduled task execution mark due to non-completed worker state",
+                                task_id=scheduled_task_id,
+                                run_id=run_id,
+                                worker_status=worker_status,
+                            )
+                    if not failed:
+                        self._register_progress(chat_id, "worker_completed")
+                    await self._emit_progress(
+                        chat_id,
+                        "completed",
+                        f"Worker {run_id} completed.",
+                        {"worker_id": run_id, "worker_template_id": worker_id},
+                    )
+                except Exception as exc:
+                    failed = True
+                    result = WorkerResult(summary=f"Worker error: {exc}", output={"error": str(exc)})
+                    await self._emit_progress(
+                        chat_id,
+                        "failed",
+                        f"Worker {run_id} failed: {exc}",
+                        {"worker_id": run_id, "worker_template_id": worker_id},
+                    )
+                finally:
+                    self._release_recent_task(
+                        chat_id=chat_id,
+                        correlation_id=correlation_id,
+                        task_signature=task_signature,
+                    )
+                if failed:
+                    await self._cleanup_orphan_children(
+                        parent_run_id=run_id,
+                        chat_id=chat_id,
+                        reason="parent_failed",
+                    )
+                self._mark_worker_inactive(run_id)
+                _enqueue_internal_result(
+                    self,
+                    chat_id,
+                    task,
+                    result,
+                    correlation_id=task_request.correlation_id,
+                )
+
+            asyncio.create_task(_runner())
+            await self._emit_progress(
+                chat_id,
+                "worker_started",
+                f"Worker started: {run_id}",
+                {
+                    "worker_id": run_id,
+                    "worker_template_id": worker_id,
+                    "lineage_id": effective_lineage_id,
+                    "parent_worker_id": parent_worker_id,
+                    "spawn_depth": effective_spawn_depth,
+                },
+            )
+            return {
+                "status": "started",
+                "run_id": run_id,
                 "worker_id": run_id,
-                "worker_template_id": worker_id,
                 "lineage_id": effective_lineage_id,
                 "parent_worker_id": parent_worker_id,
+                "root_task_id": effective_root_task_id,
                 "spawn_depth": effective_spawn_depth,
-            },
-        )
-        return {
-            "status": "started",
-            "run_id": run_id,
-            "worker_id": run_id,
-            "lineage_id": effective_lineage_id,
-            "parent_worker_id": parent_worker_id,
-            "root_task_id": effective_root_task_id,
-            "spawn_depth": effective_spawn_depth,
-        }
+            }
+        except Exception:
+            self._release_recent_task(
+                chat_id=chat_id,
+                correlation_id=correlation_id,
+                task_signature=task_signature,
+            )
+            raise
 
     def _check_child_spawn_limits(self, *, lineage_id: str | None, spawn_depth: int) -> str | None:
         limits = self._spawn_limits or {}
@@ -1581,9 +1642,7 @@ def _is_progress_reply(current_norm: str, prior_norm: str) -> bool:
         "still working on it",
         "no update",
     )
-    if any(marker in current_norm for marker in stalled_markers):
-        return False
-    return True
+    return not any(marker in current_norm for marker in stalled_markers)
 
 
 _FOLLOWUP_REQUIRED_MARKER = "FOLLOWUP_REQUIRED"
@@ -1772,10 +1831,7 @@ def _append_context_audit_markdown(path: Path, handoff: dict[str, Any]) -> None:
         f"- no_progress_turns: {health.get('no_progress_turns', 0)}\n"
         f"- overload_score: {health.get('overload_score', 0)}\n"
     )
-    if path.exists():
-        existing = path.read_text(encoding="utf-8")
-    else:
-        existing = "# Context Reset Audit\n"
+    existing = path.read_text(encoding="utf-8") if path.exists() else "# Context Reset Audit\n"
     path.write_text(existing.rstrip() + section + "\n", encoding="utf-8")
 
 
