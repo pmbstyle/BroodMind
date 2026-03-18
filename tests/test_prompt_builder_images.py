@@ -36,3 +36,33 @@ def test_build_queen_prompt_includes_saved_image_paths_in_user_text() -> None:
         assert "saved locally for tool-based inspection" in first_block["text"]
 
     asyncio.run(scenario())
+
+
+def test_build_queen_prompt_includes_worker_first_guardrails() -> None:
+    class DummyMemory:
+        async def get_context(self, user_text: str, exclude_chat_id: int | None = None):
+            return []
+
+        async def get_recent_history(self, chat_id: int, limit: int = 20):
+            return []
+
+    class DummyCanon:
+        def get_tier1_context(self):
+            return ""
+
+    async def scenario() -> None:
+        messages = await build_queen_prompt(
+            store=object(),
+            memory=DummyMemory(),
+            canon=DummyCanon(),
+            user_text="check heartbeat",
+            chat_id=123,
+            bootstrap_context="",
+        )
+        system_message = messages[0]
+        assert isinstance(system_message.content, str)
+        assert "Workers are the default execution unit for external work." in system_message.content
+        assert "Treat direct Queen-side network or MCP access as emergency-only fallback." in system_message.content
+        assert "For scheduled or network-heavy work, never lower `timeout_seconds` below the worker template default" in system_message.content
+
+    asyncio.run(scenario())
