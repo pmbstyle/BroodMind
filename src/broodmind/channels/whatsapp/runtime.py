@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from broodmind.runtime.state import update_last_message
 from broodmind.utils import (
     extract_reaction_and_strip,
     normalize_reaction_emoji,
+    sanitize_user_facing_text,
     should_suppress_user_delivery,
     strip_reaction_tags,
 )
@@ -47,9 +49,24 @@ class WhatsAppRuntime:
         async def _internal_send(chat_id: int, text: str) -> None:
             if should_suppress_user_delivery(text):
                 return
-            clean_text = strip_reaction_tags(text)
+            
+            emoji, final_text = extract_reaction_and_strip(text)
+            if emoji:
+                to = self._number_by_chat_id.get(chat_id)
+                # We need a message ID to react. This simple runtime currently doesn't 
+                # track last inbound message ID globally per chat in a way that's easily 
+                # accessible here without more refactoring, but we can try to use 
+                # the one from the bridge if we had it. 
+                # For now, final reactions are handled in _flush_pending_turn.
+                pass
+
+            if not final_text:
+                return
+                
+            clean_text = sanitize_user_facing_text(final_text)
             if not clean_text:
                 return
+                
             to = self._number_by_chat_id.get(chat_id)
             if not to:
                 logger.warning("Missing WhatsApp recipient mapping", chat_id=chat_id)
@@ -63,10 +80,9 @@ class WhatsAppRuntime:
             text: str,
             meta: dict[str, object],
         ) -> None:
-            if state != "partial":
-                return
-            if text.strip():
-                logger.debug("Suppressed WhatsApp partial progress preview", chat_id=chat_id, text_len=len(text))
+            # WhatsApp doesn't support easy 'typing' but we can send status reactions 
+            # if we have the message ID.
+            logger.info("WhatsApp progress event", chat_id=chat_id, state=state, text=text)
 
         async def _internal_typing_control(chat_id: int, active: bool) -> None:
             logger.debug("WhatsApp typing indicator not implemented", chat_id=chat_id, active=active)
@@ -210,6 +226,24 @@ class WhatsAppRuntime:
         metadata: dict[str, Any],
     ) -> None:
         lock = self._lock_by_chat_id.setdefault(chat_id, asyncio.Lock())
+        to = self._number_by_chat_id.get(chat_id)
+        message_id = str(metadata.get("message_id", "") or "").strip()
+        remote_jid = str(metadata.get("remote_jid", "") or "").strip() or None
+        target_from_me = bool(metadata.get("target_from_me"))
+
+        # Immediate feedback
+        if to and message_id:
+            try:
+                self.bridge.send_reaction(
+                    to,
+                    "🤔",
+                    message_id=message_id,
+                    remote_jid=remote_jid,
+                    target_from_me=target_from_me,
+                )
+            except Exception:
+                logger.debug("Failed to set WhatsApp thinking reaction", chat_id=chat_id)
+
         async with lock:
             reply = await self.queen.handle_message(
                 text,
@@ -249,16 +283,30 @@ class WhatsAppRuntime:
 
 def _chunk_text(text: str, limit: int) -> list[str]:
     if len(text) <= limit:
-        return [text]
+        return [_whatsappify(text)]
     parts: list[str] = []
     remaining = text
     while remaining:
         if len(remaining) <= limit:
-            parts.append(remaining)
+            parts.append(_whatsappify(remaining))
             break
         cut = remaining.rfind("\n", 0, limit)
         if cut <= 0:
             cut = limit
-        parts.append(remaining[:cut].strip())
+        parts.append(_whatsappify(remaining[:cut].strip()))
         remaining = remaining[cut:].lstrip()
     return [part for part in parts if part]
+
+
+def _whatsappify(text: str) -> str:
+    """Convert basic Markdown to WhatsApp format."""
+    if not text:
+        return ""
+    # Convert bold **text** to *text*
+    text = re.sub(r"\*\*(.*?)\*\*", r"*\1*", text)
+    # Convert italic _text_ or *text* to _text_
+    # We use a cautious approach here to avoid breaking things
+    text = re.sub(r"__(.*?)__", r"_\1_", text)
+    # Convert inline code `text` to ```text```
+    text = re.sub(r"`([^`\n]+)`", r"```\1```", text)
+    return text

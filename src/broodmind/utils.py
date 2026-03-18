@@ -18,9 +18,19 @@ _TOOL_RESULT_LINE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TECHNICAL_FAILURE_RE = re.compile(
-    r"remote mcp tool response schema is incompatible|mcp_schema_mismatch|schema mismatch",
+    r"remote mcp tool response schema is incompatible|mcp_schema_mismatch|schema mismatch|failed to load worker template",
     re.IGNORECASE,
 )
+
+# Standard Telegram bot reactions (as of Bot API 7.3+)
+_TELEGRAM_SUPPORTED_REACTIONS = {
+    "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩",
+    "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆",
+    "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈",
+    "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "💻", "🤲",
+    "💊", "🦄", "⭐", "🎈", "🎆", "🎇", "🥨", "🦌", "🛷", "🧡", "🕊", "🌿", "🍓"
+}
+
 _REACTION_MAPPING = {
     "✅": "👍",
     "✔️": "👍",
@@ -29,6 +39,11 @@ _REACTION_MAPPING = {
     "🚀": "⚡",
     "⚠️": "🤨",
     "ℹ️": "🤔",
+    "🛠️": "👨‍💻",
+    "🌐": "⚡",
+    "🔍": "👀",
+    "🧠": "🤔",
+    "📝": "✍",
 }
 
 def get_tailscale_ips() -> list[str]:
@@ -59,7 +74,20 @@ def utc_now() -> datetime:
 
 
 def normalize_reaction_emoji(emoji: str) -> str:
-    return _REACTION_MAPPING.get((emoji or "").strip(), (emoji or "").strip())
+    """Map unsupported or styled emojis to standard platform-friendly ones."""
+    val = (emoji or "").strip()
+    # Handle variation selectors (strip \uFE0F)
+    base_val = val.replace("\ufe0f", "")
+    
+    if base_val in _REACTION_MAPPING:
+        return _REACTION_MAPPING[base_val]
+    
+    # If it's already a supported emoji, return it
+    if base_val in _TELEGRAM_SUPPORTED_REACTIONS or val in _TELEGRAM_SUPPORTED_REACTIONS:
+        return val
+        
+    # Fallback to thinking or thumb up
+    return "👍"
 
 
 def extract_reaction_and_strip(text: str) -> tuple[str | None, str]:
@@ -77,7 +105,10 @@ def strip_reaction_tags(text: str) -> str:
 
 def sanitize_user_facing_text(text: str) -> str:
     """Remove reasoning/tool traces and collapse raw machine payloads into safe text."""
-    value = strip_reaction_tags(text or "")
+    if not text:
+        return ""
+        
+    value = strip_reaction_tags(text)
     if not value:
         return ""
 
@@ -85,6 +116,20 @@ def sanitize_user_facing_text(text: str) -> str:
     cleaned = _THINK_BLOCK_RE.sub("", cleaned)
     cleaned = _THINK_TAG_RE.sub("", cleaned)
     cleaned = _TOOL_RESULT_LINE_RE.sub("", cleaned)
+    
+    # Filter out common system-level phrases that might leak
+    system_patterns = [
+        r"Worker completed: .*",
+        r"Worker error: .*",
+        r"Processing internal worker result.*",
+        r"Queued worker '.*' as .*",
+        r"Worker .* is running\.",
+        r"Worker .* completed\.",
+        r"Worker .* failed: .*",
+    ]
+    for pattern in system_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+
     cleaned = cleaned.strip()
     if not cleaned:
         return ""
