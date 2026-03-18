@@ -12,9 +12,30 @@ class _FakeBridgeController:
     def __init__(self, settings) -> None:
         self.settings = settings
         self.sent: list[tuple[str, str]] = []
+        self.reactions: list[dict] = []
 
     def send_message(self, to: str, text: str) -> dict:
         self.sent.append((to, text))
+        return {"ok": True}
+
+    def send_reaction(
+        self,
+        to: str,
+        emoji: str,
+        *,
+        message_id: str,
+        remote_jid: str | None = None,
+        target_from_me: bool = False,
+    ) -> dict:
+        self.reactions.append(
+            {
+                "to": to,
+                "emoji": emoji,
+                "message_id": message_id,
+                "remote_jid": remote_jid,
+                "target_from_me": target_from_me,
+            }
+        )
         return {"ok": True}
 
     def start(self, *, callback_url: str | None = None) -> None:
@@ -228,5 +249,50 @@ def test_whatsapp_runtime_aggregates_messages_within_grace_window(monkeypatch) -
 
         assert len(fake_queen.handled) == 1
         assert fake_queen.handled[0]["text"] == "hello\n\nand another thing"
+
+    asyncio.run(scenario())
+
+
+def test_whatsapp_runtime_applies_reaction_and_strips_tag(monkeypatch) -> None:
+    fake_queen = _FakeQueen()
+
+    async def _handle_message(text: str, chat_id: int, **kwargs):
+        fake_queen.handled.append({"text": text, "chat_id": chat_id, "kwargs": kwargs})
+        return _FakeReply("<react>✅</react> All done.")
+
+    fake_queen.handle_message = _handle_message  # type: ignore[method-assign]
+
+    monkeypatch.setattr(whatsapp_runtime_module, "build_queen", lambda settings: fake_queen)
+    monkeypatch.setattr(whatsapp_runtime_module, "WhatsAppBridgeController", _FakeBridgeController)
+    monkeypatch.setattr(whatsapp_runtime_module, "update_component_gauges", lambda *args, **kwargs: None)
+    monkeypatch.setattr(whatsapp_runtime_module, "update_last_message", lambda *args, **kwargs: None)
+
+    runtime = WhatsAppRuntime(_make_settings(mode="personal", allowed_numbers="+15551234567"))
+    runtime.attach_queen_output()
+    chat_id = whatsapp_runtime_module.whatsapp_chat_id("+15551234567")
+    runtime._number_by_chat_id[chat_id] = "+15551234567"
+
+    async def scenario() -> None:
+        await runtime._flush_pending_turn(
+            chat_id,
+            "hello from self",
+            [],
+            [],
+            {
+                "message_id": "wamid-1",
+                "remote_jid": "15551234567@s.whatsapp.net",
+                "target_from_me": True,
+            },
+        )
+        assert runtime.bridge.reactions == [
+            {
+                "to": "+15551234567",
+                "emoji": "👍",
+                "message_id": "wamid-1",
+                "remote_jid": "15551234567@s.whatsapp.net",
+                "target_from_me": True,
+            }
+        ]
+        assert runtime.bridge.sent == [("+15551234567", "All done.")]
 
     asyncio.run(scenario())

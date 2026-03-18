@@ -10,6 +10,16 @@ _TEXTUAL_TOOL_PREVIEW_RE = re.compile(
     r"^(?P<tool>(?:mcp__[\w-]+__)?[a-z][a-z0-9_]{1,63})(?P<rest>(?:,\s*[a-z_][a-z0-9_ -]{0,31}:\s*[^,\n]{1,200})+)$",
     re.IGNORECASE,
 )
+_REACT_TAG_RE = re.compile(r"<react>(.*?)</react>", re.IGNORECASE | re.DOTALL)
+_REACTION_MAPPING = {
+    "✅": "👍",
+    "✔️": "👍",
+    "❌": "👎",
+    "✖️": "👎",
+    "🚀": "⚡",
+    "⚠️": "🤨",
+    "ℹ️": "🤔",
+}
 
 def get_tailscale_ips() -> list[str]:
     """Retrieve all available Tailscale IPs in the tailnet using JSON output."""
@@ -36,6 +46,23 @@ def get_tailscale_ips() -> list[str]:
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def normalize_reaction_emoji(emoji: str) -> str:
+    return _REACTION_MAPPING.get((emoji or "").strip(), (emoji or "").strip())
+
+
+def extract_reaction_and_strip(text: str) -> tuple[str | None, str]:
+    match = _REACT_TAG_RE.search(text or "")
+    if not match:
+        return None, text or ""
+    emoji = (match.group(1) or "").strip() or None
+    cleaned = _REACT_TAG_RE.sub("", text or "").strip()
+    return emoji, cleaned
+
+
+def strip_reaction_tags(text: str) -> str:
+    return _REACT_TAG_RE.sub("", text or "").strip()
 
 
 def is_heartbeat_ok(text: str) -> bool:

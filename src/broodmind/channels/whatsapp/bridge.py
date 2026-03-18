@@ -148,6 +148,27 @@ class WhatsAppBridgeController:
     def send_message(self, to: str, text: str) -> dict[str, Any]:
         return self._request("POST", "/send", json={"to": to, "text": text})
 
+    def send_reaction(
+        self,
+        to: str,
+        emoji: str,
+        *,
+        message_id: str,
+        remote_jid: str | None = None,
+        target_from_me: bool = False,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/react",
+            json={
+                "to": to,
+                "emoji": emoji,
+                "messageId": message_id,
+                "remoteJid": remote_jid or "",
+                "targetFromMe": bool(target_from_me),
+            },
+        )
+
     def logout(self) -> dict[str, Any]:
         return self._request("POST", "/logout")
 

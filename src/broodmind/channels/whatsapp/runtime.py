@@ -8,18 +8,23 @@ from typing import Any
 
 import structlog
 
-from broodmind.runtime.app import build_queen
-from broodmind.infrastructure.config.settings import Settings
-from broodmind.runtime.pending_turns import PendingTurnAggregator
-from broodmind.runtime.queen.core import Queen
-from broodmind.runtime.metrics import update_component_gauges
-from broodmind.runtime.state import update_last_message
-from broodmind.utils import should_suppress_user_delivery
 from broodmind.channels.whatsapp.bridge import WhatsAppBridgeController
 from broodmind.channels.whatsapp.ids import (
     normalize_whatsapp_number,
     parse_allowed_whatsapp_numbers,
     whatsapp_chat_id,
+)
+from broodmind.infrastructure.config.settings import Settings
+from broodmind.runtime.app import build_queen
+from broodmind.runtime.metrics import update_component_gauges
+from broodmind.runtime.pending_turns import PendingTurnAggregator
+from broodmind.runtime.queen.core import Queen
+from broodmind.runtime.state import update_last_message
+from broodmind.utils import (
+    extract_reaction_and_strip,
+    normalize_reaction_emoji,
+    should_suppress_user_delivery,
+    strip_reaction_tags,
 )
 
 logger = structlog.get_logger(__name__)
@@ -42,11 +47,14 @@ class WhatsAppRuntime:
         async def _internal_send(chat_id: int, text: str) -> None:
             if should_suppress_user_delivery(text):
                 return
+            clean_text = strip_reaction_tags(text)
+            if not clean_text:
+                return
             to = self._number_by_chat_id.get(chat_id)
             if not to:
                 logger.warning("Missing WhatsApp recipient mapping", chat_id=chat_id)
                 return
-            for chunk in _chunk_text(text, limit=4000):
+            for chunk in _chunk_text(clean_text, limit=4000):
                 self.bridge.send_message(to, chunk)
 
         async def _internal_progress_send(
@@ -129,6 +137,11 @@ class WhatsAppRuntime:
             text=text,
             images=images,
             saved_file_paths=saved_file_paths,
+            metadata={
+                "message_id": str(payload.get("messageId", "") or "").strip(),
+                "remote_jid": str(payload.get("remoteJid", "") or "").strip(),
+                "target_from_me": from_me,
+            },
         )
         self._publish_metrics(last_sender=sender)
         return {"accepted": True, "chat_id": chat_id}
@@ -196,7 +209,6 @@ class WhatsAppRuntime:
         saved_file_paths: list[str],
         metadata: dict[str, Any],
     ) -> None:
-        del metadata
         lock = self._lock_by_chat_id.setdefault(chat_id, asyncio.Lock())
         async with lock:
             reply = await self.queen.handle_message(
@@ -207,8 +219,32 @@ class WhatsAppRuntime:
             )
         update_last_message(self.settings)
         immediate = getattr(reply, "immediate", "")
-        if immediate and not should_suppress_user_delivery(immediate):
-            await self.queen.internal_send(chat_id, immediate)
+        if immediate:
+            emoji, final_text = extract_reaction_and_strip(immediate)
+            to = self._number_by_chat_id.get(chat_id)
+            message_id = str(metadata.get("message_id", "") or "").strip()
+            remote_jid = str(metadata.get("remote_jid", "") or "").strip() or None
+            target_from_me = bool(metadata.get("target_from_me"))
+            if emoji and to and message_id:
+                try:
+                    self.bridge.send_reaction(
+                        to,
+                        normalize_reaction_emoji(emoji),
+                        message_id=message_id,
+                        remote_jid=remote_jid,
+                        target_from_me=target_from_me,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to apply WhatsApp reaction",
+                        chat_id=chat_id,
+                        emoji=emoji,
+                        message_id=message_id,
+                        exc_info=True,
+                    )
+
+            if final_text and not should_suppress_user_delivery(final_text):
+                await self.queen.internal_send(chat_id, final_text)
 
 
 def _chunk_text(text: str, limit: int) -> list[str]:
