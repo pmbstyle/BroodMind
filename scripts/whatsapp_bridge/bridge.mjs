@@ -294,6 +294,28 @@ const server = http.createServer(async (req, res) => {
     rememberOutboundMessageId(result?.key?.id);
     return await jsonResponse(res, 200, { ok: true, to, length: text.length });
   }
+  if (req.method === "POST" && url.pathname === "/react") {
+    const payload = await readJson(req);
+    const to = normalizeDirectJid(payload.to || payload.remoteJid || "");
+    const remoteJid = normalizeDirectJid(payload.remoteJid || payload.to || "");
+    const emoji = String(payload.emoji || "").trim();
+    const messageId = String(payload.messageId || "").trim();
+    const targetFromMe = Boolean(payload.targetFromMe);
+    if (!sock || !to || !remoteJid || !emoji || !messageId) {
+      return await jsonResponse(res, 400, { ok: false, error: "missing_reaction_target" });
+    }
+    await sock.sendMessage(to, {
+      react: {
+        text: emoji,
+        key: {
+          remoteJid,
+          id: messageId,
+          fromMe: targetFromMe,
+        },
+      },
+    });
+    return await jsonResponse(res, 200, { ok: true, to, messageId, emoji });
+  }
   if (req.method === "POST" && url.pathname === "/logout") {
     try {
       if (sock) {

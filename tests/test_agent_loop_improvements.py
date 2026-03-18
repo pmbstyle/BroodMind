@@ -4,8 +4,7 @@ import asyncio
 import time
 from pathlib import Path
 
-from broodmind.tools.registry import ToolSpec
-from broodmind.worker_sdk.worker import Worker
+from broodmind.runtime.tool_errors import ToolBridgeError
 from broodmind.runtime.workers.agent_worker import (
     _auto_tune_max_steps,
     _classify_tool_error,
@@ -19,7 +18,12 @@ from broodmind.runtime.workers.agent_worker import (
     _tool_no_progress_streak,
 )
 from broodmind.runtime.workers.contracts import WorkerSpec
-from broodmind.runtime.workers.runtime import _call_mcp_with_name_fallback, _extract_mcp_tool_identity
+from broodmind.runtime.workers.runtime import (
+    _call_mcp_with_name_fallback,
+    _extract_mcp_tool_identity,
+)
+from broodmind.tools.registry import ToolSpec
+from broodmind.worker_sdk.worker import Worker
 
 
 def _dummy_worker() -> Worker:
@@ -179,6 +183,46 @@ def test_execute_tool_timeout_returns_error() -> None:
 def test_tool_error_classification() -> None:
     assert _classify_tool_error("connection timeout while fetching") == "transient"
     assert _classify_tool_error("permission denied by policy") == "permanent"
+
+
+def test_execute_tool_preserves_structured_bridge_error_metadata() -> None:
+    worker = _dummy_worker()
+
+    async def broken_handler(args, ctx):
+        raise ToolBridgeError(
+            "schema mismatch",
+            bridge="mcp",
+            classification="schema_mismatch",
+            retryable=False,
+            server_id="demo",
+            tool_name="get_thread",
+        )
+
+    tool = ToolSpec(
+        name="mcp_demo_get_thread",
+        description="broken",
+        parameters={"type": "object"},
+        permission="network",
+        handler=broken_handler,
+        is_async=True,
+    )
+
+    async def scenario():
+        return await _execute_tool(
+            "mcp_demo_get_thread",
+            {},
+            Path("."),
+            worker,
+            {"mcp_demo_get_thread": tool},
+            timeout_seconds=5,
+        )
+
+    result, meta = asyncio.run(scenario())
+    assert result["error"] == "schema mismatch"
+    assert meta["had_error"] is True
+    assert meta["error_type"] == "permanent"
+    assert meta["error_bridge"] == "mcp"
+    assert meta["error_classification"] == "schema_mismatch"
 
 
 def test_auto_tune_max_steps_increases_for_web_and_mcp() -> None:

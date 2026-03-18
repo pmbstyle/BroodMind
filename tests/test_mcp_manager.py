@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
-from broodmind.infrastructure.mcp.manager import MCPManager, MCPServerConfig, _classify_mcp_call_error
+from broodmind.infrastructure.mcp.manager import (
+    MCPManager,
+    MCPServerConfig,
+    _classify_mcp_call_error,
+)
+from broodmind.runtime.tool_errors import MCPToolCallError
 
 
 def test_mcp_manager_schedules_self_healing_reconnect(tmp_path, monkeypatch) -> None:
@@ -79,10 +85,8 @@ def test_mcp_manager_statuses_report_reconnecting_and_reason(tmp_path) -> None:
         statuses = manager.get_server_statuses()
         task = manager._reconnect_tasks.pop("demo")
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
         return statuses
 
     statuses = asyncio.run(scenario())
@@ -134,3 +138,26 @@ def test_classify_mcp_schema_mismatch_stays_distinct() -> None:
 
     assert info["classification"] == "schema_mismatch"
     assert "structuredContent" in info["hint"]
+
+
+def test_call_tool_preserves_schema_mismatch_metadata(tmp_path) -> None:
+    manager = MCPManager(tmp_path)
+
+    class _Session:
+        async def call_tool(self, _tool_name: str, arguments: dict):
+            raise RuntimeError("invalid tools/call result: structuredContent did not match schema")
+
+    async def scenario() -> None:
+        manager.sessions["demo"] = _Session()
+        await manager.call_tool("demo", "get_thread", {"thread_id": "abc"})
+
+    try:
+        asyncio.run(scenario())
+    except MCPToolCallError as exc:
+        assert exc.bridge == "mcp"
+        assert exc.classification == "schema_mismatch"
+        assert exc.retryable is False
+        assert exc.server_id == "demo"
+        assert exc.tool_name == "get_thread"
+    else:
+        raise AssertionError("Expected structured MCP tool error")

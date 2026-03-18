@@ -9,6 +9,7 @@ from typing import Any
 from broodmind.runtime.intents.registry import canonical_json, normalize_payload
 from broodmind.runtime.intents.types import IntentRequest
 from broodmind.runtime.policy.permits import Permit
+from broodmind.runtime.tool_errors import ToolBridgeError
 from broodmind.runtime.workers.contracts import KnowledgeProposal, WorkerResult, WorkerSpec
 
 
@@ -84,7 +85,7 @@ class Worker:
         })
         response = await self._read_message()
         if response.get("type") == "error":
-            raise RuntimeError(response.get("message", "Unknown MCP error"))
+            raise ToolBridgeError.from_payload(response, default_bridge="mcp")
         return response.get("result")
 
     async def call_queen_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
@@ -99,7 +100,11 @@ class Worker:
         if response.get("type") != "queen_tool_result":
             raise RuntimeError("Unexpected response from Queen tool bridge")
         if not bool(response.get("ok", False)):
-            raise RuntimeError(str(response.get("error") or "Queen tool call failed"))
+            raise ToolBridgeError(
+                str(response.get("error") or "Queen tool call failed"),
+                bridge="queen",
+                tool_name=tool_name,
+            )
         return response.get("result")
 
     async def _write_message(self, payload: dict[str, Any]) -> None:

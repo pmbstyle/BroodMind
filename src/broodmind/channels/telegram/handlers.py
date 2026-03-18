@@ -1,30 +1,35 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
-import re
-import structlog
-import uuid
-import asyncio
 import os
+import uuid
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import structlog
 import telegramify_markdown
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
 
-from broodmind.infrastructure.config.settings import Settings
-from broodmind.infrastructure.logging import correlation_id_var
-from broodmind.runtime.pending_turns import PendingTurnAggregator
-from broodmind.runtime.queen.core import Queen, QueenReply
-from broodmind.runtime.metrics import update_component_gauges
-from broodmind.runtime.state import update_last_message
 from broodmind.channels.telegram.access import is_allowed_chat, parse_allowed_chat_ids
 from broodmind.channels.telegram.approvals import ApprovalManager
-from broodmind.utils import should_suppress_user_delivery, utc_now
+from broodmind.infrastructure.config.settings import Settings
+from broodmind.infrastructure.logging import correlation_id_var
+from broodmind.runtime.metrics import update_component_gauges
+from broodmind.runtime.pending_turns import PendingTurnAggregator
+from broodmind.runtime.queen.core import Queen, QueenReply
+from broodmind.runtime.state import update_last_message
+from broodmind.utils import (
+    extract_reaction_and_strip,
+    normalize_reaction_emoji,
+    should_suppress_user_delivery,
+    strip_reaction_tags,
+    utc_now,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -56,38 +61,6 @@ def _publish_runtime_metrics() -> None:
             "typing_tasks": len(_TYPING_TASKS),
         },
     )
-
-
-_REACTION_MAPPING = {
-    "✅": "👍",
-    "✔️": "👍",
-    "❌": "👎",
-    "✖️": "👎",
-    "🚀": "⚡",
-    "⚠️": "🤨",
-    "ℹ️": "🤔",
-}
-
-
-_REACT_TAG_RE = re.compile(r"<react>(.*?)</react>", re.IGNORECASE | re.DOTALL)
-
-
-def _normalize_reaction(emoji: str) -> str:
-    # Handle both raw emoji and potential mapping
-    return _REACTION_MAPPING.get(emoji.strip(), emoji.strip())
-
-
-def _extract_reaction_and_strip(text: str) -> tuple[str | None, str]:
-    match = _REACT_TAG_RE.search(text or "")
-    if not match:
-        return None, text or ""
-    emoji = (match.group(1) or "").strip() or None
-    cleaned = _REACT_TAG_RE.sub("", text or "").strip()
-    return emoji, cleaned
-
-
-def _strip_reaction_tags(text: str) -> str:
-    return _REACT_TAG_RE.sub("", text or "").strip()
 
 
 def register_handlers(
@@ -208,7 +181,7 @@ def register_handlers(
         if not templates:
             await message.answer("No worker templates found.")
             return
-        
+
         text = "**Available Workers:**\n\n"
         for t in templates:
             text += f"**{t.worker_id}**\n{t.description or 'No description'}\n\n"
@@ -225,7 +198,7 @@ def register_handlers(
             limit = max(50, min(limit, 1000))
 
         entries = await asyncio.to_thread(queen.store.list_memory_entries, limit=limit)
-        
+
         unique_chats = set()
         role_counts = {}
         for e in entries:
@@ -240,7 +213,7 @@ def register_handlers(
         )
         for role, count in role_counts.items():
             text += f"- {role}: {count}\n"
-        
+
         await message.answer(text, parse_mode="Markdown")
 
     @dp.message()
@@ -295,8 +268,8 @@ def register_handlers(
                 clean_text = text[2:].strip()
                 if clean_text:
                     await queen.memory.add_message(
-                        "user", 
-                        f"[SILENT LOG] {clean_text}", 
+                        "user",
+                        f"[SILENT LOG] {clean_text}",
                         {"chat_id": message.chat.id, "silent": True, "has_images": bool(images)}
                     )
                     # We don't store images deep in memory yet, but we acknowledge receipt.
@@ -350,11 +323,11 @@ async def _send_chunked(bot: Bot, chat_id: int, text: str, reply_to_message_id: 
 
 async def _send_message_safe(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None) -> None:
     parse_mode = _TELEGRAM_PARSE_MODE
-    text = _strip_reaction_tags(text)
+    text = strip_reaction_tags(text)
     outbound = text
     if parse_mode == "MarkdownV2":
         outbound = _prepare_markdown_v2(text)
-    
+
     try:
         if not parse_mode:
             await bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
@@ -461,9 +434,9 @@ def _flush_pending_turn_factory(
                 update_last_message(settings)
                 final_text = reply.immediate or ""
 
-                emoji, final_text = _extract_reaction_and_strip(final_text)
+                emoji, final_text = extract_reaction_and_strip(final_text)
                 if emoji and reply_to_message_id is not None:
-                    mapped_emoji = _normalize_reaction(emoji)
+                    mapped_emoji = normalize_reaction_emoji(emoji)
                     try:
                         await bot.set_message_reaction(
                             chat_id=chat_id,

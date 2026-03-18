@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import asyncio
 
+from broodmind.infrastructure.providers.base import Message
 from broodmind.runtime.queen.router import (
-    _finalize_response,
     _budget_tool_specs,
+    _finalize_response,
     _recover_textual_tool_call,
     _sanitize_messages_for_complete,
     _shrink_tool_specs_for_retry,
 )
-from broodmind.infrastructure.providers.base import Message
-from broodmind.tools.tools import get_tools
 from broodmind.tools.registry import ToolSpec
+from broodmind.tools.tools import get_tools
 
 
 def test_budget_keeps_internal_worker_and_scheduler_tools() -> None:
@@ -519,7 +519,7 @@ def test_sanitize_messages_keeps_tool_results_for_plain_fallback() -> None:
 
     tool_summary = next(msg for msg in sanitized if msg["role"] == "assistant" and "Tool result" in msg["content"])
     assert "Tool result (check_schedule)" in tool_summary["content"]
-    assert '"status":"ok"' in tool_summary["content"]
+    assert '"status": "ok"' in tool_summary["content"]
 
 
 def test_finalize_response_rewrites_bare_tool_name() -> None:
@@ -550,6 +550,23 @@ def test_finalize_response_returns_no_user_response_when_rewrite_still_bad() -> 
             DummyProvider(),
             [Message(role="system", content="Rewrite if needed.")],
             "list_workers",
+            internal_followup=True,
+        )
+        assert result == "NO_USER_RESPONSE"
+
+    asyncio.run(scenario())
+
+
+def test_finalize_response_preserves_control_token_without_rewrite() -> None:
+    class DummyProvider:
+        async def complete(self, messages, **kwargs):
+            raise AssertionError("control token should not trigger rewrite")
+
+    async def scenario() -> None:
+        result = await _finalize_response(
+            DummyProvider(),
+            [Message(role="system", content="Rewrite if needed.")],
+            "NO_USER_RESPONSE",
             internal_followup=True,
         )
         assert result == "NO_USER_RESPONSE"

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from broodmind.runtime.intents.types import IntentRequest
+from broodmind.runtime.tool_errors import ToolBridgeError
 from broodmind.runtime.workers.contracts import WorkerResult, WorkerSpec
 from broodmind.worker_sdk.intents import http_get
 from broodmind.worker_sdk.protocol import VALID_MESSAGE_TYPES
@@ -86,7 +87,7 @@ def test_worker_log_and_complete_emit_expected_messages(monkeypatch) -> None:
 
     assert sent == [
         {"type": "log", "level": "info", "message": "hello"},
-        {"type": "result", "result": {"summary": "done", "output": {"ok": True}, "questions": [], "knowledge_proposals": [], "thinking_steps": 0, "tools_used": []}},
+        {"type": "result", "result": {"status": "completed", "summary": "done", "output": {"ok": True}, "questions": [], "knowledge_proposals": [], "thinking_steps": 0, "tools_used": []}},
     ]
 
 
@@ -252,13 +253,24 @@ def test_worker_tool_bridge_calls_handle_success_and_errors(monkeypatch) -> None
     assert queen_result == {"status": "ok"}
 
     async def _mcp_error() -> dict:
-        return {"type": "error", "message": "tool failed"}
+        return {
+            "type": "error",
+            "message": "tool failed",
+            "bridge": "mcp",
+            "classification": "schema_mismatch",
+            "retryable": False,
+            "server_id": "demo",
+            "tool_name": "search",
+        }
 
     monkeypatch.setattr(worker, "_read_message", _mcp_error)
     try:
         asyncio.run(worker.call_mcp_tool("demo", "search", {"q": "docs"}))
-    except RuntimeError as exc:
+    except ToolBridgeError as exc:
         assert "tool failed" in str(exc)
+        assert exc.bridge == "mcp"
+        assert exc.classification == "schema_mismatch"
+        assert exc.retryable is False
     else:
         raise AssertionError("Expected MCP error")
 

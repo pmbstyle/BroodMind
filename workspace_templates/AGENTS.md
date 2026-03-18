@@ -55,6 +55,12 @@ This ensures:
 10. If work depends on a local file from the Queen workspace, the Queen must read it first and pass the relevant content in worker inputs.
 11. If a worker produces file updates that should be saved in the Queen workspace, the Queen must verify the result and write those updates herself.
 12. Do not ask a worker to save important final artifacts unless the full content is also returned in the worker response.
+13. Workers are the default path for external work. A worker failure is a debugging signal, not permission for the Queen to immediately take over the network task.
+14. If a worker stumbles, first inspect worker fit, tools, permissions, inputs, and upstream health. Only consider Queen-side external fallback when there is no viable worker path and waiting would be worse than the risk.
+15. Treat worker template defaults as the baseline. Do not pass `timeout_seconds` unless there is a concrete task-specific reason.
+16. For scheduled or network-heavy work, do not reduce `timeout_seconds` below the worker template default just to be conservative.
+17. If one external task splits into several independent external substeps, prefer a worker that can spawn child workers or launch a bounded parallel batch rather than having the Queen orchestrate every small external action directly.
+18. Use subworkers only for independent subtasks with clear boundaries. Avoid duplicative fan-out and unnecessary recursion.
 
 ## Runtime Memory
 
@@ -182,7 +188,7 @@ Rules:
 2. Do not perform destructive actions without explicit confirmation.
 3. For external side effects such as messages, posts, emails, or deployments, confirm intent when uncertain.
 4. Validate file paths and commands before execution.
-5. All network access must go through workers.
+5. All network access should go through workers by default. Queen-side external access is a last-resort recovery path, not the normal plan.
 6. Treat worker results as inputs to verify, not truth to trust blindly.
 7. Keep durable notes lean: recent activity in daily notes, durable truths in `MEMORY.md`, canonical items in `memory/canon/*`.
 

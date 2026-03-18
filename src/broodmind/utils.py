@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-import re
-
-
-import subprocess
-
 import json
+import re
+import subprocess
+from datetime import UTC, datetime
 
 _TEXTUAL_TOOL_NAME_RE = re.compile(r"^(?:mcp__[\w-]+__)?[a-z][a-z0-9_]{1,63}$", re.IGNORECASE)
 _TEXTUAL_TOOL_PREVIEW_RE = re.compile(
     r"^(?P<tool>(?:mcp__[\w-]+__)?[a-z][a-z0-9_]{1,63})(?P<rest>(?:,\s*[a-z_][a-z0-9_ -]{0,31}:\s*[^,\n]{1,200})+)$",
     re.IGNORECASE,
 )
+_REACT_TAG_RE = re.compile(r"<react>(.*?)</react>", re.IGNORECASE | re.DOTALL)
+_REACTION_MAPPING = {
+    "✅": "👍",
+    "✔️": "👍",
+    "❌": "👎",
+    "✖️": "👎",
+    "🚀": "⚡",
+    "⚠️": "🤨",
+    "ℹ️": "🤔",
+}
 
 def get_tailscale_ips() -> list[str]:
     """Retrieve all available Tailscale IPs in the tailnet using JSON output."""
@@ -21,17 +28,17 @@ def get_tailscale_ips() -> list[str]:
         out = subprocess.check_output(["tailscale", "status", "--json"], text=True, stderr=subprocess.DEVNULL)
         data = json.loads(out)
         ips = []
-        
+
         # Add self IPs
         if "Self" in data and "TailscaleIPs" in data["Self"]:
             ips.extend(data["Self"]["TailscaleIPs"])
-            
+
         # Add peer IPs
         if "Peer" in data:
             for peer in data["Peer"].values():
                 if "TailscaleIPs" in peer:
                     ips.extend(peer["TailscaleIPs"])
-                    
+
         return list(set(ips))  # Unique IPs
     except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
         return []
@@ -39,6 +46,23 @@ def get_tailscale_ips() -> list[str]:
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def normalize_reaction_emoji(emoji: str) -> str:
+    return _REACTION_MAPPING.get((emoji or "").strip(), (emoji or "").strip())
+
+
+def extract_reaction_and_strip(text: str) -> tuple[str | None, str]:
+    match = _REACT_TAG_RE.search(text or "")
+    if not match:
+        return None, text or ""
+    emoji = (match.group(1) or "").strip() or None
+    cleaned = _REACT_TAG_RE.sub("", text or "").strip()
+    return emoji, cleaned
+
+
+def strip_reaction_tags(text: str) -> str:
+    return _REACT_TAG_RE.sub("", text or "").strip()
 
 
 def is_heartbeat_ok(text: str) -> bool:
@@ -55,16 +79,13 @@ def is_control_response(text: str) -> bool:
     value = (text or "").strip()
     if not value:
         return True
-        
+
     if is_heartbeat_ok(value):
         return True
-        
+
     # Check for NO_USER_RESPONSE variations
     normalized = value.upper().replace("_", "").replace(" ", "")
-    if normalized == "NOUSERRESPONSE":
-        return True
-        
-    return False
+    return normalized == "NOUSERRESPONSE"
 
 
 def has_no_user_response_suffix(text: str) -> bool:
@@ -96,6 +117,12 @@ def looks_like_textual_tool_invocation(text: str) -> bool:
     value = (text or "").strip()
     if not value or "\n" in value or len(value) > 300:
         return False
+    if is_control_response(value):
+        return False
+    if has_heartbeat_ok_edge(value):
+        return False
+    if has_no_user_response_suffix(value):
+        return False
 
     trimmed = re.sub(r"^[\s\W_]+", "", value, flags=re.UNICODE)
     trimmed = re.sub(r"[\s\W_]+$", "", trimmed, flags=re.UNICODE).strip()
@@ -119,6 +146,4 @@ def should_suppress_user_delivery(text: str) -> bool:
         return True
     if has_no_user_response_suffix(value):
         return True
-    if looks_like_textual_tool_invocation(value):
-        return True
-    return False
+    return bool(looks_like_textual_tool_invocation(value))

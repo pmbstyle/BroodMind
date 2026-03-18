@@ -28,6 +28,8 @@ class LiteLLMProvider:
     """
 
     _semaphores_by_limit: dict[int, asyncio.Semaphore] = {}
+    _rate_limit_cooldowns: dict[tuple[str, str, str], float] = {}
+    _tool_response_format_modes: dict[tuple[str, str, str], str] = {}
 
     def __init__(self, settings: Settings, model: str | None = None) -> None:
         self._settings = settings
@@ -79,6 +81,39 @@ class LiteLLMProvider:
     @property
     def provider_id(self) -> str:
         return self._profile.provider_id
+
+    def _shared_rate_limit_key(self) -> tuple[str, str, str]:
+        return (
+            self._profile.provider_id,
+            self._model,
+            self._api_base or "",
+        )
+
+    def _tool_response_format_key(self) -> tuple[str, str, str]:
+        return self._shared_rate_limit_key()
+
+    def _now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    async def _wait_for_shared_rate_limit_cooldown(self) -> None:
+        cooldown_until = self._rate_limit_cooldowns.get(self._shared_rate_limit_key(), 0.0)
+        remaining = cooldown_until - self._now()
+        if remaining <= 0:
+            return
+        logger.info(
+            "LiteLLM shared rate-limit cooldown active; delaying request for %.2fs",
+            remaining,
+        )
+        await asyncio.sleep(remaining)
+
+    def _record_shared_rate_limit_cooldown(self, delay: float) -> None:
+        if delay <= 0:
+            return
+        key = self._shared_rate_limit_key()
+        until = self._now() + delay
+        existing = self._rate_limit_cooldowns.get(key, 0.0)
+        if until > existing:
+            self._rate_limit_cooldowns[key] = until
 
     async def complete(self, messages: list[Message | dict], **kwargs: object) -> str:
         """Complete a chat request without tools."""
@@ -146,7 +181,6 @@ class LiteLLMProvider:
                     "This usually means the model was cut off or is having internal issues. "
                     "Please try your request again."
                 ) from exc
-            
             logger.exception("LiteLLM completion failed")
             raise RuntimeError(f"LiteLLM completion failed: {exc}") from exc
 
@@ -255,16 +289,24 @@ class LiteLLMProvider:
                 timeout=self._settings.litellm_timeout,
                 fallbacks=self._fallbacks,
             )
-            response = await self._acompletion_with_resilience(
+            response, response_format_mode = await self._complete_with_tools_adaptive_response_format(
                 messages=serialized_messages,
                 tools=tools,
                 tool_choice=tool_choice,
-                **request_kwargs,
+                request_kwargs=request_kwargs,
             )
 
             content = _extract_content(response)
             tool_calls = _extract_tool_calls(response)
             usage = _extract_usage(response)
+
+            if response_format_mode != "json_schema" and "response_format" in request_kwargs:
+                logger.info(
+                    "LiteLLM tool response_format downgraded for route: provider=%s model=%s mode=%s",
+                    self._profile.provider_id,
+                    self._model,
+                    response_format_mode,
+                )
 
             if content:
                 logger.debug("LiteLLM response (tools) content: %s", _truncate(content))
@@ -292,14 +334,57 @@ class LiteLLMProvider:
                     "This usually means the model was cut off or is having internal issues. "
                     "Please try your request again or check the provider status."
                 ) from exc
-            
             logger.exception("LiteLLM completion with tools failed")
             raise RuntimeError(f"LiteLLM completion with tools failed: {exc}") from exc
+
+    async def _complete_with_tools_adaptive_response_format(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        tool_choice: str,
+        request_kwargs: dict[str, object],
+    ) -> tuple[Any, str]:
+        requested_response_format = request_kwargs.get("response_format")
+        route_key = self._tool_response_format_key()
+        preferred_mode = self._tool_response_format_modes.get(route_key)
+        candidates = _response_format_fallback_modes(requested_response_format, preferred_mode=preferred_mode)
+        last_exc: Exception | None = None
+
+        for index, mode in enumerate(candidates):
+            attempt_kwargs = dict(request_kwargs)
+            _apply_response_format_mode(attempt_kwargs, requested_response_format, mode)
+            try:
+                response = await self._acompletion_with_resilience(
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    **attempt_kwargs,
+                )
+                self._tool_response_format_modes[route_key] = mode
+                return response, mode
+            except Exception as exc:
+                last_exc = exc
+                has_lower_mode = index < len(candidates) - 1
+                if not has_lower_mode or not _is_response_format_unsupported_error(exc):
+                    raise
+                logger.info(
+                    "LiteLLM route rejected response_format mode=%s; downgrading for provider=%s model=%s",
+                    mode,
+                    self._profile.provider_id,
+                    self._model,
+                )
+                continue
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("LiteLLM completion with tools failed before issuing a provider request.")
 
     async def _acompletion_with_resilience(self, **kwargs: object) -> Any:
         attempt = 0
         while True:
             try:
+                await self._wait_for_shared_rate_limit_cooldown()
                 return await self._acompletion_guarded(**kwargs)
             except Exception as exc:
                 if not _is_rate_limit_error(exc) or attempt >= self._rate_limit_max_retries:
@@ -316,6 +401,7 @@ class LiteLLMProvider:
                     self._rate_limit_max_retries,
                     delay,
                 )
+                self._record_shared_rate_limit_cooldown(delay)
                 await asyncio.sleep(delay)
                 attempt += 1
 
@@ -348,10 +434,7 @@ class LiteLLMProvider:
 
 def _serialize_message(message: Message | dict) -> dict:
     """Serialize a message to dict format."""
-    if isinstance(message, dict):
-        serialized = dict(message)
-    else:
-        serialized = message.to_dict()
+    serialized = dict(message) if isinstance(message, dict) else message.to_dict()
 
     # Some OpenAI-compatible providers reject assistant tool-call messages when
     # content is null instead of an empty string.
@@ -579,12 +662,12 @@ def _extract_usage(response: Any) -> dict[str, int]:
             return {
                 k: int(v)
                 for k, v in usage_obj.items()
-                if isinstance(k, str) and isinstance(v, (int, float))
+                if isinstance(k, str) and isinstance(v, int | float)
             }
         result: dict[str, int] = {}
         for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
             value = getattr(usage_obj, field, None)
-            if isinstance(value, (int, float)):
+            if isinstance(value, int | float):
                 result[field] = int(value)
         return result
     except Exception:
@@ -610,6 +693,67 @@ def _build_request_kwargs(kwargs: dict[str, object], **defaults: object) -> dict
         if key in kwargs and kwargs[key] is not None:
             request_kwargs[key] = kwargs[key]
     return request_kwargs
+
+
+def _response_format_fallback_modes(
+    response_format: object,
+    *,
+    preferred_mode: str | None = None,
+) -> list[str]:
+    format_type = _response_format_type(response_format)
+    if format_type == "json_schema":
+        ordered = ["json_schema", "json_object", "none"]
+    elif format_type == "json_object":
+        ordered = ["json_object", "none"]
+    else:
+        ordered = ["none"]
+
+    if preferred_mode in ordered:
+        ordered.remove(preferred_mode)
+        ordered.insert(0, preferred_mode)
+    return ordered
+
+
+def _response_format_type(response_format: object) -> str | None:
+    if not isinstance(response_format, dict):
+        return None
+    raw_type = response_format.get("type")
+    if not isinstance(raw_type, str):
+        return None
+    value = raw_type.strip().lower()
+    return value or None
+
+
+def _apply_response_format_mode(
+    request_kwargs: dict[str, object],
+    requested_response_format: object,
+    mode: str,
+) -> None:
+    if mode == "json_schema" and requested_response_format is not None:
+        request_kwargs["response_format"] = requested_response_format
+        return
+    if mode == "json_object":
+        request_kwargs["response_format"] = {"type": "json_object"}
+        return
+    request_kwargs.pop("response_format", None)
+
+
+def _is_response_format_unsupported_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    markers = (
+        "response_format",
+        "json_schema",
+        "structured output",
+        "must be text or json_object",
+        "must be text or json object",
+        "must be json_object",
+        "must be text",
+        "unsupported",
+        "not supported",
+        "invalid_request_error",
+        "input_invalid",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _summarize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
