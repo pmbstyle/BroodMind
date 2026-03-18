@@ -9,21 +9,21 @@ from broodmind.runtime.tool_payloads import render_tool_result_for_llm
 def test_render_tool_result_compacts_large_nested_payload() -> None:
     payload = {
         "status": "ok",
-        "items": [{"id": idx, "body": "x" * 400} for idx in range(40)],
-        "notes": "y" * 2_500,
+        "items": [{"id": idx, "body": "x" * 800} for idx in range(100)],
+        "notes": "y" * 5_000,
     }
 
     rendered = render_tool_result_for_llm(payload)
 
     assert rendered.was_compacted is True
-    assert len(rendered.text) <= 4000
+    assert len(rendered.text) <= 32000
     assert '"status": "ok"' in rendered.text
     assert "__broodmind_compaction__" in rendered.text
     assert "truncated" in rendered.text
 
 
 def test_render_tool_result_parses_json_strings_before_compacting() -> None:
-    raw = '{"items": [' + ",".join('{"value":"' + ("z" * 300) + '"}' for _ in range(30)) + "]}"
+    raw = '{"items": [' + ",".join('{"value":"' + ("z" * 1000) + '"}' for _ in range(150)) + "]}"
 
     rendered = render_tool_result_for_llm(raw)
 
@@ -94,7 +94,7 @@ def test_route_compacts_tool_messages_before_next_tool_round(monkeypatch) -> Non
     def dummy_tool(args, ctx):
         return {
             "status": "ok",
-            "results": [{"idx": idx, "body": "payload-" + ("x" * 300)} for idx in range(40)],
+            "results": [{"idx": idx, "body": "payload-" + ("x" * 800)} for idx in range(120)],
         }
 
     import broodmind.runtime.queen.router as router
@@ -131,7 +131,7 @@ def test_route_compacts_tool_messages_before_next_tool_round(monkeypatch) -> Non
         assert response == "I finished the check and have the result."
         assert provider.tool_calls == 2
         assert provider.seen_tool_messages
-        assert len(provider.seen_tool_messages[0]["content"]) <= 4000
+        assert len(provider.seen_tool_messages[0]["content"]) <= 32000
         assert "compacted" in provider.seen_tool_messages[0]["content"]
 
     asyncio.run(scenario())
