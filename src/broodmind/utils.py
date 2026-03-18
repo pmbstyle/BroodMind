@@ -13,6 +13,8 @@ _TEXTUAL_TOOL_PREVIEW_RE = re.compile(
 _REACT_TAG_RE = re.compile(r"<react>(.*?)</react>", re.IGNORECASE | re.DOTALL)
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
 _THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
+_TOOL_TAG_RE = re.compile(r"</?(?:tool_call|tool_code|tool_result|step|plan|thought).*?>", re.IGNORECASE)
+_TOOL_CALL_BLOCK_RE = re.compile(r"<(tool_call|tool_code|tool_result).*?>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TOOL_RESULT_LINE_RE = re.compile(
     r"(?:^|\n)\s*Tool result \([^)]+\):\s*(?:\{.*?\}|\[.*?\]|.+?)(?=\n|$)",
     re.IGNORECASE | re.DOTALL,
@@ -103,6 +105,17 @@ def strip_reaction_tags(text: str) -> str:
     return _REACT_TAG_RE.sub("", text or "").strip()
 
 
+def escape_html(text: str) -> str:
+    """Escape HTML special characters for Telegram HTML parse mode."""
+    if not text:
+        return ""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 def sanitize_user_facing_text(text: str) -> str:
     """Remove reasoning/tool traces and collapse raw machine payloads into safe text."""
     if not text:
@@ -115,6 +128,8 @@ def sanitize_user_facing_text(text: str) -> str:
     cleaned = value.replace("\r\n", "\n").replace("\r", "\n")
     cleaned = _THINK_BLOCK_RE.sub("", cleaned)
     cleaned = _THINK_TAG_RE.sub("", cleaned)
+    cleaned = _TOOL_CALL_BLOCK_RE.sub("", cleaned)
+    cleaned = _TOOL_TAG_RE.sub("", cleaned)
     cleaned = _TOOL_RESULT_LINE_RE.sub("", cleaned)
     
     # Filter out common system-level phrases that might leak
@@ -126,6 +141,10 @@ def sanitize_user_facing_text(text: str) -> str:
         r"Worker .* is running\.",
         r"Worker .* completed\.",
         r"Worker .* failed: .*",
+        r"Worker started: .*",
+        r"Forcing substantive worker follow-up",
+        r"Internal worker follow-up sent",
+        r"Queued internal worker result",
     ]
     for pattern in system_patterns:
         cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
