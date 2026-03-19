@@ -43,6 +43,7 @@ _PROVIDER_GROUPS: dict[str, tuple[str, ...]] = {
 def _print_section_header(title: str) -> None:
     console.print()
     console.print(Rule(f"[bold {ACCENT}]{title}[/bold {ACCENT}]"))
+    console.print()
 
 
 def configure_wizard() -> None:
