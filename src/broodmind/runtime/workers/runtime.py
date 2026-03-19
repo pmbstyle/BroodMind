@@ -175,9 +175,6 @@ class WorkerRuntime:
 
         return resolved
 
-        # Run worker
-        return await self.run(spec, approval_requester=approval_requester)
-
     async def run(
         self,
         spec: WorkerSpec,
