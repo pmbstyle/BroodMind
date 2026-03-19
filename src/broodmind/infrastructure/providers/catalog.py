@@ -124,6 +124,17 @@ _CATALOG: tuple[ProviderCatalogEntry, ...] = (
         base_url_label="Ollama base URL",
     ),
     ProviderCatalogEntry(
+        id="minimax",
+        label="MiniMax",
+        description="MiniMax API (M2.5, M2.7, etc.) via LiteLLM.",
+        default_model="minimax-m2.5",
+        model_prefix="minimax",
+        default_api_base="https://api.minimax.io/v1",
+        api_key_label="MiniMax API key",
+        model_label="MiniMax model",
+        base_url_label="MiniMax base URL",
+    ),
+    ProviderCatalogEntry(
         id="custom",
         label="Custom OpenAI-compatible",
         description="Any custom LiteLLM target with configurable base URL and model prefix.",

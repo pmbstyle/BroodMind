@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     zai_accept_language: str = Field("en-US,en", alias="ZAI_ACCEPT_LANGUAGE")
     zai_model: str = Field("glm-5", alias="ZAI_MODEL")
 
+    minimax_api_key: str | None = Field(default=None, alias="MINIMAX_API_KEY")
+
     brave_api_key: str | None = Field(default=None, alias="BRAVE_API_KEY")
     firecrawl_api_key: str | None = Field(default=None, alias="FIRECRAWL_API_KEY")
 
@@ -195,6 +197,8 @@ def load_config() -> BroodMindConfig:
             config.llm.provider_id = "zai"
         elif temp_settings.openrouter_api_key:
             config.llm.provider_id = "openrouter"
+        elif temp_settings.minimax_api_key:
+            config.llm.provider_id = "minimax"
 
     # LiteLLM Runtime
     config.litellm.num_retries = temp_settings.litellm_num_retries
@@ -318,6 +322,10 @@ def _sync_settings_from_config(settings: Settings, config: BroodMindConfig) -> N
         updates["litellm_api_base"] = config.llm.api_base
     if config.llm.model_prefix:
         updates["litellm_model_prefix"] = config.llm.model_prefix
+    
+    # Sync minimax_api_key for legacy support
+    if config.llm.provider_id == "minimax" and config.llm.api_key:
+        updates["minimax_api_key"] = config.llm.api_key
 
     # LiteLLM Runtime
     updates["litellm_num_retries"] = config.litellm.num_retries

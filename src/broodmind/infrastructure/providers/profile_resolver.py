@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from broodmind.infrastructure.config.models import LLMConfig
 from broodmind.infrastructure.config.settings import Settings
 from broodmind.infrastructure.providers.catalog import ProviderCatalogEntry, get_provider_catalog_entry
 
@@ -97,6 +98,8 @@ def _legacy_key_candidates(settings: Settings, provider_id: str) -> tuple[str | 
         return (settings.openrouter_api_key,)
     if provider_id == "zai":
         return (settings.zai_api_key,)
+    if provider_id == "minimax":
+        return (settings.minimax_api_key,)
     return ()
 
 
