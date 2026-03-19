@@ -18,6 +18,10 @@ from broodmind.cli.wizard.models import (
 )
 
 T = TypeVar("T")
+BROOD_SILVER = "#d8dde2"
+MIND_GOLD = "#f0c15d"
+SURFACE_BLUE = "#5fa8c8"
+SUBTLE_STEEL = "#5f8ea3"
 
 
 class WizardPrompter:
@@ -43,13 +47,14 @@ class WizardPrompter:
 @dataclass(slots=True)
 class RichWizardPrompter(WizardPrompter):
     console: Console
-    accent: str = "bright_cyan"
-    surface: str = "cyan"
+    accent: str = MIND_GOLD
+    surface: str = SURFACE_BLUE
 
     def intro(self, title: str, body: str | None = None) -> None:
-        rendered = Text(f"{title}\n", style=f"bold {self.accent}")
+        rendered = _brand_text(title)
+        rendered.append("\n")
         if body:
-            rendered.append(body, style="dim")
+            rendered.append(body, style=SUBTLE_STEEL)
         self.console.print(
             Panel(
                 rendered,
@@ -153,6 +158,21 @@ class RichWizardPrompter(WizardPrompter):
 
 def _choice_name(option: WizardSelectOption[T]) -> str:
     return f"{option.label} - {option.hint}" if option.hint else option.label
+
+
+def _brand_text(title: str) -> Text:
+    if "BroodMind" not in title:
+        return Text(title, style=f"bold {MIND_GOLD}")
+
+    rendered = Text()
+    before, _, after = title.partition("BroodMind")
+    if before:
+        rendered.append(before, style=f"bold {MIND_GOLD}")
+    rendered.append("Brood", style=f"bold {BROOD_SILVER}")
+    rendered.append("Mind", style=f"bold {MIND_GOLD}")
+    if after:
+        rendered.append(after, style=f"bold {MIND_GOLD}")
+    return rendered
 
 
 def _inquirer_select(params: WizardSelectParams[T]) -> T:

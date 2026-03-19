@@ -29,9 +29,9 @@ from broodmind.infrastructure.config.settings import (
 from broodmind.infrastructure.providers.catalog import get_provider_catalog_entry
 
 console = Console()
-ACCENT = "bright_cyan"
-SURFACE = "cyan"
-SUCCESS = "green"
+ACCENT = "#f0c15d"
+SURFACE = "#5fa8c8"
+SUCCESS = "#7dd36b"
 
 _PROVIDER_GROUPS: dict[str, tuple[str, ...]] = {
     "Routers and Gateways": ("openrouter", "minimax", "custom"),
