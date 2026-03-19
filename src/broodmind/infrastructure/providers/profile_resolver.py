@@ -21,23 +21,38 @@ class ResolvedLiteLLMProfile:
     entry: ProviderCatalogEntry
 
 
-def resolve_litellm_profile(settings: Settings, model_override: str | None = None) -> ResolvedLiteLLMProfile:
-    provider_id, source = _resolve_provider_id(settings)
+def resolve_litellm_profile(
+    settings: Settings,
+    model_override: str | None = None,
+    config_override: LLMConfig | None = None,
+) -> ResolvedLiteLLMProfile:
+    # Prefer config_override if provided, otherwise fallback to settings.config_obj.llm
+    # (Queen default) or legacy settings.
+    config = config_override or (settings.config_obj.llm if settings.config_obj else None)
+    
+    provider_id, source = _resolve_provider_id(settings, config)
     entry = get_provider_catalog_entry(provider_id)
 
     raw_model = _first_non_empty(
         model_override,
+        config.model if config else None,
         settings.litellm_model,
         *_legacy_model_candidates(settings, provider_id),
         entry.default_model,
     )
-    model_prefix = _first_non_empty(settings.litellm_model_prefix, entry.model_prefix)
+    model_prefix = _first_non_empty(
+        config.model_prefix if config else None,
+        settings.litellm_model_prefix,
+        entry.model_prefix,
+    )
     api_base = _first_non_empty(
+        config.api_base if config else None,
         settings.litellm_api_base,
         *_legacy_base_candidates(settings, provider_id),
         entry.default_api_base,
     )
     api_key = _first_non_empty(
+        config.api_key if config else None,
         settings.litellm_api_key,
         *_legacy_key_candidates(settings, provider_id),
     )
@@ -57,7 +72,10 @@ def resolve_litellm_profile(settings: Settings, model_override: str | None = Non
     )
 
 
-def _resolve_provider_id(settings: Settings) -> tuple[str, str]:
+def _resolve_provider_id(settings: Settings, config: LLMConfig | None = None) -> tuple[str, str]:
+    if config and config.provider_id:
+        return config.provider_id.strip().lower(), "unified-config"
+
     explicit_provider = (settings.litellm_provider_id or "").strip().lower()
     if explicit_provider:
         return explicit_provider, "unified"
