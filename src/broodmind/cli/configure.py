@@ -457,6 +457,27 @@ def _configure_features(config: BroodMindConfig, prompter) -> None:
         config.search.firecrawl_api_key = ""
 
 
+def _configure_dashboard(config: BroodMindConfig, prompter) -> None:
+    console.print(Rule(f"[bold {ACCENT}]Dashboard[/bold {ACCENT}]"))
+
+    config.gateway.webapp_enabled = prompter.confirm(
+        WizardConfirmParams(
+            message="Enable Web Dashboard UI?",
+            initial_value=config.gateway.webapp_enabled,
+        )
+    )
+    if config.gateway.webapp_enabled:
+        config.gateway.dashboard_token = prompter.text(
+            WizardTextParams(
+                message="Dashboard access token (optional)",
+                initial_value=config.gateway.dashboard_token,
+                secret=bool(config.gateway.dashboard_token),
+            )
+        )
+    else:
+        config.gateway.dashboard_token = ""
+
+
 def _configure_runtime_advanced(config: BroodMindConfig, prompter) -> None:
     console.print(Rule(f"[bold {ACCENT}]Advanced Runtime[/bold {ACCENT}]"))
 
@@ -491,22 +512,7 @@ def _configure_runtime_advanced(config: BroodMindConfig, prompter) -> None:
             )
         )
 
-    config.gateway.webapp_enabled = prompter.confirm(
-        WizardConfirmParams(
-            message="Enable Web Dashboard UI?",
-            initial_value=config.gateway.webapp_enabled,
-        )
-    )
-    if config.gateway.webapp_enabled:
-        config.gateway.dashboard_token = prompter.text(
-            WizardTextParams(
-                message="Dashboard access token (optional)",
-                initial_value=config.gateway.dashboard_token,
-                secret=bool(config.gateway.dashboard_token),
-            )
-        )
-    else:
-        config.gateway.dashboard_token = ""
+    _configure_dashboard(config, prompter)
 
 
 def _build_sections(config: BroodMindConfig, advanced: bool, prompter) -> list[WizardSection]:
@@ -545,6 +551,12 @@ def _build_sections(config: BroodMindConfig, advanced: bool, prompter) -> list[W
             render_status=lambda cfg: _features_status(cfg),
             run=lambda cfg: _configure_features(cfg, prompter),
         ),
+        WizardSection(
+            key="dashboard",
+            title="Dashboard",
+            render_status=lambda cfg: _dashboard_status(cfg),
+            run=lambda cfg: _configure_dashboard(cfg, prompter),
+        ),
     ]
     if advanced:
         sections.append(
@@ -568,6 +580,14 @@ def _features_status(config: BroodMindConfig) -> str:
         if is_enabled
     ]
     return ", ".join(enabled) if enabled else "No optional tools enabled"
+
+
+def _dashboard_status(config: BroodMindConfig) -> str:
+    if not config.gateway.webapp_enabled:
+        return "Disabled"
+    if config.gateway.dashboard_token:
+        return "Enabled with token"
+    return "Enabled without token"
 
 
 def _edit_section(config: BroodMindConfig, sections: list[WizardSection], prompter) -> None:
