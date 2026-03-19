@@ -5,7 +5,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, IntPrompt, Prompt
+from rich.prompt import Confirm, IntPrompt
 from rich.rule import Rule
 from rich.table import Table
 
@@ -13,6 +13,8 @@ from broodmind.channels import normalize_user_channel
 from broodmind.cli.branding import print_banner
 from broodmind.cli.wizard import (
     WizardConfirmParams,
+    WizardMultiSelectParams,
+    WizardSection,
     WizardSelectOption,
     WizardSelectParams,
     WizardTextParams,
@@ -24,9 +26,7 @@ from broodmind.infrastructure.config.settings import (
     load_config,
     save_config,
 )
-from broodmind.infrastructure.providers.catalog import (
-    get_provider_catalog_entry,
-)
+from broodmind.infrastructure.providers.catalog import get_provider_catalog_entry
 
 console = Console()
 ACCENT = "bright_cyan"
@@ -83,39 +83,49 @@ def configure_wizard() -> None:
     )
     advanced_mode = setup_mode == "advanced"
 
-    # 1. User Channel
-    _configure_user_channel(config, advanced_mode, prompter)
+    sections = _build_sections(config, advanced_mode, prompter)
+    for section in sections:
+        if section.run is not None:
+            section.run(config)
 
-    # 2. Queen LLM
-    _configure_llm(config, "Queen", config.llm, advanced_mode, prompter)
+    while True:
+        console.print(Rule(f"[bold {ACCENT}]Final Review[/bold {ACCENT}]"))
+        _print_review(config)
+        action = prompter.select(
+            WizardSelectParams(
+                message="What would you like to do?",
+                initial_value="save",
+                options=[
+                    WizardSelectOption(
+                        value="save",
+                        label="Save configuration",
+                        hint="Write the reviewed settings to config.json.",
+                    ),
+                    WizardSelectOption(
+                        value="edit",
+                        label="Edit a section",
+                        hint="Jump back into one part of the wizard without starting over.",
+                    ),
+                    WizardSelectOption(
+                        value="cancel",
+                        label="Cancel",
+                        hint="Exit without writing anything.",
+                    ),
+                ],
+            )
+        )
 
-    # 3. Worker LLM
-    if Confirm.ask("Configure separate LLM settings for Workers?", default=False):
-        _configure_llm(config, "Worker (Default)", config.worker_llm_default, advanced_mode, prompter)
+        if action == "save":
+            save_config(config)
+            console.print(f"[bold {SUCCESS}]Settings saved to config.json![/bold {SUCCESS}]")
+            _print_next_steps(config)
+            break
 
-        if advanced_mode and Confirm.ask("Add specific worker overrides? (e.g. for 'researcher')", default=False):
-            _configure_worker_overrides(config, prompter)
+        if action == "cancel":
+            console.print("[yellow]Configuration cancelled. No changes were written.[/yellow]")
+            break
 
-    # 4. Storage & Workspace
-    _configure_storage(config)
-
-    # 5. Features & Tools
-    _configure_features(config)
-
-    # 6. Advanced Runtime
-    if advanced_mode:
-        _configure_runtime_advanced(config)
-
-    # Review and Save
-    console.print(Rule(f"[bold {ACCENT}]Final Review[/bold {ACCENT}]"))
-    _print_review(config)
-
-    if Confirm.ask("Save configuration?", default=True):
-        save_config(config)
-        console.print(f"[bold {SUCCESS}]Settings saved to config.json![/bold {SUCCESS}]")
-        _print_next_steps(config)
-    else:
-        console.print("[yellow]Configuration cancelled. No changes were written.[/yellow]")
+        _edit_section(config, sections, prompter)
 
 
 def _configure_user_channel(config: BroodMindConfig, advanced: bool, prompter) -> None:
@@ -319,9 +329,37 @@ def _configure_llm(
             master_config.litellm.num_retries = IntPrompt.ask("Max retries", default=master_config.litellm.num_retries)
 
 
+def _configure_worker_settings(config: BroodMindConfig, advanced: bool, prompter) -> None:
+    wants_separate = prompter.confirm(
+        WizardConfirmParams(
+            message="Configure separate LLM settings for Workers?",
+            initial_value=bool(config.worker_llm_default.provider_id or config.worker_llm_overrides),
+        )
+    )
+    if not wants_separate:
+        config.worker_llm_default = LLMConfig()
+        config.worker_llm_overrides = {}
+        return
+
+    _configure_llm(config, "Worker (Default)", config.worker_llm_default, advanced, prompter)
+
+    if advanced and prompter.confirm(
+        WizardConfirmParams(
+            message="Add specific worker overrides? (e.g. for 'researcher')",
+            initial_value=bool(config.worker_llm_overrides),
+        )
+    ):
+        _configure_worker_overrides(config, prompter)
+
+
 def _configure_worker_overrides(config: BroodMindConfig, prompter) -> None:
     while True:
-        name = Prompt.ask("Worker template name to override (e.g. 'researcher', or empty to finish)")
+        name = prompter.text(
+            WizardTextParams(
+                message="Worker template name to override (e.g. 'researcher', or empty to finish)",
+                initial_value="",
+            )
+        )
         if not name:
             break
 
@@ -334,38 +372,223 @@ def _configure_worker_overrides(config: BroodMindConfig, prompter) -> None:
             break
 
 
-def _configure_storage(config: BroodMindConfig) -> None:
+def _configure_storage(config: BroodMindConfig, prompter) -> None:
     console.print(Rule(f"[bold {ACCENT}]Storage & Workspace[/bold {ACCENT}]"))
 
-    config.storage.workspace_dir = Path(Prompt.ask("Workspace directory", default=str(config.storage.workspace_dir)))
-    config.storage.state_dir = Path(Prompt.ask("State directory (logs, DB)", default=str(config.storage.state_dir)))
+    prompter.note(
+        "Storage",
+        [
+            "Workspace holds the Queen and worker scratch area.",
+            "State directory is where BroodMind stores logs, DB files, and runtime state.",
+        ],
+    )
+    config.storage.workspace_dir = Path(
+        prompter.text(
+            WizardTextParams(
+                message="Workspace directory",
+                initial_value=str(config.storage.workspace_dir),
+            )
+        )
+    )
+    config.storage.state_dir = Path(
+        prompter.text(
+            WizardTextParams(
+                message="State directory (logs, DB)",
+                initial_value=str(config.storage.state_dir),
+            )
+        )
+    )
 
     # Bootstrap workspace if needed
     _ensure_workspace_bootstrap(config.storage.workspace_dir)
 
 
-def _configure_features(config: BroodMindConfig) -> None:
+def _configure_features(config: BroodMindConfig, prompter) -> None:
     console.print(Rule(f"[bold {ACCENT}]Tools & Search[/bold {ACCENT}]"))
 
-    if Confirm.ask("Enable Brave Search?", default=bool(config.search.brave_api_key)):
-        config.search.brave_api_key = Prompt.ask("Brave API Key", default=config.search.brave_api_key, password=True)
+    enabled_tools = prompter.multiselect(
+        WizardMultiSelectParams(
+            message="Enable optional web tools",
+            initial_values=[
+                tool
+                for tool, enabled in (
+                    ("brave", bool(config.search.brave_api_key)),
+                    ("firecrawl", bool(config.search.firecrawl_api_key)),
+                )
+                if enabled
+            ],
+            options=[
+                WizardSelectOption(
+                    value="brave",
+                    label="Brave Search",
+                    hint="Live web search results through Brave Search API.",
+                ),
+                WizardSelectOption(
+                    value="firecrawl",
+                    label="Firecrawl",
+                    hint="Deeper web fetching and extraction.",
+                ),
+            ],
+        )
+    )
+    enabled_set = set(enabled_tools)
 
-    if Confirm.ask("Enable Firecrawl (web fetching)?", default=bool(config.search.firecrawl_api_key)):
-        config.search.firecrawl_api_key = Prompt.ask("Firecrawl API Key", default=config.search.firecrawl_api_key, password=True)
+    if "brave" in enabled_set:
+        config.search.brave_api_key = prompter.text(
+            WizardTextParams(
+                message="Brave API Key",
+                initial_value=config.search.brave_api_key,
+                secret=True,
+            )
+        )
+    else:
+        config.search.brave_api_key = ""
+
+    if "firecrawl" in enabled_set:
+        config.search.firecrawl_api_key = prompter.text(
+            WizardTextParams(
+                message="Firecrawl API Key",
+                initial_value=config.search.firecrawl_api_key,
+                secret=True,
+            )
+        )
+    else:
+        config.search.firecrawl_api_key = ""
 
 
-def _configure_runtime_advanced(config: BroodMindConfig) -> None:
+def _configure_runtime_advanced(config: BroodMindConfig, prompter) -> None:
     console.print(Rule(f"[bold {ACCENT}]Advanced Runtime[/bold {ACCENT}]"))
 
-    config.log_level = Prompt.ask("Log level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default=config.log_level)
-    config.workers.launcher = Prompt.ask("Worker launcher", choices=["same_env", "docker"], default=config.workers.launcher)
+    config.log_level = prompter.select(
+        WizardSelectParams(
+            message="Log level",
+            initial_value=config.log_level,
+            options=[
+                WizardSelectOption(value="DEBUG", label="DEBUG", hint="Most verbose."),
+                WizardSelectOption(value="INFO", label="INFO", hint="Balanced default."),
+                WizardSelectOption(value="WARNING", label="WARNING", hint="Only potential problems."),
+                WizardSelectOption(value="ERROR", label="ERROR", hint="Only failures."),
+            ],
+        )
+    )
+    config.workers.launcher = prompter.select(
+        WizardSelectParams(
+            message="Worker launcher",
+            initial_value=config.workers.launcher,
+            options=[
+                WizardSelectOption(value="same_env", label="same_env", hint="Run workers in the current Python environment."),
+                WizardSelectOption(value="docker", label="docker", hint="Launch workers in Docker containers."),
+            ],
+        )
+    )
 
     if config.workers.launcher == "docker":
-        config.workers.docker_image = Prompt.ask("Docker image", default=config.workers.docker_image)
+        config.workers.docker_image = prompter.text(
+            WizardTextParams(
+                message="Docker image",
+                initial_value=config.workers.docker_image,
+            )
+        )
 
-    config.gateway.webapp_enabled = Confirm.ask("Enable Web Dashboard UI?", default=config.gateway.webapp_enabled)
+    config.gateway.webapp_enabled = prompter.confirm(
+        WizardConfirmParams(
+            message="Enable Web Dashboard UI?",
+            initial_value=config.gateway.webapp_enabled,
+        )
+    )
     if config.gateway.webapp_enabled:
-        config.gateway.dashboard_token = Prompt.ask("Dashboard access token (optional)", default=config.gateway.dashboard_token)
+        config.gateway.dashboard_token = prompter.text(
+            WizardTextParams(
+                message="Dashboard access token (optional)",
+                initial_value=config.gateway.dashboard_token,
+                secret=bool(config.gateway.dashboard_token),
+            )
+        )
+    else:
+        config.gateway.dashboard_token = ""
+
+
+def _build_sections(config: BroodMindConfig, advanced: bool, prompter) -> list[WizardSection]:
+    sections = [
+        WizardSection(
+            key="channel",
+            title="Channel Access",
+            render_status=lambda cfg: f"{cfg.user_channel}",
+            run=lambda cfg: _configure_user_channel(cfg, advanced, prompter),
+        ),
+        WizardSection(
+            key="queen-llm",
+            title="Queen LLM",
+            render_status=lambda cfg: f"{cfg.llm.provider_id or 'unset'} / {cfg.llm.model or 'unset'}",
+            run=lambda cfg: _configure_llm(cfg, "Queen", cfg.llm, advanced, prompter),
+        ),
+        WizardSection(
+            key="worker-llm",
+            title="Worker LLM",
+            render_status=lambda cfg: (
+                "Using Queen defaults"
+                if not cfg.worker_llm_default.provider_id
+                else f"{cfg.worker_llm_default.provider_id} / {cfg.worker_llm_default.model or 'unset'}"
+            ),
+            run=lambda cfg: _configure_worker_settings(cfg, advanced, prompter),
+        ),
+        WizardSection(
+            key="storage",
+            title="Storage & Workspace",
+            render_status=lambda cfg: str(cfg.storage.workspace_dir),
+            run=lambda cfg: _configure_storage(cfg, prompter),
+        ),
+        WizardSection(
+            key="features",
+            title="Tools & Search",
+            render_status=lambda cfg: _features_status(cfg),
+            run=lambda cfg: _configure_features(cfg, prompter),
+        ),
+    ]
+    if advanced:
+        sections.append(
+            WizardSection(
+                key="runtime",
+                title="Advanced Runtime",
+                render_status=lambda cfg: f"{cfg.log_level} / {cfg.workers.launcher}",
+                run=lambda cfg: _configure_runtime_advanced(cfg, prompter),
+            )
+        )
+    return sections
+
+
+def _features_status(config: BroodMindConfig) -> str:
+    enabled = [
+        label
+        for label, is_enabled in (
+            ("Brave", bool(config.search.brave_api_key)),
+            ("Firecrawl", bool(config.search.firecrawl_api_key)),
+        )
+        if is_enabled
+    ]
+    return ", ".join(enabled) if enabled else "No optional tools enabled"
+
+
+def _edit_section(config: BroodMindConfig, sections: list[WizardSection], prompter) -> None:
+    options = [
+        WizardSelectOption(
+            value=section.key,
+            label=section.title,
+            hint=section.render_status(config) if section.render_status is not None else None,
+        )
+        for section in sections
+    ]
+    selected_key = prompter.select(
+        WizardSelectParams(
+            message="Choose a section to edit",
+            options=options,
+            searchable=True,
+        )
+    )
+    for section in sections:
+        if section.key == selected_key and section.run is not None:
+            section.run(config)
+            return
 
 
 def _render_provider_select_list(prompter) -> list[WizardSelectOption[str]]:
