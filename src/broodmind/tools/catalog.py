@@ -11,9 +11,11 @@ from broodmind.runtime.memory.memchain import memchain_init, memchain_record, me
 from broodmind.tools.browser.actions import (
     browser_click,
     browser_close,
+    browser_extract,
     browser_open,
     browser_snapshot,
     browser_type,
+    browser_wait_for,
 )
 from broodmind.tools.memory.canon import manage_canon, search_canon
 from broodmind.tools.filesystem.download import download_file
@@ -550,6 +552,42 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
             parameters={"type": "object", "properties": {}, "additionalProperties": False},
             permission="network",
             handler=lambda args, ctx: browser_close(args, ctx),
+            is_async=True,
+        ),
+        ToolSpec(
+            name="browser_wait_for",
+            description="Wait for a browser element ref or visible text to appear before continuing.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string", "description": "Optional element reference from browser_snapshot."},
+                    "text": {"type": "string", "description": "Optional visible text to wait for."},
+                    "state": {
+                        "type": "string",
+                        "description": "Desired locator state.",
+                        "enum": ["attached", "detached", "hidden", "visible"],
+                    },
+                    "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default 10000)."},
+                },
+                "additionalProperties": False,
+            },
+            permission="network",
+            handler=lambda args, ctx: browser_wait_for(args, ctx),
+            is_async=True,
+        ),
+        ToolSpec(
+            name="browser_extract",
+            description="Extract visible text from the current page or a specific browser ref.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string", "description": "Optional element reference from browser_snapshot."},
+                    "max_chars": {"type": "integer", "description": "Maximum text length to return (100-20000)."},
+                },
+                "additionalProperties": False,
+            },
+            permission="network",
+            handler=lambda args, ctx: browser_extract(args, ctx),
             is_async=True,
         ),
         ToolSpec(

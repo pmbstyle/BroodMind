@@ -87,6 +87,16 @@ _TOOL_METADATA_BY_NAME: dict[str, ToolMetadata] = {
         profile_tags=("research", "ops"),
         capabilities=("browser_manage",),
     ),
+    "browser_wait_for": ToolMetadata(
+        category="browser",
+        profile_tags=("research", "ops"),
+        capabilities=("browser_wait",),
+    ),
+    "browser_extract": ToolMetadata(
+        category="browser",
+        profile_tags=("research", "ops"),
+        capabilities=("browser_read", "extract"),
+    ),
     "run_llm_subtask": ToolMetadata(
         category="llm",
         profile_tags=("coding", "research"),

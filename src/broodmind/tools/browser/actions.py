@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from playwright.async_api import Page, Locator
-import structlog
 
 from broodmind.browser.manager import get_browser_manager
 from broodmind.browser.snapshot import capture_aria_snapshot
-
-logger = structlog.get_logger(__name__)
 
 # State to store refs per chat_id so they persist across tool calls in the same turn
 _SESSION_REFS: Dict[int, Dict[str, Any]] = {}
@@ -104,3 +100,73 @@ async def browser_close(args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
     await get_browser_manager().close_chat_session(chat_id)
     _SESSION_REFS.pop(chat_id, None)
     return "Browser session closed"
+
+
+async def browser_wait_for(args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+    """Wait for either a known ref or page text to appear."""
+    ref = str(args.get("ref") or "").strip()
+    text = str(args.get("text") or "").strip()
+    state = str(args.get("state") or "visible").strip() or "visible"
+    timeout_ms = int(args.get("timeout_ms") or 10000)
+
+    if not ref and not text:
+        return "Error: ref or text is required"
+
+    chat_id = _get_chat_id(ctx)
+    page = await get_browser_manager().get_page(chat_id)
+
+    try:
+        if ref:
+            locator = await _get_locator(page, ref, chat_id)
+            await locator.wait_for(state=state, timeout=timeout_ms)
+            return f"Element {ref} is now {state}"
+
+        locator = page.get_by_text(text, exact=False).first
+        await locator.wait_for(state=state, timeout=timeout_ms)
+        return f"Text appeared: {text}"
+    except Exception as e:
+        target = ref or text
+        return f"Error waiting for {target}: {e}"
+
+
+async def browser_extract(args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract visible text from a page or a specific ref."""
+    ref = str(args.get("ref") or "").strip()
+    max_chars = max(100, min(int(args.get("max_chars") or 4000), 20000))
+    chat_id = _get_chat_id(ctx)
+    page = await get_browser_manager().get_page(chat_id)
+
+    try:
+        if ref:
+            locator = await _get_locator(page, ref, chat_id)
+            text = (await locator.inner_text(timeout=5000)).strip()
+            return {
+                "ok": True,
+                "source": "ref",
+                "ref": ref,
+                "text": _truncate_text(text, max_chars=max_chars),
+            }
+
+        title = await page.title()
+        body = await page.locator("body").inner_text(timeout=5000)
+        return {
+            "ok": True,
+            "source": "page",
+            "url": getattr(page, "url", ""),
+            "title": title,
+            "text": _truncate_text(body.strip(), max_chars=max_chars),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "source": "ref" if ref else "page",
+            "ref": ref or None,
+            "error": str(e),
+        }
+
+
+def _truncate_text(text: str, *, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return text[: max_chars - 32].rstrip() + f"... [truncated {omitted} chars]"
