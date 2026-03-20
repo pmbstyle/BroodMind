@@ -44,12 +44,15 @@ class _HTMLTextExtractor(HTMLParser):
 def web_fetch(args: dict[str, Any]) -> str:
     url = str(args.get("url", "")).strip()
     if not url:
-        return "web_fetch error: url is required."
+        return _error_json(url=url, message="url is required")
     if not _is_safe_url(url):
-        return "web_fetch error: url not allowed."
+        return _error_json(url=url, message="url not allowed")
     method = str(args.get("method", "GET")).strip().upper()
     if method not in ALLOWED_METHODS:
-        return "web_fetch error: unsupported method. Allowed: GET, POST, PUT, PATCH, DELETE."
+        return _error_json(
+            url=url,
+            message="unsupported method. Allowed: GET, POST, PUT, PATCH, DELETE",
+        )
     max_chars_raw = args.get("max_chars", DEFAULT_MAX_CHARS)
     try:
         max_chars = int(max_chars_raw)
@@ -111,6 +114,11 @@ def web_fetch(args: dict[str, Any]) -> str:
             text = content
         snippet = text[:max_chars]
         payload = {
+            "ok": True,
+            "degraded": False,
+            "fallback_used": False,
+            "rate_limited": False,
+            "source": "basic_fetch",
             "url": url,
             "method": method,
             "status_code": resp.status_code,
@@ -119,7 +127,7 @@ def web_fetch(args: dict[str, Any]) -> str:
         }
         return _to_json(payload)
     except Exception as exc:
-        return f"web_fetch error: {exc}"
+        return _error_json(url=url, message=str(exc))
 
 
 def markdown_new_fetch(args: dict[str, Any]) -> str:
@@ -264,6 +272,10 @@ def _fetch_firecrawl(url: str, api_key: str, max_chars: int, target_headers: dic
     snippet = markdown[:max_chars]
 
     result = {
+        "ok": True,
+        "degraded": False,
+        "fallback_used": False,
+        "rate_limited": False,
         "url": url,
         "status_code": 200,
         "content_type": "text/markdown",
@@ -288,6 +300,21 @@ def _to_json(payload: dict[str, Any]) -> str:
     import json
 
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _error_json(*, url: str, message: str) -> str:
+    lowered = message.lower()
+    return _to_json(
+        {
+            "ok": False,
+            "degraded": False,
+            "fallback_used": False,
+            "rate_limited": "429" in lowered or "rate limit" in lowered,
+            "source": "web_fetch",
+            "url": url,
+            "error": message,
+        }
+    )
 
 
 def _markdown_new_with_fallback(

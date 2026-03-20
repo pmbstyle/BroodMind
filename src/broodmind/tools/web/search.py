@@ -13,7 +13,16 @@ MAX_COUNT = 10
 def web_search(args: dict[str, Any]) -> str:
     query = str(args.get("query", "")).strip()
     if not query:
-        return "web_search error: query is required."
+        return _to_json(
+            {
+                "ok": False,
+                "degraded": False,
+                "fallback_used": False,
+                "rate_limited": False,
+                "source": "brave_search",
+                "error": "query is required",
+            }
+        )
     count_raw = args.get("count", DEFAULT_COUNT)
     try:
         count = int(count_raw)
@@ -27,7 +36,16 @@ def web_search(args: dict[str, Any]) -> str:
 
     api_key = (os.getenv("BRAVE_API_KEY") or "").strip()
     if not api_key:
-        return "web_search error: missing BRAVE_API_KEY."
+        return _to_json(
+            {
+                "ok": False,
+                "degraded": False,
+                "fallback_used": False,
+                "rate_limited": False,
+                "source": "brave_search",
+                "error": "missing BRAVE_API_KEY",
+            }
+        )
 
     params = {"q": query, "count": str(count)}
     if country:
@@ -49,7 +67,18 @@ def web_search(args: dict[str, Any]) -> str:
         response.raise_for_status()
         data = response.json()
     except Exception as exc:
-        return f"web_search error: {exc}"
+        err = str(exc)
+        lowered = err.lower()
+        return _to_json(
+            {
+                "ok": False,
+                "degraded": False,
+                "fallback_used": False,
+                "rate_limited": "429" in lowered or "rate limit" in lowered,
+                "source": "brave_search",
+                "error": err,
+            }
+        )
 
     results = []
     for entry in (data.get("web", {}) or {}).get("results", []) or []:
@@ -61,7 +90,18 @@ def web_search(args: dict[str, Any]) -> str:
                 "published": entry.get("age"),
             }
         )
-    return _to_json({"query": query, "count": len(results), "results": results})
+    return _to_json(
+        {
+            "ok": True,
+            "degraded": False,
+            "fallback_used": False,
+            "rate_limited": False,
+            "source": "brave_search",
+            "query": query,
+            "count": len(results),
+            "results": results,
+        }
+    )
 
 
 def _to_json(payload: dict[str, Any]) -> str:
