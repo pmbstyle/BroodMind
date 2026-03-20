@@ -256,6 +256,26 @@ def get_worker_tools() -> list[ToolSpec]:
             handler=_tool_list_active_workers,
         ),
         ToolSpec(
+            name="worker_session_status",
+            description="Summarize the current worker fabric: active runs, recent completions/failures, and lineage health hints.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "older_than_minutes": {
+                        "type": "number",
+                        "description": "Window for active workers (default: 10).",
+                    },
+                    "recent_limit": {
+                        "type": "number",
+                        "description": "How many recent workers to inspect for summary (default: 12, max 50).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            permission="worker_manage",
+            handler=_tool_worker_session_status,
+        ),
+        ToolSpec(
             name="get_worker_result",
             description="Get the result/output of a completed worker by ID.",
             parameters={
@@ -943,6 +963,75 @@ def _tool_list_active_workers(args: dict[str, object], ctx: dict[str, object]) -
         "count": len(worker_list),
         "workers": worker_list,
     }, ensure_ascii=False)
+
+
+def _tool_worker_session_status(args: dict[str, object], ctx: dict[str, object]) -> str:
+    queen: Queen = ctx["queen"]
+    older_than_minutes = int(args.get("older_than_minutes") or 10)
+    recent_limit = max(1, min(50, int(args.get("recent_limit") or 12)))
+
+    active_workers = queen.store.get_active_workers(older_than_minutes=older_than_minutes)
+    active_workers = _reconcile_stale_active_workers(queen, active_workers, older_than_minutes=older_than_minutes)
+    recent_workers = (
+        queen.store.list_recent_workers(recent_limit)
+        if hasattr(queen.store, "list_recent_workers")
+        else queen.store.list_workers()[:recent_limit]
+    )
+
+    counts: dict[str, int] = {}
+    lineage_counts: dict[str, int] = {}
+    for worker in active_workers:
+        status = str(worker.status or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+        lineage_key = str(worker.lineage_id or "standalone")
+        lineage_counts[lineage_key] = lineage_counts.get(lineage_key, 0) + 1
+
+    recent_summary: list[dict[str, object]] = []
+    for worker in recent_workers[:recent_limit]:
+        recent_summary.append(
+            {
+                "worker_id": worker.id,
+                "status": worker.status,
+                "task": worker.task,
+                "updated_at": worker.updated_at.isoformat(),
+                "lineage_id": worker.lineage_id,
+                "parent_worker_id": worker.parent_worker_id,
+                "spawn_depth": worker.spawn_depth,
+                "summary": worker.summary,
+                "error": worker.error,
+            }
+        )
+
+    active_lineages = [
+        {"lineage_id": key, "active_workers": count}
+        for key, count in sorted(lineage_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    hints: list[str] = []
+    running = counts.get("running", 0) + counts.get("started", 0)
+    failed_recent = sum(1 for worker in recent_workers if str(worker.status) == "failed")
+    if running > 0:
+        hints.append(f"{running} worker(s) currently in flight.")
+    if failed_recent > 0:
+        hints.append(f"{failed_recent} recent worker run(s) failed; inspect summaries before retrying.")
+    if any((worker.spawn_depth or 0) > 0 for worker in active_workers):
+        hints.append("Active child-worker lineage detected; prefer synthesis or status checks before spawning more.")
+    if not hints:
+        hints.append("Worker fabric looks quiet and healthy.")
+
+    return json.dumps(
+        {
+            "status": "ok",
+            "older_than_minutes": older_than_minutes,
+            "recent_limit": recent_limit,
+            "active_count": len(active_workers),
+            "status_counts": counts,
+            "active_lineages": active_lineages,
+            "recent_workers": recent_summary,
+            "hints": hints,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _reconcile_stale_worker_status(queen: Queen, worker: Any) -> Any:
