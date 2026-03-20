@@ -48,6 +48,7 @@ _PRIORITY_TOOL_NAMES = {
     "start_worker",
     "get_worker_result",
     "get_worker_output_path",
+    "worker_yield",
     "manage_canon",
 }
 _ALWAYS_INCLUDE_TOOL_NAMES = {
@@ -66,6 +67,8 @@ _ALWAYS_INCLUDE_TOOL_NAMES = {
     "start_workers_parallel",
     "get_worker_status",
     "list_active_workers",
+    "worker_session_status",
+    "worker_yield",
     "get_worker_result",
     "get_worker_output_path",
     "stop_worker",

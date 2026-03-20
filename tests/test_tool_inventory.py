@@ -54,6 +54,7 @@ def test_catalog_returns_annotated_tools() -> None:
     tools = {tool.name: tool for tool in get_tools(mcp_manager=None)}
     assert tools["web_search"].metadata.category == "web"
     assert tools["start_worker"].metadata.category == "workers"
+    assert tools["worker_yield"].metadata.category == "workers"
 
 
 def test_catalog_classifies_browser_scheduler_database_release_and_template_tools() -> None:

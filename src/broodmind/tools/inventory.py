@@ -246,6 +246,11 @@ _TOOL_METADATA_BY_NAME: dict[str, ToolMetadata] = {
         profile_tags=("communication", "ops"),
         capabilities=("worker_read", "worker_observe"),
     ),
+    "worker_yield": ToolMetadata(
+        category="workers",
+        profile_tags=("communication", "ops"),
+        capabilities=("worker_read", "worker_observe", "worker_coordination"),
+    ),
     "get_worker_result": ToolMetadata(
         category="workers",
         profile_tags=("communication", "coding", "research"),
