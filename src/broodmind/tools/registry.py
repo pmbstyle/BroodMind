@@ -4,6 +4,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from broodmind.tools.metadata import ToolMetadata
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -16,6 +18,7 @@ class ToolSpec:
     scope: str | None = field(default=None, compare=False)  # Deprecated, kept for compatibility
     server_id: str | None = field(default=None, compare=False)
     remote_tool_name: str | None = field(default=None, compare=False)
+    metadata: ToolMetadata = field(default_factory=ToolMetadata, compare=False)
 
     def to_openai_tool(self) -> dict[str, Any]:
         return {
