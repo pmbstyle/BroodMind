@@ -5,7 +5,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, IntPrompt
+from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.rule import Rule
 from rich.table import Table
 
@@ -14,6 +14,7 @@ from broodmind.cli.branding import print_banner
 from broodmind.cli.wizard import (
     WizardConfirmParams,
     WizardMultiSelectParams,
+    WizardPrompter,
     WizardSection,
     WizardSelectOption,
     WizardSelectParams,
@@ -44,6 +45,84 @@ def _print_section_header(title: str) -> None:
     console.print()
     console.print(Rule(f"[bold {ACCENT}]{title}[/bold {ACCENT}]"))
     console.print()
+
+
+class _LegacyWizardPrompter(WizardPrompter):
+    def intro(self, title: str, body: str | None = None) -> None:
+        rendered = title if not body else f"{title}\n{body}"
+        console.print(Panel(rendered, border_style=SURFACE, padding=(1, 2)))
+        console.print()
+
+    def note(self, title: str, lines: list[str]) -> None:
+        console.print()
+        console.print(
+            Panel(
+                "\n".join(lines),
+                title=f"[bold]{title}[/bold]",
+                border_style=SURFACE,
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
+    def select(self, params: WizardSelectParams):
+        visible_options = [option for option in params.options if option.enabled]
+        for index, option in enumerate(visible_options, start=1):
+            hint = f" [dim]- {option.hint}[/dim]" if option.hint else ""
+            console.print(f"  {index}. {option.label}{hint}")
+
+        default_index = 1
+        if params.initial_value is not None:
+            for index, option in enumerate(visible_options, start=1):
+                if option.value == params.initial_value:
+                    default_index = index
+                    break
+
+        selected_idx = IntPrompt.ask(
+            params.message,
+            choices=[str(i) for i in range(1, len(visible_options) + 1)],
+            default=default_index,
+        )
+        return visible_options[selected_idx - 1].value
+
+    def multiselect(self, params: WizardMultiSelectParams):
+        visible_options = [option for option in params.options if option.enabled]
+        initial_values = set(params.initial_values)
+        console.print(f"[bold]{params.message}[/bold]")
+        default_indices: list[str] = []
+        for index, option in enumerate(visible_options, start=1):
+            selected = option.value in initial_values
+            marker = "[green]x[/green]" if selected else " "
+            hint = f" [dim]- {option.hint}[/dim]" if option.hint else ""
+            console.print(f"  [{marker}] {index}. {option.label}{hint}")
+            if selected:
+                default_indices.append(str(index))
+
+        raw = Prompt.ask("Selections", default=",".join(default_indices))
+        if not raw.strip():
+            return []
+
+        selected = []
+        for chunk in raw.split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            selected.append(visible_options[int(chunk) - 1].value)
+        return selected
+
+    def text(self, params: WizardTextParams) -> str:
+        return Prompt.ask(
+            params.message,
+            default=params.initial_value,
+            password=params.secret,
+        )
+
+    def confirm(self, params: WizardConfirmParams) -> bool:
+        return Confirm.ask(params.message, default=params.initial_value)
+
+
+def _resolve_prompter(prompter: WizardPrompter | None) -> WizardPrompter:
+    return prompter if prompter is not None else _LegacyWizardPrompter()
 
 
 def configure_wizard() -> None:
@@ -248,8 +327,9 @@ def _configure_llm(
     label: str,
     config: LLMConfig,
     advanced: bool,
-    prompter,
+    prompter: WizardPrompter | None = None,
 ) -> None:
+    prompter = _resolve_prompter(prompter)
     _print_section_header(f"{label} LLM Settings")
 
     provider_choices = _render_provider_select_list(prompter)
