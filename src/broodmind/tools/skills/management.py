@@ -8,6 +8,11 @@ from typing import Any
 
 import structlog
 
+from broodmind.tools.skills.bundles import (
+    SkillBundle,
+    discover_skill_bundle_dirs,
+    load_skill_bundle,
+)
 from broodmind.tools.registry import ToolSpec
 
 logger = structlog.get_logger(__name__)
@@ -32,7 +37,7 @@ def get_skill_management_tools() -> list[ToolSpec]:
     return [
         ToolSpec(
             name="list_skills",
-            description="List registered internal skills with id, path, description, and scope.",
+            description="List internal skills from registry and auto-discovered skill bundles.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -63,7 +68,7 @@ def get_skill_management_tools() -> list[ToolSpec]:
                     },
                     "enabled": {"type": "boolean", "description": "Whether the skill is enabled (default true)."},
                 },
-                "required": ["name", "description", "path"],
+                "required": ["path"],
                 "additionalProperties": False,
             },
             permission="skill_manage",
@@ -88,18 +93,16 @@ def get_skill_management_tools() -> list[ToolSpec]:
 
 def get_registered_skill_tools() -> list[ToolSpec]:
     workspace_dir = _workspace_root()
-    skills = _load_registry(workspace_dir).get("skills", [])
+    skills = _load_skill_inventory(workspace_dir)
     tools: list[ToolSpec] = []
     for raw in skills:
-        if not isinstance(raw, dict):
-            continue
         if not bool(raw.get("enabled", True)):
             continue
         skill_id = str(raw.get("id", "")).strip()
         if not _SKILL_ID_RE.fullmatch(skill_id):
             continue
         tool_name = f"skill_{skill_id}"
-        if not _skill_path_exists(workspace_dir, raw):
+        if not bool(raw.get("exists", False)):
             logger.warning("Skipping skill tool because SKILL.md is missing", skill_id=skill_id)
             continue
         name = str(raw.get("name", skill_id)).strip() or skill_id
@@ -144,11 +147,8 @@ def get_registered_skill_tools() -> list[ToolSpec]:
 def _tool_list_skills(args: dict[str, Any], ctx: dict[str, Any]) -> str:
     workspace_dir = _workspace_root()
     include_disabled = bool(args.get("include_disabled", False))
-    registry = _load_registry(workspace_dir)
     listed: list[dict[str, Any]] = []
-    for raw in registry.get("skills", []):
-        if not isinstance(raw, dict):
-            continue
+    for raw in _load_skill_inventory(workspace_dir):
         enabled = bool(raw.get("enabled", True))
         if not include_disabled and not enabled:
             continue
@@ -160,7 +160,9 @@ def _tool_list_skills(args: dict[str, Any], ctx: dict[str, Any]) -> str:
                 "path": str(raw.get("path", "")),
                 "scope": str(raw.get("scope", "both")),
                 "enabled": enabled,
-                "exists": _skill_path_exists(workspace_dir, raw),
+                "exists": bool(raw.get("exists", False)),
+                "source": str(raw.get("source", "registry")),
+                "auto_discovered": bool(raw.get("auto_discovered", False)),
             }
         )
     payload = {
@@ -173,42 +175,45 @@ def _tool_list_skills(args: dict[str, Any], ctx: dict[str, Any]) -> str:
 
 def _tool_add_skill(args: dict[str, Any], ctx: dict[str, Any]) -> str:
     workspace_dir = _workspace_root()
-    name = str(args.get("name", "")).strip()
-    description = str(args.get("description", "")).strip()
     path_raw = str(args.get("path", "")).strip()
     scope = str(args.get("scope", "both")).strip().lower() or "both"
     enabled = bool(args.get("enabled", True))
 
-    if not name:
-        return "add_skill error: name is required."
-    if not description:
-        return "add_skill error: description is required."
     if not path_raw:
         return "add_skill error: path is required."
     if scope not in {"queen", "worker", "both"}:
         return "add_skill error: scope must be one of queen, worker, both."
 
-    skill_id_raw = str(args.get("id", "")).strip()
-    skill_id = skill_id_raw or _slugify(name) or _slugify(Path(path_raw).stem)
-    if not _SKILL_ID_RE.fullmatch(skill_id):
-        return "add_skill error: id must match ^[a-z0-9][a-z0-9_-]*$."
-
     resolved_skill = _resolve_skill_file(workspace_dir, path_raw)
     if resolved_skill is None:
         return "add_skill error: skill path not found, invalid, or outside workspace."
 
-    rel_path = resolved_skill.relative_to(workspace_dir).as_posix()
+    candidate_entry = {
+        "id": str(args.get("id", "")).strip(),
+        "name": str(args.get("name", "")).strip(),
+        "description": str(args.get("description", "")).strip(),
+        "scope": scope,
+        "enabled": enabled,
+        "path": resolved_skill.relative_to(workspace_dir).as_posix(),
+    }
+    bundle = load_skill_bundle(resolved_skill, workspace_dir=workspace_dir, registry_entry=candidate_entry)
+    if bundle is None:
+        return "add_skill error: SKILL.md is invalid or incomplete. Name/description may be missing."
+
+    skill_id = bundle.id
+    if not _SKILL_ID_RE.fullmatch(skill_id):
+        return "add_skill error: id must match ^[a-z0-9][a-z0-9_-]*$."
 
     registry = _load_registry(workspace_dir)
     skills = [item for item in registry.get("skills", []) if isinstance(item, dict)]
     existing_idx = next((i for i, item in enumerate(skills) if str(item.get("id", "")) == skill_id), None)
     record = {
-        "id": skill_id,
-        "name": name,
-        "description": description,
-        "path": rel_path,
-        "scope": scope,
-        "enabled": enabled,
+        "id": bundle.id,
+        "name": bundle.name,
+        "description": bundle.description,
+        "path": bundle.skill_file.relative_to(workspace_dir).as_posix(),
+        "scope": bundle.scope,
+        "enabled": bundle.enabled,
     }
     if existing_idx is None:
         skills.append(record)
@@ -224,7 +229,7 @@ def _tool_add_skill(args: dict[str, Any], ctx: dict[str, Any]) -> str:
         {
             "status": action,
             "id": skill_id,
-            "path": rel_path,
+            "path": record["path"],
             "registry_path": str(_registry_path(workspace_dir)),
             "message": f"Skill '{skill_id}' {action} successfully.",
         },
@@ -290,6 +295,7 @@ def _run_skill(skill_data: dict[str, Any], args: dict[str, Any], ctx: dict[str, 
         "description": str(skill_data.get("description", "")),
         "scope": scope,
         "path": str(skill_data.get("path", "")),
+        "source": str(skill_data.get("source", "registry")),
         "task": task,
         "input": input_payload if isinstance(input_payload, (dict, list, str, int, float, bool)) else None,
         "truncated": truncated,
@@ -397,6 +403,96 @@ def _resolve_registered_skill_path(workspace_dir: Path, skill_data: dict[str, An
 
 def _skill_path_exists(workspace_dir: Path, skill_data: dict[str, Any]) -> bool:
     return _resolve_registered_skill_path(workspace_dir, skill_data) is not None
+
+
+def _load_skill_inventory(workspace_dir: Path) -> list[dict[str, Any]]:
+    registry = _load_registry(workspace_dir)
+    registry_skills = [item for item in registry.get("skills", []) if isinstance(item, dict)]
+    inventory_by_id: dict[str, dict[str, Any]] = {}
+
+    for raw in registry_skills:
+        bundle = _load_registry_bundle(workspace_dir, raw)
+        skill_id = str(raw.get("id", "")).strip()
+        if bundle is not None:
+            inventory_by_id[bundle.id] = _skill_record_from_bundle(
+                workspace_dir,
+                bundle,
+                source="registry",
+                auto_discovered=False,
+            )
+            continue
+        if not _SKILL_ID_RE.fullmatch(skill_id):
+            continue
+        inventory_by_id[skill_id] = _skill_record_from_registry(workspace_dir, raw)
+
+    for bundle_dir in discover_skill_bundle_dirs(workspace_dir):
+        bundle = load_skill_bundle(bundle_dir, workspace_dir=workspace_dir)
+        if bundle is None or bundle.id in inventory_by_id:
+            continue
+        inventory_by_id[bundle.id] = _skill_record_from_bundle(
+            workspace_dir,
+            bundle,
+            source="bundle",
+            auto_discovered=True,
+        )
+
+    return sorted(inventory_by_id.values(), key=lambda item: str(item.get("id", "")))
+
+
+def _load_registry_bundle(workspace_dir: Path, raw: dict[str, Any]) -> SkillBundle | None:
+    resolved = _resolve_registered_skill_path(workspace_dir, raw)
+    if resolved is None:
+        return None
+    return load_skill_bundle(resolved, workspace_dir=workspace_dir, registry_entry=raw)
+
+
+def _skill_record_from_bundle(
+    workspace_dir: Path,
+    bundle: SkillBundle,
+    *,
+    source: str,
+    auto_discovered: bool,
+) -> dict[str, Any]:
+    return {
+        "id": bundle.id,
+        "name": bundle.name,
+        "description": bundle.description,
+        "path": bundle.skill_file.relative_to(workspace_dir).as_posix(),
+        "scope": bundle.scope,
+        "enabled": bundle.enabled,
+        "exists": True,
+        "source": source,
+        "auto_discovered": auto_discovered,
+        "bundle_dir": str(bundle.bundle_dir),
+        "scripts_dir": str(bundle.scripts_dir) if bundle.scripts_dir else "",
+        "references_dir": str(bundle.references_dir) if bundle.references_dir else "",
+        "assets_dir": str(bundle.assets_dir) if bundle.assets_dir else "",
+        "registry_path": bundle.registry_path or "",
+    }
+
+
+def _skill_record_from_registry(workspace_dir: Path, raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(raw.get("id", "")).strip(),
+        "name": str(raw.get("name", "")).strip(),
+        "description": str(raw.get("description", "")).strip(),
+        "path": str(raw.get("path", "")).strip(),
+        "scope": _resolve_scope_value(raw.get("scope")),
+        "enabled": bool(raw.get("enabled", True)),
+        "exists": _skill_path_exists(workspace_dir, raw),
+        "source": "registry",
+        "auto_discovered": False,
+        "bundle_dir": "",
+        "scripts_dir": "",
+        "references_dir": "",
+        "assets_dir": "",
+        "registry_path": str(raw.get("path", "")).strip(),
+    }
+
+
+def _resolve_scope_value(value: Any) -> str:
+    scope = str(value or "both").strip().lower() or "both"
+    return scope if scope in {"queen", "worker", "both"} else "both"
 
 
 def _slugify(value: str) -> str:

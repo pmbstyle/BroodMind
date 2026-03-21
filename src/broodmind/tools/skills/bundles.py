@@ -104,7 +104,7 @@ def load_skill_bundle(
         return None
 
     metadata = resolve_skill_bundle_metadata(frontmatter)
-    scope = _resolve_scope(registry_entry)
+    scope = _resolve_scope(frontmatter, registry_entry)
     enabled = bool(registry_entry.get("enabled", True)) if isinstance(registry_entry, dict) else True
 
     scripts_dir = _existing_child_dir(candidate, "scripts")
@@ -279,10 +279,13 @@ def _resolve_bundle_id(
     return _slugify(bundle_dir.name)
 
 
-def _resolve_scope(registry_entry: dict[str, Any] | None) -> str:
-    if not isinstance(registry_entry, dict):
-        return "both"
-    scope = str(registry_entry.get("scope", "both")).strip().lower() or "both"
+def _resolve_scope(
+    frontmatter: dict[str, str],
+    registry_entry: dict[str, Any] | None,
+) -> str:
+    scope = str(frontmatter.get("scope", "")).strip().lower()
+    if not scope and isinstance(registry_entry, dict):
+        scope = str(registry_entry.get("scope", "")).strip().lower()
     return scope if scope in {"queen", "worker", "both"} else "both"
 
 
