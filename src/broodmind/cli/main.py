@@ -39,6 +39,7 @@ from broodmind.channels.whatsapp.bridge import WhatsAppBridgeController, WhatsAp
 from broodmind.channels.whatsapp.ids import parse_allowed_whatsapp_numbers
 from broodmind.channels.whatsapp.runtime import WhatsAppRuntime
 from broodmind.runtime.workers.templates import sync_default_templates
+from broodmind.tools.skills.installer import install_skill_from_source, list_installed_skill_sources
 from broodmind.tools import get_tools, resolve_tool_diagnostics
 from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec
 from aiogram import Bot
@@ -50,6 +51,7 @@ memory_app = typer.Typer(add_completion=False)
 config_app = typer.Typer(add_completion=False)
 whatsapp_app = typer.Typer(add_completion=False)
 tools_app = typer.Typer(add_completion=False)
+skill_app = typer.Typer(add_completion=False)
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -1241,12 +1243,78 @@ def tools_resolve(
     console.print()
 
 
+@skill_app.command("install")
+def skill_install(
+    source: str = typer.Argument(..., help="ClawHub slug, SKILL.md URL, zip URL, or local bundle path."),
+    clawhub_site: str = typer.Option("https://clawhub.ai", "--clawhub-site", help="Base ClawHub site URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Install a skill bundle from ClawHub, URL, or local path."""
+    settings = load_settings()
+    workspace_dir = settings.workspace_dir.resolve()
+    try:
+        payload = install_skill_from_source(
+            source,
+            workspace_dir=workspace_dir,
+            clawhub_site=clawhub_site,
+        )
+    except Exception as exc:
+        if json_output:
+            typer.echo(json.dumps({"status": "error", "message": str(exc), "source": source}, ensure_ascii=False))
+        else:
+            console.print(f"[bold red]Skill install failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    console.print(f"[bold green][V] Installed skill[/bold green] {payload['skill_id']}")
+    console.print(f"[dim]Source:[/dim] {payload['source']}")
+    console.print(f"[dim]Path:[/dim] {payload['path']}")
+
+
+@skill_app.command("list")
+def skill_list(
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """List skills installed through the BroodMind installer."""
+    settings = load_settings()
+    payload = list_installed_skill_sources(settings.workspace_dir.resolve())
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    installs = payload.get("installs", [])
+    if not installs:
+        console.print("[dim]No installer-managed skills yet.[/dim]")
+        return
+
+    table = Table(title="Installed Skills", box=box.SIMPLE_HEAVY)
+    table.add_column("Skill")
+    table.add_column("Source")
+    table.add_column("Kind")
+    table.add_column("Path")
+    for item in installs:
+        if not isinstance(item, dict):
+            continue
+        table.add_row(
+            str(item.get("skill_id", "")),
+            str(item.get("source", "")),
+            str(item.get("source_kind", "")),
+            str(item.get("path", "")),
+        )
+    console.print(table)
+
+
 app.add_typer(workers_app, name="workers")
 app.add_typer(audit_app, name="audit")
 app.add_typer(memory_app, name="memory")
 app.add_typer(config_app, name="config")
 app.add_typer(whatsapp_app, name="whatsapp")
 app.add_typer(tools_app, name="tools")
+app.add_typer(skill_app, name="skill")
 
 
 def _build_tool_resolution_snapshot(

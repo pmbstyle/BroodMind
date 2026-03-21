@@ -73,6 +73,68 @@ BroodMind builds the skill inventory from two sources:
 
 When a valid bundle is present, `name` and `description` come from `SKILL.md`.
 
+## Installing skills
+
+BroodMind can install external skills into the local workspace with:
+
+```bash
+uv run broodmind skill install <source>
+```
+
+Supported source styles today:
+
+```bash
+uv run broodmind skill install zanblayde/agent-commons
+uv run broodmind skill install clawhub:zanblayde/agent-commons
+uv run broodmind skill install https://example.com/skills/writer/SKILL.md
+uv run broodmind skill install https://example.com/bundles/writer.zip
+uv run broodmind skill install ./local-skill
+```
+
+Installed skills are copied into `workspace/skills/<skill-id>/` and tracked in:
+
+```text
+workspace/skills/installed.json
+```
+
+You can inspect installer-managed entries with:
+
+```bash
+uv run broodmind skill list
+uv run broodmind skill list --json
+```
+
+## ClawHub compatibility
+
+BroodMind is compatible with the ClawHub install workflow at the UX level:
+
+- ClawHub-style slug input like `zanblayde/agent-commons`
+- `clawhub:<slug>` explicit source prefix
+- frontmatter compatibility for `metadata.openclaw`
+
+This is intentionally not a Node wrapper around `npx clawhub@latest`.
+BroodMind uses its own installer and then normalizes the result into BroodMind's local skill bundle system.
+
+That means:
+
+- install UX is familiar to ClawHub/OpenClaw users
+- installed skills become normal BroodMind skill bundles
+- BroodMind keeps its own manifest and runtime policy model
+
+## Direct SKILL.md URLs
+
+When the source points directly to `SKILL.md`, BroodMind creates a minimal bundle from that file.
+
+This works best for markdown-only skills.
+
+If the remote skill depends on:
+
+- `scripts/`
+- `references/`
+- `assets/`
+
+then a `.zip` bundle or ClawHub install source is preferred, because a raw `SKILL.md` URL cannot carry the supporting files.
+
 ## Readiness
 
 Skills now expose readiness information:

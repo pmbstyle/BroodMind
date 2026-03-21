@@ -274,6 +274,8 @@ BroodMind supports workspace-local skill bundles under `workspace/skills/<skill-
 - supports optional `scripts/`, `references/`, and `assets/`
 - exposes readiness checks for required binaries and env vars
 - runs bundled scripts through a dedicated safe runner instead of raw shell
+- can install external skills with ClawHub-style commands like `uv run broodmind skill install zanblayde/agent-commons`
+- also accepts direct `SKILL.md` URLs and local bundle paths
 
 See [docs/skills.md](docs/skills.md) for the current format and behavior.
 
