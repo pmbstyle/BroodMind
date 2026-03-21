@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import suppress
 from typing import Any
 
-from broodmind.tools.browser.actions import browser_close, browser_open, browser_snapshot
+from broodmind.tools.browser.actions import (
+    browser_close,
+    browser_extract,
+    browser_open,
+    browser_snapshot,
+)
 from broodmind.tools.web.fetch import markdown_new_fetch, web_fetch
 
 
@@ -79,10 +85,11 @@ async def fetch_plan_tool(args: dict[str, Any], ctx: dict[str, Any]) -> str:
                 )
             )
 
-    # Step 3: browser snapshot fallback for JS-heavy pages
+    # Step 3: browser-assisted fallback for JS-heavy pages
     if allow_browser and remaining_budget() > 1.0:
-        browser_attempt = {"tool": "browser_snapshot_plan", "status": "error", "duration_ms": 0, "reason": ""}
+        browser_attempt = {"tool": "browser_plan", "status": "error", "duration_ms": 0, "reason": ""}
         browser_start = time.perf_counter()
+        browser_payload: dict[str, Any] | None = None
         try:
             open_resp = await browser_open({"url": url}, ctx)
             if str(open_resp).lower().startswith("error"):
@@ -92,33 +99,42 @@ async def fetch_plan_tool(args: dict[str, Any], ctx: dict[str, Any]) -> str:
                 if str(snap).lower().startswith("error"):
                     browser_attempt["reason"] = str(snap)
                 else:
-                    snippet = str(snap)[:max_chars]
-                    browser_attempt["status"] = "ok"
-                    browser_attempt["reason"] = "browser snapshot captured"
-                    return _to_json(
-                        {
+                    extract = await browser_extract({"max_chars": max_chars}, ctx)
+                    extract_result = _parse_fetch_output(extract)
+                    snippet = str(extract_result.get("text") or snap)[:max_chars]
+                    if _has_enough_content({"snippet": snippet}, min_content_chars):
+                        browser_attempt["status"] = "ok"
+                        browser_attempt["reason"] = (
+                            "browser extracted visible text"
+                            if extract_result.get("ok")
+                            else "browser snapshot captured"
+                        )
+                        browser_payload = {
                             "ok": True,
                             "degraded": True,
                             "fallback_used": True,
                             "rate_limited": False,
-                            "source": "browser_snapshot",
+                            "source": "browser_extract" if extract_result.get("ok") else "browser_snapshot",
                             "url": url,
                             "goal": goal,
                             "snippet": snippet,
-                            "plan": attempts + [browser_attempt],
-                            "next_best_action": "use browser_click/browser_type for deeper extraction if needed",
+                            "next_best_action": _next_best_browser_action(goal),
                         }
-                    )
+                    else:
+                        browser_attempt["reason"] = (
+                            f"browser content below min_content_chars ({len(snippet.strip())} < {min_content_chars})"
+                        )
         except Exception as exc:
             browser_attempt["reason"] = f"browser exception: {exc}"
         finally:
             browser_attempt["duration_ms"] = int((time.perf_counter() - browser_start) * 1000)
             attempts.append(browser_attempt)
             if close_browser:
-                try:
+                with suppress(Exception):
                     await browser_close({}, ctx)
-                except Exception:
-                    pass
+        if browser_payload is not None:
+            browser_payload["plan"] = attempts
+            return _to_json(browser_payload)
 
     return _to_json(
         {
@@ -131,7 +147,7 @@ async def fetch_plan_tool(args: dict[str, Any], ctx: dict[str, Any]) -> str:
             "goal": goal,
             "error": "No fetch strategy produced sufficient content within budget",
             "plan": attempts,
-            "next_best_action": "retry with allow_browser=true or lower min_content_chars",
+            "next_best_action": _failure_next_action(goal, allow_browser=allow_browser),
         }
     )
 
@@ -223,3 +239,19 @@ def _bounded_int(value: Any, *, default: int, low: int, high: int) -> int:
 
 def _to_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _next_best_browser_action(goal: str) -> str:
+    if goal == "structured_extract":
+        return "use browser_snapshot refs plus browser_extract/browser_click for targeted fields"
+    if goal == "full_content":
+        return "use browser_snapshot and browser_extract after navigation or expansion clicks"
+    return "use browser_extract for quick text capture or browser_click/browser_type for deeper interaction"
+
+
+def _failure_next_action(goal: str, *, allow_browser: bool) -> str:
+    if not allow_browser:
+        return "retry with allow_browser=true or lower min_content_chars"
+    if goal == "structured_extract":
+        return "retry with lower min_content_chars or inspect interactively with browser_snapshot refs"
+    return "retry with lower min_content_chars or a page-specific browser interaction sequence"

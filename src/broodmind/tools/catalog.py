@@ -7,13 +7,20 @@ import json
 import os
 from pathlib import Path
 
+from broodmind.channels import normalize_user_channel, user_channel_label
+from broodmind.infrastructure.config.settings import load_settings
+from broodmind.runtime.metrics import read_metrics_snapshot
 from broodmind.runtime.memory.memchain import memchain_init, memchain_record, memchain_status, memchain_verify
+from broodmind.runtime.state import is_pid_running, read_status
 from broodmind.tools.browser.actions import (
     browser_click,
     browser_close,
+    browser_extract,
     browser_open,
     browser_snapshot,
     browser_type,
+    browser_wait_for,
+    browser_workflow,
 )
 from broodmind.tools.memory.canon import manage_canon, search_canon
 from broodmind.tools.filesystem.download import download_file
@@ -42,6 +49,7 @@ from broodmind.tools.ops.management import (
     service_logs,
     test_run,
 )
+from broodmind.tools.inventory import annotate_tool_specs
 from broodmind.tools.registry import ToolSpec
 from broodmind.tools.web.fetch import markdown_new_fetch, web_fetch
 from broodmind.tools.web.search import web_search
@@ -276,6 +284,27 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
             parameters={"type": "object", "properties": {}, "additionalProperties": False},
             permission="self_control",
             handler=_tool_check_schedule,
+            is_async=True,
+        ),
+        ToolSpec(
+            name="scheduler_status",
+            description="Summarize scheduler state with due tasks, next-run previews, and hints about what the Queen should do next.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "enabled_only": {
+                        "type": "boolean",
+                        "description": "If true, only include enabled tasks.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum tasks to include in the preview (default: 20, max: 50).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            permission="self_control",
+            handler=_tool_scheduler_status,
             is_async=True,
         ),
         ToolSpec(
@@ -549,6 +578,82 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
             parameters={"type": "object", "properties": {}, "additionalProperties": False},
             permission="network",
             handler=lambda args, ctx: browser_close(args, ctx),
+            is_async=True,
+        ),
+        ToolSpec(
+            name="browser_wait_for",
+            description="Wait for a browser element ref or visible text to appear before continuing.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string", "description": "Optional element reference from browser_snapshot."},
+                    "text": {"type": "string", "description": "Optional visible text to wait for."},
+                    "state": {
+                        "type": "string",
+                        "description": "Desired locator state.",
+                        "enum": ["attached", "detached", "hidden", "visible"],
+                    },
+                    "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default 10000)."},
+                },
+                "additionalProperties": False,
+            },
+            permission="network",
+            handler=lambda args, ctx: browser_wait_for(args, ctx),
+            is_async=True,
+        ),
+        ToolSpec(
+            name="browser_extract",
+            description="Extract visible text from the current page or a specific browser ref.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string", "description": "Optional element reference from browser_snapshot."},
+                    "max_chars": {"type": "integer", "description": "Maximum text length to return (100-20000)."},
+                },
+                "additionalProperties": False,
+            },
+            permission="network",
+            handler=lambda args, ctx: browser_extract(args, ctx),
+            is_async=True,
+        ),
+        ToolSpec(
+            name="browser_workflow",
+            description="Run a short browser workflow as one tool call by sequencing existing browser actions like open, snapshot, click, type, wait_for, extract, and close.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "description": "Ordered workflow steps.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "enum": ["open", "snapshot", "click", "type", "wait_for", "extract", "close"],
+                                },
+                                "url": {"type": "string"},
+                                "ref": {"type": "string"},
+                                "text": {"type": "string"},
+                                "press_enter": {"type": "boolean"},
+                                "state": {"type": "string", "enum": ["attached", "detached", "hidden", "visible"]},
+                                "timeout_ms": {"type": "integer"},
+                                "max_chars": {"type": "integer"},
+                            },
+                            "required": ["action"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "stop_on_error": {
+                        "type": "boolean",
+                        "description": "Stop after the first failed step (default: true).",
+                    },
+                },
+                "required": ["steps"],
+                "additionalProperties": False,
+            },
+            permission="network",
+            handler=lambda args, ctx: browser_workflow(args, ctx),
             is_async=True,
         ),
         ToolSpec(
@@ -839,6 +944,13 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
             handler=lambda args, ctx: config_audit(args, ctx),
         ),
         ToolSpec(
+            name="gateway_status",
+            description="Read-only control-plane snapshot for gateway, queen, active channel, exec sessions, and MCP connectivity.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            permission="service_read",
+            handler=lambda args, ctx: _tool_gateway_status(args, ctx),
+        ),
+        ToolSpec(
             name="test_run",
             description="Run allowlisted test/lint commands and return summarized output.",
             parameters={
@@ -942,7 +1054,7 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
         if mcp_tools:
             logger.info("Injecting %d MCP tools into registry", len(mcp_tools))
             tools.extend(mcp_tools)
-    return tools
+    return annotate_tool_specs(tools)
 
 
 async def _tool_check_schedule(args, ctx) -> str:
@@ -1003,6 +1115,61 @@ async def _tool_check_schedule(args, ctx) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+async def _tool_scheduler_status(args, ctx) -> str:
+    scheduler = ctx["queen"].scheduler
+    enabled_only = bool((args or {}).get("enabled_only", False))
+    limit = max(1, min(50, int((args or {}).get("limit") or 20)))
+    described = scheduler.describe_tasks(enabled_only=enabled_only)
+    preview = described[:limit]
+    due_count = sum(1 for task in described if bool(task.get("due_now")))
+    disabled_count = sum(1 for task in described if int(task.get("enabled", 1) or 0) != 1)
+    hints: list[str] = []
+    if due_count > 0:
+        hints.append(f"{due_count} scheduled task(s) are due now; run check_schedule or dispatch work.")
+    if disabled_count > 0 and not enabled_only:
+        hints.append(f"{disabled_count} scheduled task(s) are disabled and will not run until re-enabled.")
+    if any(task.get("overdue") for task in described):
+        hints.append("At least one scheduled task looks overdue; inspect execution flow or worker failures.")
+    if not hints:
+        hints.append("Scheduler looks healthy. Use next-run previews to plan follow-up work.")
+
+    next_due = next((task for task in described if task.get("next_run_at")), None)
+    payload = {
+        "status": "ok",
+        "enabled_only": enabled_only,
+        "task_count": len(described),
+        "due_count": due_count,
+        "disabled_count": disabled_count,
+        "next_due_task": (
+            {
+                "task_id": next_due.get("id"),
+                "name": next_due.get("name"),
+                "next_run_at": next_due.get("next_run_at"),
+                "due_now": bool(next_due.get("due_now")),
+            }
+            if next_due
+            else None
+        ),
+        "tasks": [
+            {
+                "task_id": task.get("id"),
+                "name": task.get("name"),
+                "frequency": task.get("frequency"),
+                "worker_id": task.get("worker_id"),
+                "enabled": bool(int(task.get("enabled", 1) or 0) == 1),
+                "due_now": bool(task.get("due_now")),
+                "overdue": bool(task.get("overdue")),
+                "next_run_at": task.get("next_run_at"),
+                "last_run_at": task.get("last_run_at"),
+                "description": task.get("description"),
+            }
+            for task in preview
+        ],
+        "hints": hints,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _tool_schedule_task(args, ctx) -> str:
     try:
         task_id = ctx["queen"].scheduler.schedule_task(
@@ -1022,6 +1189,120 @@ def _tool_schedule_task(args, ctx) -> str:
             "task_id": task_id,
             "name": args["name"],
             "frequency": args["frequency"],
+        },
+        ensure_ascii=False,
+    )
+
+
+def _tool_gateway_status(args, ctx) -> str:
+    del args, ctx
+    settings = load_settings()
+    status_data = read_status(settings) or {}
+    metrics = read_metrics_snapshot(settings.state_dir) or {}
+
+    pid = status_data.get("pid")
+    running = is_pid_running(pid)
+    active_channel = normalize_user_channel(
+        str(status_data.get("active_channel", "") or settings.user_channel)
+    )
+    active_channel_label = user_channel_label(active_channel)
+    queen_metrics = metrics.get("queen", {}) if isinstance(metrics, dict) else {}
+    telegram_metrics = metrics.get("telegram", {}) if isinstance(metrics, dict) else {}
+    whatsapp_metrics = metrics.get("whatsapp", {}) if isinstance(metrics, dict) else {}
+    exec_metrics = metrics.get("exec_run", {}) if isinstance(metrics, dict) else {}
+    connectivity_metrics = metrics.get("connectivity", {}) if isinstance(metrics, dict) else {}
+    active_channel_metrics = whatsapp_metrics if active_channel == "whatsapp" else telegram_metrics
+
+    services = [
+        {
+            "id": "gateway",
+            "status": "ok" if running else "critical",
+            "reason": "running" if running else "process is not running",
+            "updated_at": status_data.get("last_message_at"),
+        },
+        {
+            "id": "queen",
+            "status": _gateway_queen_status(queen_metrics),
+            "reason": _gateway_queen_reason(queen_metrics),
+            "updated_at": queen_metrics.get("updated_at"),
+        },
+        {
+            "id": active_channel,
+            "status": _gateway_channel_status(active_channel, active_channel_metrics),
+            "reason": _gateway_channel_reason(active_channel, active_channel_metrics),
+            "updated_at": active_channel_metrics.get("updated_at"),
+        },
+        {
+            "id": "mcp",
+            "status": "ok" if _mcp_connected_count(connectivity_metrics) > 0 else "warning",
+            "reason": _gateway_mcp_reason(connectivity_metrics),
+            "updated_at": connectivity_metrics.get("updated_at"),
+        },
+    ]
+    hints: list[str] = []
+    if not running:
+        hints.append("Gateway process is down; restart the BroodMind runtime before expecting channel traffic.")
+    if int(queen_metrics.get("followup_queues", 0) or 0) > 0:
+        hints.append("Queen follow-up queue is non-empty; check worker/gateway traffic before spawning more work.")
+    if active_channel == "telegram" and int(telegram_metrics.get("chat_queues", 0) or 0) > 0:
+        hints.append("Telegram queue depth is elevated; outbound delivery may be catching up.")
+    if active_channel == "whatsapp" and int(bool(whatsapp_metrics.get("connected", 0))) == 0:
+        hints.append("WhatsApp bridge is not connected; expect delivery issues until it reconnects.")
+    if _mcp_connected_count(connectivity_metrics) == 0:
+        hints.append("No MCP servers are currently connected; tool availability may be reduced.")
+    if not hints:
+        hints.append("Gateway control plane looks healthy.")
+
+    return json.dumps(
+        {
+            "status": "ok",
+            "running": running,
+            "pid": pid,
+            "started_at": status_data.get("started_at"),
+            "last_heartbeat": status_data.get("last_message_at"),
+            "gateway": {
+                "host": settings.gateway_host,
+                "port": settings.gateway_port,
+                "active_channel": active_channel,
+                "active_channel_label": active_channel_label,
+            },
+            "queen": {
+                "followup_queues": int(queen_metrics.get("followup_queues", 0) or 0),
+                "internal_queues": int(queen_metrics.get("internal_queues", 0) or 0),
+                "followup_tasks": int(queen_metrics.get("followup_tasks", 0) or 0),
+                "internal_tasks": int(queen_metrics.get("internal_tasks", 0) or 0),
+                "thinking_count": int(queen_metrics.get("thinking_count", 0) or 0),
+                "updated_at": queen_metrics.get("updated_at"),
+            },
+            "channel": {
+                "id": active_channel,
+                "label": active_channel_label,
+                "updated_at": active_channel_metrics.get("updated_at"),
+                "queue_depth": int(active_channel_metrics.get("chat_queues", 0) or 0)
+                if active_channel == "telegram"
+                else 0,
+                "send_tasks": int(active_channel_metrics.get("send_tasks", 0) or 0)
+                if active_channel == "telegram"
+                else None,
+                "connected": (
+                    None
+                    if active_channel != "whatsapp" and "connected" not in active_channel_metrics
+                    else active_channel_metrics.get("connected")
+                ),
+                "chat_mappings": active_channel_metrics.get("chat_mappings"),
+            },
+            "exec": {
+                "sessions_running": int(exec_metrics.get("background_sessions_running", 0) or 0),
+                "sessions_total": int(exec_metrics.get("background_sessions_total", 0) or 0),
+                "updated_at": exec_metrics.get("updated_at"),
+            },
+            "mcp": {
+                "servers_total": _mcp_server_total(connectivity_metrics),
+                "servers_connected": _mcp_connected_count(connectivity_metrics),
+                "updated_at": connectivity_metrics.get("updated_at"),
+            },
+            "services": services,
+            "hints": hints,
         },
         ensure_ascii=False,
     )
@@ -1071,6 +1352,78 @@ async def _tool_queen_context_health(args, ctx) -> str:
 
 def _workspace_dir() -> Path:
     return Path(os.getenv("BROODMIND_WORKSPACE_DIR", "workspace")).resolve()
+
+
+def _gateway_queen_status(queen_metrics: dict[str, object]) -> str:
+    followup = int(queen_metrics.get("followup_queues", 0) or 0)
+    internal = int(queen_metrics.get("internal_queues", 0) or 0)
+    queue_pressure = followup + internal
+    if queue_pressure >= 10:
+        return "warning"
+    return "ok"
+
+
+def _gateway_queen_reason(queen_metrics: dict[str, object]) -> str:
+    followup = int(queen_metrics.get("followup_queues", 0) or 0)
+    internal = int(queen_metrics.get("internal_queues", 0) or 0)
+    queue_pressure = followup + internal
+    if queue_pressure <= 0:
+        return "queues clear"
+    return f"queue pressure {queue_pressure} (followup={followup}, internal={internal})"
+
+
+def _gateway_channel_status(channel_id: str, channel_metrics: dict[str, object]) -> str:
+    if channel_id == "whatsapp":
+        connected = channel_metrics.get("connected")
+        if connected in {0, False}:
+            return "critical"
+        return "ok" if connected in {1, True} else "warning"
+    queue_depth = int(channel_metrics.get("chat_queues", 0) or 0)
+    if queue_depth >= 40:
+        return "critical"
+    if queue_depth >= 15:
+        return "warning"
+    return "ok"
+
+
+def _gateway_channel_reason(channel_id: str, channel_metrics: dict[str, object]) -> str:
+    if channel_id == "whatsapp":
+        connected = channel_metrics.get("connected")
+        mappings = int(channel_metrics.get("chat_mappings", 0) or 0)
+        if connected in {0, False}:
+            return "bridge disconnected"
+        if connected in {1, True}:
+            return f"connected ({mappings} mapped chat(s))" if mappings > 0 else "connected"
+        return "awaiting bridge status"
+    queue_depth = int(channel_metrics.get("chat_queues", 0) or 0)
+    send_tasks = int(channel_metrics.get("send_tasks", 0) or 0)
+    if queue_depth <= 0 and send_tasks <= 0:
+        return "healthy"
+    return f"queues={queue_depth}, send_tasks={send_tasks}"
+
+
+def _mcp_server_total(connectivity_metrics: dict[str, object]) -> int:
+    servers = connectivity_metrics.get("mcp_servers", {})
+    return len(servers) if isinstance(servers, dict) else 0
+
+
+def _mcp_connected_count(connectivity_metrics: dict[str, object]) -> int:
+    servers = connectivity_metrics.get("mcp_servers", {})
+    if not isinstance(servers, dict):
+        return 0
+    connected = 0
+    for payload in servers.values():
+        if isinstance(payload, dict) and payload.get("connected"):
+            connected += 1
+    return connected
+
+
+def _gateway_mcp_reason(connectivity_metrics: dict[str, object]) -> str:
+    total = _mcp_server_total(connectivity_metrics)
+    connected = _mcp_connected_count(connectivity_metrics)
+    if total <= 0:
+        return "no configured MCP servers reporting metrics"
+    return f"{connected}/{total} server(s) connected"
 
 
 async def _tool_queen_memchain_status(args, ctx) -> str:

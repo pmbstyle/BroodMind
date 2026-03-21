@@ -256,6 +256,51 @@ def get_worker_tools() -> list[ToolSpec]:
             handler=_tool_list_active_workers,
         ),
         ToolSpec(
+            name="worker_session_status",
+            description="Summarize the current worker fabric: active runs, recent completions/failures, and lineage health hints.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "older_than_minutes": {
+                        "type": "number",
+                        "description": "Window for active workers (default: 10).",
+                    },
+                    "recent_limit": {
+                        "type": "number",
+                        "description": "How many recent workers to inspect for summary (default: 12, max 50).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            permission="worker_manage",
+            handler=_tool_worker_session_status,
+        ),
+        ToolSpec(
+            name="worker_yield",
+            description="Assess whether to yield while worker runs are still in flight, or switch to synthesis/result collection when they are ready.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "worker_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional worker run IDs to inspect. If omitted, evaluates the current active worker fabric.",
+                    },
+                    "lineage_id": {
+                        "type": "string",
+                        "description": "Optional lineage ID to focus on a parent/child worker tree.",
+                    },
+                    "older_than_minutes": {
+                        "type": "number",
+                        "description": "Window for discovering active workers when worker_ids are omitted (default: 10).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            permission="worker_manage",
+            handler=_tool_worker_yield,
+        ),
+        ToolSpec(
             name="get_worker_result",
             description="Get the result/output of a completed worker by ID.",
             parameters={
@@ -945,6 +990,189 @@ def _tool_list_active_workers(args: dict[str, object], ctx: dict[str, object]) -
     }, ensure_ascii=False)
 
 
+def _tool_worker_session_status(args: dict[str, object], ctx: dict[str, object]) -> str:
+    queen: Queen = ctx["queen"]
+    older_than_minutes = int(args.get("older_than_minutes") or 10)
+    recent_limit = max(1, min(50, int(args.get("recent_limit") or 12)))
+
+    active_workers = queen.store.get_active_workers(older_than_minutes=older_than_minutes)
+    active_workers = _reconcile_stale_active_workers(queen, active_workers, older_than_minutes=older_than_minutes)
+    recent_workers = (
+        queen.store.list_recent_workers(recent_limit)
+        if hasattr(queen.store, "list_recent_workers")
+        else queen.store.list_workers()[:recent_limit]
+    )
+
+    counts: dict[str, int] = {}
+    lineage_counts: dict[str, int] = {}
+    for worker in active_workers:
+        status = str(worker.status or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+        lineage_key = str(worker.lineage_id or "standalone")
+        lineage_counts[lineage_key] = lineage_counts.get(lineage_key, 0) + 1
+
+    recent_summary: list[dict[str, object]] = []
+    for worker in recent_workers[:recent_limit]:
+        recent_summary.append(
+            {
+                "worker_id": worker.id,
+                "status": worker.status,
+                "task": worker.task,
+                "updated_at": worker.updated_at.isoformat(),
+                "lineage_id": worker.lineage_id,
+                "parent_worker_id": worker.parent_worker_id,
+                "spawn_depth": worker.spawn_depth,
+                "summary": worker.summary,
+                "error": worker.error,
+            }
+        )
+
+    active_lineages = [
+        {"lineage_id": key, "active_workers": count}
+        for key, count in sorted(lineage_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    hints: list[str] = []
+    running = counts.get("running", 0) + counts.get("started", 0)
+    failed_recent = sum(1 for worker in recent_workers if str(worker.status) == "failed")
+    if running > 0:
+        hints.append(f"{running} worker(s) currently in flight.")
+    if failed_recent > 0:
+        hints.append(f"{failed_recent} recent worker run(s) failed; inspect summaries before retrying.")
+    if any((worker.spawn_depth or 0) > 0 for worker in active_workers):
+        hints.append("Active child-worker lineage detected; prefer synthesis or status checks before spawning more.")
+    if not hints:
+        hints.append("Worker fabric looks quiet and healthy.")
+
+    return json.dumps(
+        {
+            "status": "ok",
+            "older_than_minutes": older_than_minutes,
+            "recent_limit": recent_limit,
+            "active_count": len(active_workers),
+            "status_counts": counts,
+            "active_lineages": active_lineages,
+            "recent_workers": recent_summary,
+            "hints": hints,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _tool_worker_yield(args: dict[str, object], ctx: dict[str, object]) -> str:
+    queen: Queen = ctx["queen"]
+    older_than_minutes = int(args.get("older_than_minutes") or 10)
+    requested_worker_ids = _normalize_str_list(args.get("worker_ids"))
+    lineage_id = str(args.get("lineage_id", "") or "").strip() or None
+
+    workers = _select_workers_for_yield(
+        queen=queen,
+        requested_worker_ids=requested_worker_ids,
+        lineage_id=lineage_id,
+        older_than_minutes=older_than_minutes,
+    )
+    if not workers:
+        return json.dumps(
+            {
+                "status": "idle",
+                "mode": "resume",
+                "followup_required": False,
+                "message": "No matching active worker runs found. Continue normally.",
+                "requested_worker_ids": requested_worker_ids,
+                "lineage_id": lineage_id,
+                "pending_workers": [],
+                "completed_workers": [],
+                "failed_workers": [],
+                "next_best_action": "continue_current_plan",
+                "hints": ["Worker fabric is quiet; there is nothing to wait on right now."],
+            },
+            ensure_ascii=False,
+        )
+
+    pending_workers: list[dict[str, object]] = []
+    completed_workers: list[dict[str, object]] = []
+    failed_workers: list[dict[str, object]] = []
+
+    for worker in workers:
+        payload = _serialize_worker_run(worker)
+        status = str(getattr(worker, "status", "") or "").strip().lower()
+        if status in {"completed"}:
+            completed_workers.append(payload)
+        elif status in {"failed", "stopped"}:
+            failed_workers.append(payload)
+        else:
+            pending_workers.append(payload)
+
+    followup_required = len(pending_workers) > 0
+    all_requested_resolved = bool(requested_worker_ids) and len(workers) == len(
+        {str(worker_id).strip() for worker_id in requested_worker_ids if str(worker_id).strip()}
+    )
+    synthesize_recommended = len(completed_workers) >= 2 and not pending_workers
+    collect_results_recommended = len(completed_workers) >= 1 and not synthesize_recommended
+
+    hints: list[str] = []
+    if pending_workers:
+        hints.append(
+            f"{len(pending_workers)} worker run(s) are still in flight; yield and return when they finish."
+        )
+    if completed_workers:
+        hints.append(
+            f"{len(completed_workers)} worker run(s) have usable results ready for collection."
+        )
+    if failed_workers:
+        hints.append(
+            f"{len(failed_workers)} worker run(s) failed or stopped; inspect summaries before retrying."
+        )
+    if lineage_id and pending_workers:
+        hints.append("Focused lineage still has active children; avoid spawning more work in the same tree.")
+    if synthesize_recommended:
+        hints.append("All requested runs are done; synthesis is the cleanest next step.")
+    elif collect_results_recommended:
+        hints.append("Result collection is ready; fetch the completed worker output now.")
+    elif not hints:
+        hints.append("No pending worker work remains; continue with the current plan.")
+
+    next_best_action = "continue_current_plan"
+    mode = "resume"
+    message = "No active worker waiting is needed."
+    if pending_workers:
+        next_best_action = "append_followup_required"
+        mode = "yield"
+        message = f"Yield now. {len(pending_workers)} worker run(s) are still running."
+    elif synthesize_recommended:
+        next_best_action = "synthesize_worker_results"
+        message = "Parallel worker runs are done. Synthesize their results now."
+    elif collect_results_recommended:
+        next_best_action = "get_worker_result"
+        message = "A worker result is ready. Collect the completed output now."
+    elif failed_workers:
+        next_best_action = "inspect_worker_failures"
+        message = "No more active work is running. Inspect the failed worker summaries."
+
+    return json.dumps(
+        {
+            "status": "ok",
+            "mode": mode,
+            "followup_required": followup_required,
+            "message": message,
+            "requested_worker_ids": requested_worker_ids,
+            "all_requested_resolved": all_requested_resolved,
+            "lineage_id": lineage_id,
+            "pending_count": len(pending_workers),
+            "completed_count": len(completed_workers),
+            "failed_count": len(failed_workers),
+            "pending_workers": pending_workers,
+            "completed_workers": completed_workers,
+            "failed_workers": failed_workers,
+            "next_best_action": next_best_action,
+            "synthesize_recommended": synthesize_recommended,
+            "collect_results_recommended": collect_results_recommended,
+            "hints": hints,
+        },
+        ensure_ascii=False,
+    )
+
+
 def _reconcile_stale_worker_status(queen: Queen, worker: Any) -> Any:
     runtime = getattr(queen, "runtime", None)
     if not runtime or not hasattr(runtime, "is_worker_running"):
@@ -987,6 +1215,75 @@ def _reconcile_stale_active_workers(queen: Queen, workers: list[Any], older_than
     if not stale_ids:
         return workers
     return queen.store.get_active_workers(older_than_minutes=older_than_minutes)
+
+
+def _select_workers_for_yield(
+    *,
+    queen: Queen,
+    requested_worker_ids: list[str],
+    lineage_id: str | None,
+    older_than_minutes: int,
+) -> list[Any]:
+    workers_by_id: dict[str, Any] = {}
+
+    for worker_id in requested_worker_ids:
+        worker = queen.store.get_worker(worker_id)
+        if not worker:
+            continue
+        worker = _reconcile_stale_worker_status(queen, worker)
+        workers_by_id[str(worker.id)] = worker
+
+    if lineage_id:
+        active_workers = queen.store.get_active_workers(older_than_minutes=older_than_minutes)
+        active_workers = _reconcile_stale_active_workers(
+            queen,
+            active_workers,
+            older_than_minutes=older_than_minutes,
+        )
+        for worker in active_workers:
+            if str(getattr(worker, "lineage_id", "") or "").strip() != lineage_id:
+                continue
+            workers_by_id[str(worker.id)] = worker
+
+        recent_workers = (
+            queen.store.list_recent_workers(50)
+            if hasattr(queen.store, "list_recent_workers")
+            else queen.store.list_workers()[:50]
+        )
+        for worker in recent_workers:
+            if str(getattr(worker, "lineage_id", "") or "").strip() != lineage_id:
+                continue
+            workers_by_id.setdefault(str(worker.id), worker)
+
+    if not requested_worker_ids and not lineage_id:
+        active_workers = queen.store.get_active_workers(older_than_minutes=older_than_minutes)
+        active_workers = _reconcile_stale_active_workers(
+            queen,
+            active_workers,
+            older_than_minutes=older_than_minutes,
+        )
+        for worker in active_workers:
+            workers_by_id[str(worker.id)] = worker
+
+    workers = list(workers_by_id.values())
+    workers.sort(key=lambda worker: str(getattr(worker, "updated_at", "") or ""), reverse=True)
+    return workers
+
+
+def _serialize_worker_run(worker: Any) -> dict[str, object]:
+    return {
+        "worker_id": getattr(worker, "id", None),
+        "status": getattr(worker, "status", None),
+        "task": getattr(worker, "task", None),
+        "lineage_id": getattr(worker, "lineage_id", None),
+        "parent_worker_id": getattr(worker, "parent_worker_id", None),
+        "spawn_depth": getattr(worker, "spawn_depth", None),
+        "updated_at": getattr(worker, "updated_at", None).isoformat()
+        if getattr(worker, "updated_at", None) is not None
+        else None,
+        "summary": getattr(worker, "summary", None),
+        "error": getattr(worker, "error", None),
+    }
 
 
 def _tool_get_worker_result(args: dict[str, object], ctx: dict[str, object]) -> str:

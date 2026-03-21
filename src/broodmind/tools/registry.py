@@ -4,6 +4,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from broodmind.tools.metadata import ToolMetadata
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -16,6 +18,7 @@ class ToolSpec:
     scope: str | None = field(default=None, compare=False)  # Deprecated, kept for compatibility
     server_id: str | None = field(default=None, compare=False)
     remote_tool_name: str | None = field(default=None, compare=False)
+    metadata: ToolMetadata = field(default_factory=ToolMetadata, compare=False)
 
     def to_openai_tool(self) -> dict[str, Any]:
         return {
@@ -106,15 +109,19 @@ def filter_tools(
     tools: Iterable[ToolSpec],
     *,
     permissions: dict[str, bool],
+    profile_name: str | None = None,
     policy_pipeline_steps: Iterable[ToolPolicyPipelineStep] | None = None,
 ) -> list[ToolSpec]:
-    """Filter tools by permissions only. Scope filtering has been removed."""
-    available: list[ToolSpec] = []
-    for tool in tools:
-        if not permissions.get(tool.permission, False):
-            continue
-        available.append(tool)
-    return apply_tool_policy_pipeline(available, policy_pipeline_steps)
+    """Filter tools by permissions, profiles, and policy steps."""
+    from broodmind.tools.diagnostics import resolve_tool_diagnostics
+
+    report = resolve_tool_diagnostics(
+        tools,
+        permissions=permissions,
+        profile_name=profile_name,
+        policy_pipeline_steps=policy_pipeline_steps,
+    )
+    return list(report.available_tools)
 
 
 def _normalize_tool_name(name: str) -> str:

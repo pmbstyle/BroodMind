@@ -14,13 +14,20 @@ import structlog
 
 from broodmind.infrastructure.providers.base import InferenceProvider, Message
 from broodmind.runtime.memory.service import MemoryService
+from broodmind.runtime.tool_loop import (
+    _detect_tool_loop,
+    _hash_tool_call,
+    _hash_tool_outcome,
+    _resolve_tool_loop_thresholds,
+)
 from broodmind.runtime.queen.prompt_builder import (
     build_bootstrap_context_prompt,
     build_queen_prompt,
 )
 from broodmind.runtime.tool_payloads import render_tool_result_for_llm
 from broodmind.runtime.workers.contracts import WorkerResult
-from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec, filter_tools
+from broodmind.tools.diagnostics import ToolResolutionReport, resolve_tool_diagnostics
+from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec
 from broodmind.tools.tools import get_tools
 from broodmind.utils import (
     looks_like_textual_tool_invocation,
@@ -41,6 +48,9 @@ _PRIORITY_TOOL_NAMES = {
     "start_worker",
     "get_worker_result",
     "get_worker_output_path",
+    "worker_yield",
+    "gateway_status",
+    "mcp_discover",
     "manage_canon",
 }
 _ALWAYS_INCLUDE_TOOL_NAMES = {
@@ -48,6 +58,7 @@ _ALWAYS_INCLUDE_TOOL_NAMES = {
     "queen_context_reset",
     "queen_context_health",
     "check_schedule",
+    "scheduler_status",
     # Scheduler control loop
     "list_schedule",
     "schedule_task",
@@ -59,6 +70,8 @@ _ALWAYS_INCLUDE_TOOL_NAMES = {
     "start_workers_parallel",
     "get_worker_status",
     "list_active_workers",
+    "worker_session_status",
+    "worker_yield",
     "get_worker_result",
     "get_worker_output_path",
     "stop_worker",
@@ -129,6 +142,19 @@ async def route_or_reply(
         wake_notice = ""
         if include_wakeup and hasattr(queen, "peek_context_wakeup"):
             wake_notice = str(queen.peek_context_wakeup(chat_id) or "")
+        mcp_manager = getattr(queen, "mcp_manager", None)
+        if mcp_manager is not None:
+            try:
+                await mcp_manager.ensure_configured_servers_connected()
+            except Exception:
+                logger.warning("Failed to refresh configured MCP servers before routing", exc_info=True)
+
+        queen_tools, ctx = _get_queen_tools(queen, chat_id)
+        logger.info("Queen tools fetched: count=%d", len(queen_tools))
+        tool_policy_summary = _build_queen_tool_policy_summary(
+            queen_tools,
+            ctx.get("tool_resolution_report"),
+        )
         messages = await build_queen_prompt(
             store=queen.store,
             memory=memory,
@@ -140,6 +166,7 @@ async def route_or_reply(
             images=images,
             saved_file_paths=saved_file_paths,
             wake_notice=wake_notice,
+            tool_policy_summary=tool_policy_summary,
         )
         if not internal_followup:
             messages.append(
@@ -154,15 +181,6 @@ async def route_or_reply(
             )
         _log_system_prompt(messages, "route")
 
-        mcp_manager = getattr(queen, "mcp_manager", None)
-        if mcp_manager is not None:
-            try:
-                await mcp_manager.ensure_configured_servers_connected()
-            except Exception:
-                logger.warning("Failed to refresh configured MCP servers before routing", exc_info=True)
-
-        queen_tools, ctx = _get_queen_tools(queen, chat_id)
-        logger.info("Queen tools fetched: count=%d", len(queen_tools))
         plan = await _build_plan(provider, messages, bool(queen_tools))
         if plan:
             await _persist_plan(memory, chat_id, plan)
@@ -200,6 +218,8 @@ async def route_or_reply(
             last_error: str | None = None
             had_tool_calls = False
             transient_tool_failures = 0
+            tool_call_history: list[dict[str, str]] = []
+            tool_loop_thresholds = _resolve_tool_loop_thresholds()
             max_attempts = 10
             vision_tool_fallback_used = False
 
@@ -354,8 +374,15 @@ async def route_or_reply(
                     messages.append(assistant_msg)
 
                     for call in tool_calls:
-                        tool_result = await _handle_queen_tool_call(call, active_tool_specs, ctx)
+                        tool_result, tool_meta = await _handle_queen_tool_call(call, active_tool_specs, ctx)
                         tool_result_text = render_tool_result_for_llm(tool_result).text
+                        loop_state = _record_queen_tool_call(
+                            tool_call_history,
+                            call=call,
+                            tool_result=tool_result,
+                            tool_meta=tool_meta,
+                            thresholds=tool_loop_thresholds,
+                        )
                         messages.append(
                             {
                                 "role": "tool",
@@ -364,6 +391,35 @@ async def route_or_reply(
                                 "content": tool_result_text,
                             }
                         )
+                        if loop_state is not None:
+                            logger.warning(
+                                "Queen tool loop detected",
+                                detector=loop_state["detector"],
+                                level=loop_state["level"],
+                                count=loop_state["count"],
+                                message=loop_state["message"],
+                            )
+                            if loop_state["level"] == "critical":
+                                messages.append(
+                                    Message(
+                                        role="system",
+                                        content=(
+                                            "Tool loop breaker triggered. Do not call more tools in this turn. "
+                                            "Summarize what happened, what is blocked, and what the next best step is."
+                                        ),
+                                    )
+                                )
+                                fallback_text = await _complete_text(
+                                    provider,
+                                    messages,
+                                    context="queen_tool_loop_breaker",
+                                )
+                                return await _finalize_response(
+                                    provider=provider,
+                                    messages=messages,
+                                    response_text=fallback_text,
+                                    internal_followup=internal_followup,
+                                )
                         if "error" in tool_result_text.lower() or "failed" in tool_result_text.lower():
                             last_error = tool_result_text
                     continue
@@ -659,13 +715,18 @@ def _get_queen_tools(queen: Any, chat_id: int) -> tuple[list[ToolSpec], dict[str
             policy=ToolPolicy(deny=["web_fetch", "markdown_new_fetch", "fetch_plan_tool"]),
         )
     ]
-    tool_specs = filter_tools(
-        get_tools(mcp_manager=mcp_manager),
+    all_tools = get_tools(mcp_manager=mcp_manager)
+    resolution_report = resolve_tool_diagnostics(
+        all_tools,
         permissions=perms,
+        profile_name=os.getenv("BROODMIND_QUEEN_TOOL_PROFILE"),
         policy_pipeline_steps=policy_steps,
     )
+    tool_specs = list(resolution_report.available_tools)
     max_tools = _env_int("BROODMIND_QUEEN_MAX_TOOL_COUNT", _DEFAULT_MAX_TOOL_COUNT, minimum=8)
     tool_specs = _budget_tool_specs(tool_specs, max_count=max_tools)
+    ctx["tool_resolution_report"] = resolution_report
+    ctx["all_tool_specs"] = all_tools
     return tool_specs, ctx
 
 
@@ -767,7 +828,11 @@ def _shrink_tool_specs_for_retry(tool_specs: list[ToolSpec]) -> list[ToolSpec]:
     return _budget_tool_specs(tool_specs, max_count=reduced)
 
 
-async def _handle_queen_tool_call(call: dict, tools: list[ToolSpec], ctx: dict[str, object]) -> str:
+async def _handle_queen_tool_call(
+    call: dict,
+    tools: list[ToolSpec],
+    ctx: dict[str, object],
+) -> tuple[Any, dict[str, Any]]:
     function = call.get("function") or {}
     name = function.get("name")
     args_raw = function.get("arguments", "{}")
@@ -779,16 +844,127 @@ async def _handle_queen_tool_call(call: dict, tools: list[ToolSpec], ctx: dict[s
     logger.debug("Queen tool call", tool_name=name, args=args)
     for spec in tools:
         if spec.name == name:
-            if spec.is_async:
-                import inspect
-                result = spec.handler(args, ctx)
-                if inspect.isawaitable(result):
-                    result = await result
-            else:
-                result = await asyncio.to_thread(spec.handler, args, ctx)
+            try:
+                if spec.is_async:
+                    import inspect
+
+                    result = spec.handler(args, ctx)
+                    if inspect.isawaitable(result):
+                        result = await result
+                else:
+                    result = await asyncio.to_thread(spec.handler, args, ctx)
+            except Exception as exc:
+                logger.exception("Queen tool execution failed", tool_name=name)
+                return {
+                    "error": f"Tool execution failed: {name}: {exc}"
+                }, {"timed_out": False, "had_error": True}
             logger.debug("Queen tool result", tool_name=name, result_preview=f"{str(result)[:200]}...")
-            return result
-    return f"Unknown tool: {name}"
+            return result, {"timed_out": False, "had_error": False}
+    blocked_payload = _resolve_queen_policy_block(tool_name=str(name or ""), ctx=ctx)
+    if blocked_payload is not None:
+        return blocked_payload, {"timed_out": False, "had_error": True, "error_type": "policy_block"}
+    return {"error": f"Unknown tool: {name}"}, {"timed_out": False, "had_error": True}
+
+
+def _record_queen_tool_call(
+    history: list[dict[str, str]],
+    *,
+    call: dict[str, Any],
+    tool_result: Any,
+    tool_meta: dict[str, Any],
+    thresholds: dict[str, int],
+) -> dict[str, Any] | None:
+    function = call.get("function") or {}
+    tool_name = str(function.get("name") or "")
+    args_raw = function.get("arguments", "{}")
+    try:
+        tool_args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+    except Exception:
+        tool_args = {}
+
+    args_hash = _hash_tool_call(tool_name, tool_args)
+    result_hash = _hash_tool_outcome(tool_result, tool_meta)
+    history.append(
+        {
+            "tool_name": tool_name,
+            "args_hash": args_hash,
+            "result_hash": result_hash,
+        }
+    )
+    return _detect_tool_loop(
+        history,
+        tool_name=tool_name,
+        args_hash=args_hash,
+        warning_threshold=thresholds["warning"],
+        critical_threshold=thresholds["critical"],
+        global_breaker_threshold=thresholds["global_breaker"],
+    )
+
+
+def _build_queen_tool_policy_summary(
+    active_tools: list[ToolSpec],
+    report: ToolResolutionReport | None,
+) -> str:
+    available_counts = {"safe": 0, "guarded": 0, "dangerous": 0}
+    for spec in active_tools:
+        available_counts[str(spec.metadata.risk)] = available_counts.get(str(spec.metadata.risk), 0) + 1
+
+    blocked_dangerous = 0
+    blocked_guarded = 0
+    if report is not None:
+        for entry in report.blocked_tools:
+            risk = str(entry.tool.metadata.risk)
+            if risk == "dangerous":
+                blocked_dangerous += 1
+            elif risk == "guarded":
+                blocked_guarded += 1
+
+    return (
+        "Tool policy contract:\n"
+        "- Use safe tools by default.\n"
+        "- Use guarded tools only when they materially advance the task.\n"
+        "- Do not choose dangerous tools as the first path, even if available.\n"
+        "- If a tool is blocked by policy, do not repeat the same call; choose a safer alternative or explain the constraint.\n"
+        "- Do not bypass a blocked tool with an equivalent risky workaround.\n"
+        "Current tool policy snapshot:\n"
+        f"- active_safe={available_counts['safe']}\n"
+        f"- active_guarded={available_counts['guarded']}\n"
+        f"- active_dangerous={available_counts['dangerous']}\n"
+        f"- blocked_guarded={blocked_guarded}\n"
+        f"- blocked_dangerous={blocked_dangerous}"
+    )
+
+
+def _resolve_queen_policy_block(tool_name: str, ctx: dict[str, object]) -> dict[str, Any] | None:
+    normalized_name = str(tool_name or "").strip().lower()
+    if not normalized_name:
+        return None
+
+    report = ctx.get("tool_resolution_report")
+    if not isinstance(report, ToolResolutionReport):
+        return None
+
+    for entry in report.blocked_tools:
+        if str(entry.tool.name).strip().lower() != normalized_name:
+            continue
+        return {
+            "type": "policy_block",
+            "tool": entry.tool.name,
+            "reason": entry.reasons[0] if entry.reasons else "blocked_by_policy",
+            "risk": entry.tool.metadata.risk,
+            "message": f"Tool '{entry.tool.name}' is blocked by the current Queen tool policy.",
+            "hint": _policy_block_hint(entry.tool),
+        }
+    return None
+
+
+def _policy_block_hint(tool: ToolSpec) -> str:
+    risk = str(tool.metadata.risk)
+    if risk == "dangerous":
+        return "Try a safer read-only or worker-driven path first, then explain what remains blocked."
+    if risk == "guarded":
+        return "Use a lower-risk alternative if one exists, or explain why the guarded path matters."
+    return "Use another available tool path."
 
 
 def _recover_textual_tool_call(content: str, tools: list[ToolSpec]) -> dict[str, Any] | None:
