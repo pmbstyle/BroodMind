@@ -8,6 +8,8 @@ from broodmind.tools.skills.installer import (
     detect_skill_install_source,
     install_skill_from_source,
     list_installed_skill_sources,
+    remove_installed_skill,
+    update_installed_skill,
 )
 
 
@@ -126,3 +128,56 @@ description: Imported skill
         assert "already exists locally" in str(exc)
     else:
         raise AssertionError("Expected unmanaged overwrite to be rejected")
+
+
+def test_update_installed_skill_reinstalls_from_saved_source(tmp_path: Path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    source_dir = tmp_path / "writer"
+    source_dir.mkdir(parents=True)
+    skill_file = source_dir / "SKILL.md"
+    skill_file.write_text(
+        """---
+name: writer
+description: v1
+---
+""",
+        encoding="utf-8",
+    )
+
+    install_skill_from_source(str(source_dir), workspace_dir=workspace_dir)
+    skill_file.write_text(
+        """---
+name: writer
+description: v2
+---
+""",
+        encoding="utf-8",
+    )
+
+    payload = update_installed_skill("writer", workspace_dir=workspace_dir)
+
+    assert payload["status"] == "updated"
+    installed_text = (workspace_dir / "skills" / "writer" / "SKILL.md").read_text(encoding="utf-8")
+    assert "description: v2" in installed_text
+
+
+def test_remove_installed_skill_deletes_bundle_and_manifest_entry(tmp_path: Path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    source_dir = tmp_path / "writer"
+    source_dir.mkdir(parents=True)
+    (source_dir / "SKILL.md").write_text(
+        """---
+name: writer
+description: Helps write copy
+---
+""",
+        encoding="utf-8",
+    )
+    install_skill_from_source(str(source_dir), workspace_dir=workspace_dir)
+
+    payload = remove_installed_skill("writer", workspace_dir=workspace_dir)
+
+    assert payload["status"] == "removed"
+    assert not (workspace_dir / "skills" / "writer").exists()
+    installs = list_installed_skill_sources(workspace_dir)
+    assert installs["count"] == 0

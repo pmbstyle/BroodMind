@@ -66,3 +66,67 @@ def test_skill_list_command_reads_installed_manifest(tmp_path: Path, monkeypatch
     payload = json.loads(result.stdout)
     assert payload["count"] == 1
     assert payload["installs"][0]["skill_id"] == "writer"
+
+
+def test_skill_update_command_uses_saved_source(tmp_path: Path, monkeypatch) -> None:
+    workspace_dir = tmp_path / "workspace"
+    source_dir = tmp_path / "writer"
+    source_dir.mkdir(parents=True)
+    source_file = source_dir / "SKILL.md"
+    source_file.write_text(
+        """---
+name: writer
+description: v1
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "broodmind.cli.main.load_settings",
+        lambda: SimpleNamespace(workspace_dir=workspace_dir),
+    )
+
+    install_result = runner.invoke(app, ["skill", "install", str(source_dir), "--json"])
+    assert install_result.exit_code == 0
+    source_file.write_text(
+        """---
+name: writer
+description: v2
+---
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["skill", "update", "writer", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "updated"
+
+
+def test_skill_remove_command_deletes_installed_skill(tmp_path: Path, monkeypatch) -> None:
+    workspace_dir = tmp_path / "workspace"
+    source_dir = tmp_path / "writer"
+    source_dir.mkdir(parents=True)
+    (source_dir / "SKILL.md").write_text(
+        """---
+name: writer
+description: Helps write copy
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "broodmind.cli.main.load_settings",
+        lambda: SimpleNamespace(workspace_dir=workspace_dir),
+    )
+
+    install_result = runner.invoke(app, ["skill", "install", str(source_dir), "--json"])
+    assert install_result.exit_code == 0
+
+    result = runner.invoke(app, ["skill", "remove", "writer", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "removed"
+    assert not (workspace_dir / "skills" / "writer").exists()

@@ -109,6 +109,66 @@ def list_installed_skill_sources(workspace_dir: Path) -> dict[str, Any]:
     }
 
 
+def update_installed_skill(
+    skill_id: str,
+    *,
+    workspace_dir: Path,
+    clawhub_site: str | None = None,
+) -> dict[str, Any]:
+    record = get_installed_skill_record(workspace_dir, skill_id)
+    if record is None:
+        raise ValueError(f"skill '{skill_id}' is not installer-managed")
+    source = str(record.get("source", "")).strip()
+    if not source:
+        raise ValueError(f"skill '{skill_id}' does not have a stored source")
+    resolved_site = clawhub_site or str(record.get("clawhub_site", "")).strip() or _DEFAULT_CLAWHUB_SITE
+    payload = install_skill_from_source(
+        source,
+        workspace_dir=workspace_dir,
+        clawhub_site=resolved_site,
+    )
+    payload["status"] = "updated"
+    payload["previous_source"] = source
+    return payload
+
+
+def remove_installed_skill(skill_id: str, *, workspace_dir: Path) -> dict[str, Any]:
+    manifest = _read_install_manifest(workspace_dir)
+    installs = [item for item in manifest.get("installs", []) if isinstance(item, dict)]
+    record = next((item for item in installs if str(item.get("skill_id", "")) == skill_id), None)
+    if record is None:
+        raise ValueError(f"skill '{skill_id}' is not installer-managed")
+
+    removed_path = False
+    bundle_path_raw = str(record.get("path", "")).strip()
+    if bundle_path_raw:
+        bundle_path = Path(bundle_path_raw).resolve()
+        try:
+            bundle_path.relative_to((workspace_dir / "skills").resolve())
+        except ValueError as exc:
+            raise ValueError("stored install path points outside workspace skills directory") from exc
+        bundle_dir = bundle_path.parent
+        if bundle_dir.exists():
+            shutil.rmtree(bundle_dir)
+            removed_path = True
+
+    installs = [item for item in installs if str(item.get("skill_id", "")) != skill_id]
+    manifest["installs"] = installs
+    _write_install_manifest(workspace_dir, manifest)
+    return {
+        "status": "removed",
+        "skill_id": skill_id,
+        "removed_path": removed_path,
+        "manifest_path": str(_install_manifest_path(workspace_dir)),
+    }
+
+
+def get_installed_skill_record(workspace_dir: Path, skill_id: str) -> dict[str, Any] | None:
+    manifest = _read_install_manifest(workspace_dir)
+    installs = [item for item in manifest.get("installs", []) if isinstance(item, dict)]
+    return next((item for item in installs if str(item.get("skill_id", "")) == skill_id), None)
+
+
 def _materialize_install_source(
     install_source: SkillInstallSource,
     *,

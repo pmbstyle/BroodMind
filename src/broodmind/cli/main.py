@@ -39,7 +39,12 @@ from broodmind.channels.whatsapp.bridge import WhatsAppBridgeController, WhatsAp
 from broodmind.channels.whatsapp.ids import parse_allowed_whatsapp_numbers
 from broodmind.channels.whatsapp.runtime import WhatsAppRuntime
 from broodmind.runtime.workers.templates import sync_default_templates
-from broodmind.tools.skills.installer import install_skill_from_source, list_installed_skill_sources
+from broodmind.tools.skills.installer import (
+    install_skill_from_source,
+    list_installed_skill_sources,
+    remove_installed_skill,
+    update_installed_skill,
+)
 from broodmind.tools import get_tools, resolve_tool_diagnostics
 from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec
 from aiogram import Bot
@@ -1306,6 +1311,61 @@ def skill_list(
             str(item.get("path", "")),
         )
     console.print(table)
+
+
+@skill_app.command("update")
+def skill_update(
+    skill_id: str = typer.Argument(..., help="Installer-managed skill id."),
+    clawhub_site: str | None = typer.Option(None, "--clawhub-site", help="Override ClawHub site URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Update an installer-managed skill from its stored source."""
+    settings = load_settings()
+    try:
+        payload = update_installed_skill(
+            skill_id,
+            workspace_dir=settings.workspace_dir.resolve(),
+            clawhub_site=clawhub_site,
+        )
+    except Exception as exc:
+        if json_output:
+            typer.echo(json.dumps({"status": "error", "message": str(exc), "skill_id": skill_id}, ensure_ascii=False))
+        else:
+            console.print(f"[bold red]Skill update failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    console.print(f"[bold green][V] Updated skill[/bold green] {payload['skill_id']}")
+    console.print(f"[dim]Source:[/dim] {payload['source']}")
+
+
+@skill_app.command("remove")
+def skill_remove(
+    skill_id: str = typer.Argument(..., help="Installer-managed skill id."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Remove an installer-managed skill and its installed bundle."""
+    settings = load_settings()
+    try:
+        payload = remove_installed_skill(
+            skill_id,
+            workspace_dir=settings.workspace_dir.resolve(),
+        )
+    except Exception as exc:
+        if json_output:
+            typer.echo(json.dumps({"status": "error", "message": str(exc), "skill_id": skill_id}, ensure_ascii=False))
+        else:
+            console.print(f"[bold red]Skill remove failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    console.print(f"[bold green][V] Removed skill[/bold green] {payload['skill_id']}")
 
 
 app.add_typer(workers_app, name="workers")

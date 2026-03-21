@@ -104,6 +104,18 @@ uv run broodmind skill list
 uv run broodmind skill list --json
 ```
 
+Lifecycle commands:
+
+```bash
+uv run broodmind skill install <source>
+uv run broodmind skill list
+uv run broodmind skill update <skill-id>
+uv run broodmind skill remove <skill-id>
+```
+
+`update` reinstalls from the stored source recorded in `installed.json`.
+`remove` only affects installer-managed skills and will not delete unmanaged local bundles.
+
 ## ClawHub compatibility
 
 BroodMind is compatible with the ClawHub install workflow at the UX level:
