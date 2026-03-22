@@ -251,6 +251,7 @@ class WorkerRuntime:
         env = {
             **os.environ,
             "PYTHONPATH": _pythonpath(),
+            "BROODMIND_WORKSPACE_DIR": str(self.workspace_dir.resolve()),
         }
 
         attempts = 0
