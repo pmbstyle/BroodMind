@@ -100,7 +100,7 @@ Installed skills are copied into `workspace/skills/<skill-id>/` and tracked in:
 workspace/skills/installed.json
 ```
 
-You can inspect installer-managed entries with:
+You can inspect all discovered skills, including local bundles and installer-managed entries, with:
 
 ```bash
 uv run broodmind skill list
@@ -119,7 +119,7 @@ uv run broodmind skill remove <skill-id>
 ```
 
 `update` reinstalls from the stored source recorded in `installed.json`.
-`remove` only affects installer-managed skills and will not delete unmanaged local bundles.
+`remove` works for both installer-managed skills and local workspace skills. For local bundles, it removes the bundle from `workspace/skills/<skill-id>/` when possible.
 For script-backed skills, install and update automatically scan scripts and prepare an isolated runtime env when possible.
 
 ### Isolated runtime envs
@@ -180,6 +180,7 @@ For third-party skills without BroodMind runtime metadata, BroodMind also falls 
 
 BroodMind treats imported script-backed skills more carefully than local ones.
 
+- local workspace skills are trusted by default
 - local installs from a folder, local `SKILL.md`, or local `.zip` are trusted by default
 - external installs from ClawHub or remote URLs are untrusted by default when they include `scripts/`
 - untrusted imported scripts stay visible in the skill inventory, but `run_skill_script` will refuse to execute them
@@ -202,7 +203,7 @@ To block script execution again:
 uv run broodmind skill untrust <skill-id>
 ```
 
-This trust flag only affects script execution. The skill guidance in `SKILL.md` can still be read and used.
+This trust flag affects script execution for both imported and local script-backed skills. The skill guidance in `SKILL.md` can still be read and used.
 
 ### Verification scan
 

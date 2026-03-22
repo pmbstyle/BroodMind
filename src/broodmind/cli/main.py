@@ -41,11 +41,9 @@ from broodmind.channels.whatsapp.runtime import WhatsAppRuntime
 from broodmind.runtime.workers.templates import sync_default_templates
 from broodmind.tools.skills.installer import (
     install_skill_from_source,
-    list_installed_skill_sources,
-    remove_installed_skill,
-    set_installed_skill_trust,
     update_installed_skill,
 )
+from broodmind.tools.skills.management import list_skill_inventory, remove_skill, set_skill_trust
 from broodmind.tools.skills.runtime_envs import (
     prepare_skill_env,
     remove_skill_env,
@@ -1299,37 +1297,47 @@ def skill_install(
 def skill_list(
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
-    """List skills installed through the BroodMind installer."""
+    """List local and installer-managed skills."""
     settings = load_settings()
-    payload = list_installed_skill_sources(settings.workspace_dir.resolve())
+    payload = list_skill_inventory(settings.workspace_dir.resolve())
 
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
-    installs = payload.get("installs", [])
-    if not installs:
-        console.print("[dim]No installer-managed skills yet.[/dim]")
+    skills = payload.get("skills", [])
+    if not skills:
+        console.print("[dim]No skills discovered yet.[/dim]")
         return
 
-    table = Table(title="Installed Skills", box=box.SIMPLE_HEAVY)
+    table = Table(title="Skills", box=box.SIMPLE_HEAVY)
     table.add_column("Skill")
     table.add_column("Source")
-    table.add_column("Kind")
+    table.add_column("Origin")
     table.add_column("Trust")
+    table.add_column("Runtime")
+    table.add_column("Env")
     table.add_column("Scan")
     table.add_column("Path")
-    for item in installs:
+    for item in skills:
         if not isinstance(item, dict):
             continue
-        scan = item.get("script_scan", {})
-        scan_status = str(scan.get("status", "missing")) if isinstance(scan, dict) else "missing"
+        origin = "installed" if bool(item.get("installer_managed", False)) else "local"
+        source = str(item.get("installed_source", "")).strip() if bool(item.get("installer_managed", False)) else "local"
+        runtime_kind = str(item.get("runtime_kind", "")).strip() or "-"
+        if not bool(item.get("runtime_required", False)):
+            env_status = "-"
+        else:
+            env_status = "prepared" if bool(item.get("runtime_prepared", False)) else "missing"
+        trust_state = "trusted" if bool(item.get("trusted", True)) else "untrusted"
         table.add_row(
-            str(item.get("skill_id", "")),
-            str(item.get("source", "")),
-            str(item.get("source_kind", "")),
-            "trusted" if bool(item.get("trusted", False)) else "untrusted",
-            scan_status,
+            str(item.get("id", "")),
+            source,
+            origin,
+            trust_state,
+            runtime_kind,
+            env_status,
+            str(item.get("scan_status", "")) or "-",
             str(item.get("path", "")),
         )
     console.print(table)
@@ -1366,14 +1374,14 @@ def skill_update(
 
 @skill_app.command("trust")
 def skill_trust(
-    skill_id: str = typer.Argument(..., help="Installer-managed skill id."),
+    skill_id: str = typer.Argument(..., help="Skill id."),
     force: bool = typer.Option(False, "--force", help="Allow trusting a skill even when scan findings require manual review."),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
-    """Mark an installer-managed skill as trusted for script execution."""
+    """Mark a skill as trusted for script execution."""
     settings = load_settings()
     try:
-        payload = set_installed_skill_trust(
+        payload = set_skill_trust(
             skill_id,
             workspace_dir=settings.workspace_dir.resolve(),
             trusted=True,
@@ -1395,13 +1403,13 @@ def skill_trust(
 
 @skill_app.command("untrust")
 def skill_untrust(
-    skill_id: str = typer.Argument(..., help="Installer-managed skill id."),
+    skill_id: str = typer.Argument(..., help="Skill id."),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
-    """Mark an installer-managed skill as untrusted for script execution."""
+    """Mark a skill as untrusted for script execution."""
     settings = load_settings()
     try:
-        payload = set_installed_skill_trust(
+        payload = set_skill_trust(
             skill_id,
             workspace_dir=settings.workspace_dir.resolve(),
             trusted=False,
@@ -1478,13 +1486,13 @@ def skill_remove_env(
 
 @skill_app.command("remove")
 def skill_remove(
-    skill_id: str = typer.Argument(..., help="Installer-managed skill id."),
+    skill_id: str = typer.Argument(..., help="Skill id."),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
-    """Remove an installer-managed skill and its installed bundle."""
+    """Remove a local or installer-managed skill bundle."""
     settings = load_settings()
     try:
-        payload = remove_installed_skill(
+        payload = remove_skill(
             skill_id,
             workspace_dir=settings.workspace_dir.resolve(),
         )

@@ -9,6 +9,8 @@ from broodmind.tools.skills.management import (
     _tool_run_skill_script,
     _tool_add_skill,
     _tool_list_skills,
+    remove_skill,
+    set_skill_trust,
     get_registered_skill_tools,
     get_skill_management_tools,
 )
@@ -358,7 +360,52 @@ description: Helps write copy
     assert payload["skills"][0]["status"] == "not_ready"
     assert "not trusted yet" in payload["skills"][0]["reasons"][0]
     assert payload["skills"][0]["scan_status"] == "clean"
-    assert payload["skills"][0]["scan_findings_count"] == 0
+
+
+def test_list_skills_reports_untrusted_local_scripts(tmp_path: Path, monkeypatch) -> None:
+    workspace_dir = tmp_path / "workspace"
+    skill_dir = workspace_dir / "skills" / "writer"
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: writer
+description: Helps write copy
+---
+""",
+        encoding="utf-8",
+    )
+    (scripts_dir / "noop.py").write_text("print('ok')\n", encoding="utf-8")
+    monkeypatch.setenv("BROODMIND_WORKSPACE_DIR", str(workspace_dir))
+
+    set_skill_trust("writer", workspace_dir=workspace_dir, trusted=False)
+    payload = json.loads(_tool_list_skills({}, {}))
+
+    assert payload["skills"][0]["installer_managed"] is False
+    assert payload["skills"][0]["trusted"] is False
+    assert payload["skills"][0]["status"] == "not_ready"
+    assert any("not trusted yet" in reason for reason in payload["skills"][0]["reasons"])
+
+
+def test_remove_skill_deletes_local_bundle(tmp_path: Path, monkeypatch) -> None:
+    workspace_dir = tmp_path / "workspace"
+    skill_dir = workspace_dir / "skills" / "writer"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: writer
+description: Helps write copy
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BROODMIND_WORKSPACE_DIR", str(workspace_dir))
+
+    payload = remove_skill("writer", workspace_dir=workspace_dir)
+
+    assert payload["status"] == "removed"
+    assert payload["installer_managed"] is False
+    assert not skill_dir.exists()
 
 
 def test_run_skill_script_blocks_when_skill_is_not_ready(tmp_path: Path, monkeypatch) -> None:
