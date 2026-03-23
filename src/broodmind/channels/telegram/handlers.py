@@ -476,12 +476,14 @@ def _flush_pending_turn_factory(
                         chat_id=chat_id,
                         message_id=reply_to_message_id,
                         emoji=effective_emoji,
+                        reply_reaction=getattr(reply, "reaction", None),
                     )
                 elif reply_to_message_id is not None:
                     logger.debug(
                         "No terminal reaction tag found in queen reply",
                         chat_id=chat_id,
                         message_id=reply_to_message_id,
+                        reply_reaction=getattr(reply, "reaction", None),
                     )
                 if effective_emoji and reply_to_message_id is not None:
                     mapped_emoji = normalize_reaction_emoji(effective_emoji)

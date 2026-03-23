@@ -1404,6 +1404,12 @@ class Queen:
                 )
             immediate_text = sanitize_user_facing_text_preserving_reaction(reply_text)
             reaction_emoji, _ = extract_reaction_and_strip(reply_text or "")
+            logger.debug(
+                "QueenReply prepared for channel delivery",
+                chat_id=chat_id,
+                has_react_tag="<react>" in immediate_text.lower(),
+                reaction=reaction_emoji,
+            )
             return QueenReply(
                 immediate=immediate_text,
                 followup=None,
