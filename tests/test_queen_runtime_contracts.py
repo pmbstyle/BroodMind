@@ -150,6 +150,7 @@ def test_queen_handle_message_preserves_react_tag_for_channels(monkeypatch) -> N
     async def scenario() -> None:
         reply = await queen.handle_message("hello", 123)
         assert reply.immediate == "<react>✅</react> All done."
+        assert reply.reaction == "✅"
 
     asyncio.run(scenario())
 

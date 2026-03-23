@@ -469,12 +469,13 @@ def _flush_pending_turn_factory(
                 final_text = reply.immediate or ""
 
                 emoji, final_text = extract_reaction_and_strip(final_text)
-                if emoji:
+                effective_emoji = emoji or getattr(reply, "reaction", None)
+                if effective_emoji:
                     logger.debug(
                         "Detected terminal reaction tag in queen reply",
                         chat_id=chat_id,
                         message_id=reply_to_message_id,
-                        emoji=emoji,
+                        emoji=effective_emoji,
                     )
                 elif reply_to_message_id is not None:
                     logger.debug(
@@ -482,8 +483,8 @@ def _flush_pending_turn_factory(
                         chat_id=chat_id,
                         message_id=reply_to_message_id,
                     )
-                if emoji and reply_to_message_id is not None:
-                    mapped_emoji = normalize_reaction_emoji(emoji)
+                if effective_emoji and reply_to_message_id is not None:
+                    mapped_emoji = normalize_reaction_emoji(effective_emoji)
                     try:
                         await bot.set_message_reaction(
                             chat_id=chat_id,
@@ -494,11 +495,16 @@ def _flush_pending_turn_factory(
                             "Applied terminal reaction to Telegram message",
                             chat_id=chat_id,
                             message_id=reply_to_message_id,
-                            requested_emoji=emoji,
+                            requested_emoji=effective_emoji,
                             applied_emoji=mapped_emoji,
                         )
                     except Exception as exc:
-                        logger.warning("Failed to set terminal reaction", chat_id=chat_id, emoji=emoji, exc_info=True)
+                        logger.warning(
+                            "Failed to set terminal reaction",
+                            chat_id=chat_id,
+                            emoji=effective_emoji,
+                            exc_info=True,
+                        )
                 
                 if final_text:
                     await _enqueue_send(bot, chat_id, final_text, reply_to_message_id=reply_to_message_id)

@@ -1402,10 +1402,13 @@ class Queen:
                 await asyncio.to_thread(
                     self.store.set_chat_bootstrap_hash, chat_id, bootstrap_context.hash, utc_now()
                 )
+            immediate_text = sanitize_user_facing_text_preserving_reaction(reply_text)
+            reaction_emoji, _ = extract_reaction_and_strip(reply_text or "")
             return QueenReply(
-                immediate=sanitize_user_facing_text_preserving_reaction(reply_text),
+                immediate=immediate_text,
                 followup=None,
                 followup_required=wants_followup,
+                reaction=reaction_emoji,
             )
         finally:
             if correlation_token is not None:
@@ -2017,3 +2020,4 @@ class QueenReply:
     immediate: str
     followup: asyncio.Task[str] | None
     followup_required: bool = False
+    reaction: str | None = None
