@@ -324,25 +324,45 @@ async def _send_chunked(bot: Bot, chat_id: int, text: str, reply_to_message_id: 
 
 
 async def _send_message_safe(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None) -> None:
-    # Prefer HTML for better stability
-    parse_mode = "HTML"
     sanitized = sanitize_user_facing_text(strip_reaction_tags(text))
     if not sanitized:
         logger.debug("Suppressed empty message after Telegram sanitization", chat_id=chat_id)
         return
-    
-    # Escape for HTML mode to prevent parse errors from AI output containing < or >
-    escaped_text = escape_html(sanitized)
-    
+
+    preferred_parse_mode = _TELEGRAM_PARSE_MODE or "MarkdownV2"
+    outbound = sanitized
+
+    if preferred_parse_mode == "MarkdownV2":
+        outbound = _prepare_markdown_v2(sanitized)
+    elif preferred_parse_mode == "HTML":
+        outbound = escape_html(sanitized)
+
     try:
-        await bot.send_message(chat_id, escaped_text, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
+        await bot.send_message(
+            chat_id,
+            outbound,
+            parse_mode=preferred_parse_mode,
+            reply_to_message_id=reply_to_message_id,
+        )
     except TelegramBadRequest as exc:
-        # Fallback to plain text if HTML parsing still fails
         logger.warning(
-            "Telegram HTML parse failed; retrying without parse_mode (error=%s)",
+            "Telegram parse failed; retrying with HTML fallback (parse_mode=%s, error=%s)",
+            preferred_parse_mode,
             exc,
         )
-        await bot.send_message(chat_id, sanitized, reply_to_message_id=reply_to_message_id)
+        try:
+            await bot.send_message(
+                chat_id,
+                escape_html(sanitized),
+                parse_mode="HTML",
+                reply_to_message_id=reply_to_message_id,
+            )
+        except TelegramBadRequest as html_exc:
+            logger.warning(
+                "Telegram HTML parse failed; retrying without parse_mode (error=%s)",
+                html_exc,
+            )
+            await bot.send_message(chat_id, sanitized, reply_to_message_id=reply_to_message_id)
 
 
 async def _enqueue_send(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None) -> None:
@@ -501,3 +521,10 @@ def _normalize_parse_mode(raw: str | None) -> str | None:
         return "Markdown"
     logger.warning("Unknown BROODMIND_TELEGRAM_PARSE_MODE value; using plain text (value=%s)", value)
     return None
+
+
+def _prepare_markdown_v2(text: str) -> str:
+    """Convert common markdown into Telegram-safe MarkdownV2."""
+    if not text:
+        return ""
+    return telegramify_markdown.markdownify(text)
