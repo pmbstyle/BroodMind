@@ -30,7 +30,7 @@ from octopal.infrastructure.config.settings import (
 from octopal.infrastructure.providers.catalog import get_provider_catalog_entry
 
 console = Console()
-ACCENT = "#f0c15d"
+ACCENT = "#6aafae"
 SURFACE = "#5fa8c8"
 SUCCESS = "#7dd36b"
 

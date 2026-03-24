@@ -16,8 +16,9 @@ from octopal.cli.wizard.models import (
     WizardTextParams,
 )
 
-BROOD_SILVER = "#d8dde2"
-MIND_GOLD = "#f0c15d"
+OCTO_SILVER = "#6aafae"
+OCTO_BLUE = "#0f4e5d"
+OCTO_WHITE = "#ebebeb"
 SURFACE_BLUE = "#5fa8c8"
 SUBTLE_STEEL = "#5f8ea3"
 
@@ -45,7 +46,7 @@ class WizardPrompter:
 @dataclass(slots=True)
 class RichWizardPrompter(WizardPrompter):
     console: Console
-    accent: str = MIND_GOLD
+    accent: str = OCTO_WHITE
     surface: str = SURFACE_BLUE
 
     def intro(self, title: str, body: str | None = None) -> None:
@@ -160,16 +161,16 @@ def _choice_name[T](option: WizardSelectOption[T]) -> str:
 
 def _brand_text(title: str) -> Text:
     if "Octopal" not in title:
-        return Text(title, style=f"bold {MIND_GOLD}")
+        return Text(title, style=f"bold {OCTO_WHITE}")
 
     rendered = Text()
     before, _, after = title.partition("Octopal")
     if before:
-        rendered.append(before, style=f"bold {MIND_GOLD}")
-    rendered.append("Brood", style=f"bold {BROOD_SILVER}")
-    rendered.append("Mind", style=f"bold {MIND_GOLD}")
+        rendered.append(before, style=f"bold {OCTO_WHITE}")
+    rendered.append("Octo", style=f"bold {OCTO_SILVER}")
+    rendered.append("pal", style=f"bold {OCTO_BLUE}")
     if after:
-        rendered.append(after, style=f"bold {MIND_GOLD}")
+        rendered.append(after, style=f"bold {OCTO_WHITE}")
     return rendered
 
 
