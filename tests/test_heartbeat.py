@@ -116,6 +116,40 @@ def test_pending_conversational_closure_expires():
     assert queen.has_pending_conversational_closure(correlation_id) is False
 
 
+def test_suppressed_turn_followups_expire():
+    queen = Queen(
+        approvals=None,
+        memory=None,
+        canon=None,
+        provider=None,
+        store=None,
+        policy=None,
+        runtime=None,
+    )
+    correlation_id = "suppressed-expired"
+    queen._suppressed_followups_by_correlation[correlation_id] = (
+        utc_now() - timedelta(seconds=4000)
+    )
+    assert queen.should_suppress_turn_followups(correlation_id) is False
+
+
+def test_suppressed_turn_followups_can_be_marked_and_cleared():
+    queen = Queen(
+        approvals=None,
+        memory=None,
+        canon=None,
+        provider=None,
+        store=None,
+        policy=None,
+        runtime=None,
+    )
+    correlation_id = "heartbeat-turn"
+    queen.suppress_turn_followups(correlation_id)
+    assert queen.should_suppress_turn_followups(correlation_id) is True
+    queen.clear_suppressed_turn_followups(correlation_id)
+    assert queen.should_suppress_turn_followups(correlation_id) is False
+
+
 def test_no_user_response_suffix_detection():
     assert has_no_user_response_suffix("NO_USER_RESPONSE")
     assert has_no_user_response_suffix("All good. NO_USER_RESPONSE")

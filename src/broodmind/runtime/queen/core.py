@@ -381,6 +381,7 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
                     final_text = _build_worker_result_timeout_followup(result)
 
                 pending_closure = queen.has_pending_conversational_closure(correlation_id)
+                suppress_followup = queen.should_suppress_turn_followups(correlation_id)
                 if (
                     not should_send_worker_followup(final_text)
                     and (should_force_worker_followup(result) or pending_closure)
@@ -388,7 +389,14 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
                     logger.info("Forcing substantive worker follow-up", chat_id=chat_id)
                     final_text = build_forced_worker_followup(result)
 
-                if should_send_worker_followup(final_text):
+                if suppress_followup:
+                    queen.clear_pending_conversational_closure(correlation_id)
+                    logger.info(
+                        "Internal worker follow-up skipped",
+                        chat_id=chat_id,
+                        reason="suppressed_turn_followup",
+                    )
+                elif should_send_worker_followup(final_text):
                     if queen.internal_send:
                         await queen.internal_send(chat_id, final_text)
                         queen.clear_pending_conversational_closure(correlation_id)
@@ -478,6 +486,7 @@ class Queen:
     _context_health_by_chat: dict[int, dict[str, Any]] | None = None
     _last_reply_norm_by_chat: dict[int, str] | None = None
     _pending_conversational_closure_by_correlation: dict[str, Any] | None = None
+    _suppressed_followups_by_correlation: dict[str, Any] | None = None
     _no_progress_turns_by_chat: dict[int, int] | None = None
     _progress_revision_by_chat: dict[int, int] | None = None
     _reset_streak_without_progress_by_chat: dict[int, int] | None = None
@@ -509,6 +518,8 @@ class Queen:
             self._last_reply_norm_by_chat = {}
         if self._pending_conversational_closure_by_correlation is None:
             self._pending_conversational_closure_by_correlation = {}
+        if self._suppressed_followups_by_correlation is None:
+            self._suppressed_followups_by_correlation = {}
         if self._no_progress_turns_by_chat is None:
             self._no_progress_turns_by_chat = {}
         if self._progress_revision_by_chat is None:
@@ -954,6 +965,46 @@ class Queen:
         for correlation_id in expired:
             pending.pop(correlation_id, None)
 
+    def suppress_turn_followups(self, correlation_id: str | None) -> None:
+        if not correlation_id:
+            return
+        self._prune_suppressed_followups()
+        suppressed = self._suppressed_followups_by_correlation
+        if suppressed is None:
+            suppressed = {}
+            self._suppressed_followups_by_correlation = suppressed
+        suppressed[correlation_id] = utc_now()
+
+    def should_suppress_turn_followups(self, correlation_id: str | None) -> bool:
+        if not correlation_id:
+            return False
+        self._prune_suppressed_followups()
+        suppressed = self._suppressed_followups_by_correlation
+        if suppressed is None:
+            return False
+        return correlation_id in suppressed
+
+    def clear_suppressed_turn_followups(self, correlation_id: str | None) -> None:
+        if not correlation_id:
+            return
+        suppressed = self._suppressed_followups_by_correlation
+        if suppressed is None:
+            return
+        suppressed.pop(correlation_id, None)
+
+    def _prune_suppressed_followups(self) -> None:
+        suppressed = self._suppressed_followups_by_correlation
+        if not suppressed:
+            return
+        cutoff = utc_now() - timedelta(seconds=_PENDING_CONVERSATIONAL_CLOSURE_TTL_SECONDS)
+        expired = [
+            correlation_id
+            for correlation_id, created_at in suppressed.items()
+            if not created_at or created_at < cutoff
+        ]
+        for correlation_id in expired:
+            suppressed.pop(correlation_id, None)
+
     def clear_context_wakeup(self, chat_id: int) -> None:
         pending = self._pending_wakeup_by_chat or {}
         pending.pop(chat_id, None)
@@ -1334,6 +1385,8 @@ class Queen:
                 self._approval_requesters[chat_id] = approval_requester
             logger.info("Handling message", chat_id=chat_id, is_ws=is_ws, has_images=bool(images))
             logger.debug("Received message text", text_len=len(text), text=text[:500])
+            if not track_progress:
+                self.suppress_turn_followups(correlation_id)
             if persist_to_memory:
                 await self.memory.add_message(
                     "user",
@@ -1419,6 +1472,8 @@ class Queen:
                 reaction=reaction_emoji,
             )
         finally:
+            if track_progress:
+                self.clear_suppressed_turn_followups(correlation_id)
             if correlation_token is not None:
                 correlation_id_var.reset(correlation_token)
 
