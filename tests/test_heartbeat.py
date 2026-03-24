@@ -2,8 +2,8 @@ import asyncio
 import pytest
 from datetime import timedelta
 
-from broodmind.runtime.queen import core as queen_core
-from broodmind.runtime.queen.core import (
+from octopal.runtime.queen import core as queen_core
+from octopal.runtime.queen.core import (
     Queen,
     _build_worker_result_timeout_followup,
     _enqueue_batched_worker_followup,
@@ -12,13 +12,13 @@ from broodmind.runtime.queen.core import (
     _merge_worker_followup_texts,
     _schedule_worker_followup_flush,
 )
-from broodmind.runtime.queen.router import (
+from octopal.runtime.queen.router import (
     build_forced_worker_followup,
     should_force_worker_followup,
     should_send_worker_followup,
 )
-from broodmind.runtime.workers.contracts import WorkerResult
-from broodmind.utils import (
+from octopal.runtime.workers.contracts import WorkerResult
+from octopal.utils import (
     has_no_user_response_suffix,
     is_heartbeat_ok,
     looks_like_textual_tool_invocation,
@@ -350,7 +350,7 @@ async def test_batched_worker_followups_wait_for_pending_internal_results(monkey
 
 
 def test_queen_does_not_have_web_fetch():
-    from broodmind.runtime.queen.router import _get_queen_tools
+    from octopal.runtime.queen.router import _get_queen_tools
     class DummyQueen:
         store = None
 

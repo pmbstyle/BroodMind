@@ -5,12 +5,12 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from broodmind.runtime.intents.types import IntentRequest
-from broodmind.runtime.tool_errors import ToolBridgeError
-from broodmind.runtime.workers.contracts import WorkerResult, WorkerSpec
-from broodmind.worker_sdk.intents import http_get
-from broodmind.worker_sdk.protocol import VALID_MESSAGE_TYPES
-from broodmind.worker_sdk.worker import Worker
+from octopal.runtime.intents.types import IntentRequest
+from octopal.runtime.tool_errors import ToolBridgeError
+from octopal.runtime.workers.contracts import WorkerResult, WorkerSpec
+from octopal.worker_sdk.intents import http_get
+from octopal.worker_sdk.protocol import VALID_MESSAGE_TYPES
+from octopal.worker_sdk.worker import Worker
 
 
 def _worker() -> Worker:
@@ -124,7 +124,7 @@ def test_worker_request_intent_returns_permit_when_hash_matches(monkeypatch) -> 
             },
         }
 
-    from broodmind.worker_sdk import worker as worker_module
+    from octopal.worker_sdk import worker as worker_module
 
     async def _fake_read_message_bound() -> dict:
         return {

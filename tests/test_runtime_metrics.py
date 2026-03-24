@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from broodmind.runtime.metrics import read_metrics_snapshot, update_component_gauges
+from octopal.runtime.metrics import read_metrics_snapshot, update_component_gauges
 
 
 def test_update_component_gauges_writes_and_merges_metrics(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / "state"
-    monkeypatch.setenv("BROODMIND_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("OCTOPAL_STATE_DIR", str(state_dir))
 
     update_component_gauges("queen", {"queued": 3})
     update_component_gauges("workers", {"active": 2})
@@ -23,7 +23,7 @@ def test_update_component_gauges_writes_and_merges_metrics(tmp_path: Path, monke
 
 def test_update_component_gauges_ignores_empty_component(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / "state"
-    monkeypatch.setenv("BROODMIND_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("OCTOPAL_STATE_DIR", str(state_dir))
 
     update_component_gauges("", {"queued": 3})
 
@@ -49,7 +49,7 @@ def test_update_component_gauges_recovers_from_corrupt_existing_file(tmp_path: P
     state_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = state_dir / "runtime_metrics.json"
     metrics_path.write_text("{broken", encoding="utf-8")
-    monkeypatch.setenv("BROODMIND_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("OCTOPAL_STATE_DIR", str(state_dir))
 
     update_component_gauges("gateway", {"clients": 5})
 

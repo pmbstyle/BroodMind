@@ -4,8 +4,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from broodmind.tools.memory.experiments import queen_experiment_log
-from broodmind.tools.tools import get_tools
+from octopal.tools.memory.experiments import queen_experiment_log
+from octopal.tools.tools import get_tools
 
 
 def test_get_tools_includes_queen_experiment_log() -> None:

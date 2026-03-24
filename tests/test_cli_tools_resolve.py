@@ -4,11 +4,11 @@ import json
 
 from typer.testing import CliRunner
 
-from broodmind.cli.main import (
+from octopal.cli.main import (
     _build_tool_resolution_snapshot,
     app,
 )
-from broodmind.tools.catalog import get_tools
+from octopal.tools.catalog import get_tools
 
 runner = CliRunner()
 

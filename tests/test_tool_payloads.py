@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from broodmind.infrastructure.providers.base import Message
-from broodmind.runtime.tool_payloads import render_tool_result_for_llm
+from octopal.infrastructure.providers.base import Message
+from octopal.runtime.tool_payloads import render_tool_result_for_llm
 
 
 def test_render_tool_result_compacts_large_nested_payload() -> None:
@@ -18,7 +18,7 @@ def test_render_tool_result_compacts_large_nested_payload() -> None:
     assert rendered.was_compacted is True
     assert len(rendered.text) <= 32000
     assert '"status": "ok"' in rendered.text
-    assert "__broodmind_compaction__" in rendered.text
+    assert "__octopal_compaction__" in rendered.text
     assert "truncated" in rendered.text
 
 
@@ -29,7 +29,7 @@ def test_render_tool_result_parses_json_strings_before_compacting() -> None:
 
     assert rendered.was_compacted is True
     assert rendered.text.startswith("{")
-    assert "__broodmind_compaction__" in rendered.text
+    assert "__octopal_compaction__" in rendered.text
 
 
 def test_route_compacts_tool_messages_before_next_tool_round(monkeypatch) -> None:
@@ -97,8 +97,8 @@ def test_route_compacts_tool_messages_before_next_tool_round(monkeypatch) -> Non
             "results": [{"idx": idx, "body": "payload-" + ("x" * 800)} for idx in range(120)],
         }
 
-    import broodmind.runtime.queen.router as router
-    from broodmind.tools.registry import ToolSpec
+    import octopal.runtime.queen.router as router
+    from octopal.tools.registry import ToolSpec
 
     def fake_get_queen_tools(queen, chat_id):
         return (

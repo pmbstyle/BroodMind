@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import broodmind.tools.catalog as tool_catalog
+import octopal.tools.catalog as tool_catalog
 
 
 def test_gateway_status_summarizes_runtime_and_channel_state(monkeypatch, tmp_path: Path) -> None:

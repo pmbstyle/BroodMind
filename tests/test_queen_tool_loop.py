@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from broodmind.runtime.queen.router import (
+from octopal.runtime.queen.router import (
     _build_queen_tool_policy_summary,
     _handle_queen_tool_call,
     _record_queen_tool_call,
 )
-from broodmind.tools.metadata import ToolMetadata
-from broodmind.tools.diagnostics import resolve_tool_diagnostics
-from broodmind.tools.registry import ToolSpec
+from octopal.tools.metadata import ToolMetadata
+from octopal.tools.diagnostics import resolve_tool_diagnostics
+from octopal.tools.registry import ToolSpec
 
 
 def _tool(name: str, *, handler, is_async: bool = False) -> ToolSpec:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from broodmind.gateway.dashboard import _build_noise_control, _build_slo_metrics
-from broodmind.infrastructure.store.models import WorkerRecord
+from octopal.gateway.dashboard import _build_noise_control, _build_slo_metrics
+from octopal.infrastructure.store.models import WorkerRecord
 
 
 def _worker(worker_id: str, status: str, updated_at: datetime, template_id: str = "coder") -> WorkerRecord:

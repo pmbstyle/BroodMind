@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from broodmind.infrastructure.providers.base import Message
-from broodmind.runtime.queen.router import (
+from octopal.infrastructure.providers.base import Message
+from octopal.runtime.queen.router import (
     _build_insufficient_evidence_response,
     _messages_to_text,
     _normalize_verification_payload,

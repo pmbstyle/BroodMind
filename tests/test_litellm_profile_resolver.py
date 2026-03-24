@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from broodmind.infrastructure.config.models import BroodMindConfig, LLMConfig
-from broodmind.infrastructure.config.settings import Settings
-from broodmind.infrastructure.providers.profile_resolver import resolve_litellm_profile
+from octopal.infrastructure.config.models import OctopalConfig, LLMConfig
+from octopal.infrastructure.config.settings import Settings
+from octopal.infrastructure.providers.profile_resolver import resolve_litellm_profile
 
 
 def _base_settings(**overrides) -> Settings:
@@ -95,7 +95,7 @@ def test_worker_override_does_not_inherit_queen_unified_api_key_for_other_provid
         litellm_model="glm-5",
         litellm_api_key="queen-zai-key",
         openrouter_api_key=None,
-        config_obj=BroodMindConfig(
+        config_obj=OctopalConfig(
             llm=LLMConfig(provider_id="zai", model="glm-5", api_key="queen-zai-key"),
             worker_llm_default=LLMConfig(provider_id="openrouter", model="anthropic/claude-sonnet-4"),
         ),

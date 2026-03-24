@@ -8,7 +8,7 @@ if "telegramify_markdown" not in sys.modules:
     sys.modules["telegramify_markdown"] = types.SimpleNamespace(markdownify=lambda text: text)
 
 
-from broodmind.channels.telegram import handlers
+from octopal.channels.telegram import handlers
 
 
 def test_prepare_markdown_v2_converts_double_asterisk_bold(monkeypatch) -> None:

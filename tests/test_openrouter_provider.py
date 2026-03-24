@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import httpx
 
-from broodmind.infrastructure.config.settings import Settings
-from broodmind.infrastructure.providers.base import Message
-from broodmind.infrastructure.providers.openrouter_provider import (
+from octopal.infrastructure.config.settings import Settings
+from octopal.infrastructure.providers.base import Message
+from octopal.infrastructure.providers.openrouter_provider import (
     OpenRouterProvider,
     _extract_content,
     _extract_tool_calls,
@@ -121,7 +121,7 @@ def test_complete_posts_expected_payload(monkeypatch) -> None:
     _AsyncClientStub.response_payload = {"choices": [{"message": {"content": "router-ok"}}]}
     _AsyncClientStub.response_status = 200
     _AsyncClientStub.captured_calls = []
-    monkeypatch.setattr("broodmind.infrastructure.providers.openrouter_provider.httpx.AsyncClient", _AsyncClientStub)
+    monkeypatch.setattr("octopal.infrastructure.providers.openrouter_provider.httpx.AsyncClient", _AsyncClientStub)
 
     provider = OpenRouterProvider(_settings())
     result = asyncio.run(provider.complete([Message(role="user", content="hello")], temperature=0.7))
@@ -144,7 +144,7 @@ def test_complete_with_tools_returns_content_and_tool_calls(monkeypatch) -> None
     }
     _AsyncClientStub.response_status = 200
     _AsyncClientStub.captured_calls = []
-    monkeypatch.setattr("broodmind.infrastructure.providers.openrouter_provider.httpx.AsyncClient", _AsyncClientStub)
+    monkeypatch.setattr("octopal.infrastructure.providers.openrouter_provider.httpx.AsyncClient", _AsyncClientStub)
 
     provider = OpenRouterProvider(_settings())
     result = asyncio.run(
@@ -184,7 +184,7 @@ def test_complete_raises_runtime_error_for_http_failure(monkeypatch) -> None:
     _AsyncClientStub.response_payload = {"error": "bad"}
     _AsyncClientStub.response_status = 401
     _AsyncClientStub.captured_calls = []
-    monkeypatch.setattr("broodmind.infrastructure.providers.openrouter_provider.httpx.AsyncClient", _AsyncClientStub)
+    monkeypatch.setattr("octopal.infrastructure.providers.openrouter_provider.httpx.AsyncClient", _AsyncClientStub)
 
     provider = OpenRouterProvider(_settings())
 

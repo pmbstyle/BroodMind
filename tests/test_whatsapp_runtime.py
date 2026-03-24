@@ -4,8 +4,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-import broodmind.channels.whatsapp.runtime as whatsapp_runtime_module
-from broodmind.channels.whatsapp.runtime import WhatsAppRuntime
+import octopal.channels.whatsapp.runtime as whatsapp_runtime_module
+from octopal.channels.whatsapp.runtime import WhatsAppRuntime
 
 
 class _FakeBridgeController:

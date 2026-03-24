@@ -55,7 +55,7 @@ function withQuery(path: string, params: DashboardQueryParams): string {
 
 async function fetchJson<T>(url: string, token?: string): Promise<T> {
   const headers: HeadersInit = token
-    ? { ...defaultHeaders, "x-broodmind-token": token }
+    ? { ...defaultHeaders, "x-octopal-token": token }
     : defaultHeaders;
   const response = await fetch(url, { method: "GET", headers });
   if (!response.ok) {
@@ -66,7 +66,7 @@ async function fetchJson<T>(url: string, token?: string): Promise<T> {
 
 async function mutateJson<T>(url: string, method: "POST" | "PUT" | "DELETE", token?: string, body?: unknown): Promise<T> {
   const headers: HeadersInit = token
-    ? { ...defaultHeaders, "x-broodmind-token": token }
+    ? { ...defaultHeaders, "x-octopal-token": token }
     : defaultHeaders;
   const response = await fetch(url, {
     method,

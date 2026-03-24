@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from broodmind.tools.skills.bundles import (
+from octopal.tools.skills.bundles import (
     SkillBundleMetadata,
     discover_skill_bundle_dirs,
     load_discovered_skill_bundles,
@@ -154,7 +154,7 @@ def test_resolve_skill_bundle_metadata_reads_runtime_blocks() -> None:
         {
             "metadata": """
 {
-  "broodmind": {
+  "octopal": {
     "runtime": {
       "python": {
         "packages": ["python-jobspy"]

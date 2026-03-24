@@ -5,10 +5,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from broodmind.runtime.queen.core import Queen
-from broodmind.runtime.scheduler.service import SchedulerService
-from broodmind.tools.tools import _tool_check_schedule, _tool_schedule_task, _tool_scheduler_status
-from broodmind.runtime.workers.contracts import WorkerResult
+from octopal.runtime.queen.core import Queen
+from octopal.runtime.scheduler.service import SchedulerService
+from octopal.tools.tools import _tool_check_schedule, _tool_schedule_task, _tool_scheduler_status
+from octopal.runtime.workers.contracts import WorkerResult
 
 
 class _StoreStub:

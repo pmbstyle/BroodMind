@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from broodmind.runtime.queen.core import Queen
+from octopal.runtime.queen.core import Queen
 
 
 class _DummyRuntime:

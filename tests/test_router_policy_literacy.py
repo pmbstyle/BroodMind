@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from broodmind.infrastructure.providers.base import Message
+from octopal.infrastructure.providers.base import Message
 
 
 def test_route_includes_policy_block_result_for_blocked_tool_call(monkeypatch) -> None:
@@ -69,8 +69,8 @@ def test_route_includes_policy_block_result_for_blocked_tool_call(monkeypatch) -
         return None
 
     def fake_get_queen_tools(queen, chat_id):
-        from broodmind.tools.diagnostics import resolve_tool_diagnostics
-        from broodmind.tools.registry import ToolSpec
+        from octopal.tools.diagnostics import resolve_tool_diagnostics
+        from octopal.tools.registry import ToolSpec
 
         safe_tool = ToolSpec(
             name="web_search",
@@ -92,7 +92,7 @@ def test_route_includes_policy_block_result_for_blocked_tool_call(monkeypatch) -
         )
         return [safe_tool], {"queen": queen, "chat_id": chat_id, "tool_resolution_report": report}
 
-    import broodmind.runtime.queen.router as router
+    import octopal.runtime.queen.router as router
 
     monkeypatch.setattr(router, "build_queen_prompt", fake_build_queen_prompt)
     monkeypatch.setattr(router, "_build_plan", fake_build_plan)

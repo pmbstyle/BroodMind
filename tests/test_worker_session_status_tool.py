@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from broodmind.tools.workers.management import _tool_worker_session_status
-from broodmind.utils import utc_now
+from octopal.tools.workers.management import _tool_worker_session_status
+from octopal.utils import utc_now
 
 
 class _WorkerStub:

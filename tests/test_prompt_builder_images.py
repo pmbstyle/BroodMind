@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from broodmind.runtime.queen.prompt_builder import build_queen_prompt
+from octopal.runtime.queen.prompt_builder import build_queen_prompt
 
 
 def test_build_queen_prompt_includes_saved_image_paths_in_user_text() -> None:

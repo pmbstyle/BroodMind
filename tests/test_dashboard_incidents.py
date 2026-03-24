@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from broodmind.gateway.dashboard import _build_incidents
-from broodmind.infrastructure.store.models import WorkerRecord
+from octopal.gateway.dashboard import _build_incidents
+from octopal.infrastructure.store.models import WorkerRecord
 
 
 def _worker(worker_id: str, status: str) -> WorkerRecord:

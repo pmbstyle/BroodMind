@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from broodmind.tools.mcp.management import mcp_discover
+from octopal.tools.mcp.management import mcp_discover
 
 
 class _MCPStub:

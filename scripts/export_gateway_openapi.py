@@ -4,16 +4,16 @@ import argparse
 import json
 from pathlib import Path
 
-from broodmind.config.settings import Settings
-from broodmind.gateway.app import build_app
+from octopal.config.settings import Settings
+from octopal.gateway.app import build_app
 
 
 def build_openapi_document() -> dict:
     project_root = Path(__file__).resolve().parents[1]
     settings = Settings(
         TELEGRAM_BOT_TOKEN="dummy:token",
-        BROODMIND_STATE_DIR=project_root / "tmp" / "openapi_state",
-        BROODMIND_WORKSPACE_DIR=project_root / "workspace",
+        OCTOPAL_STATE_DIR=project_root / "tmp" / "openapi_state",
+        OCTOPAL_WORKSPACE_DIR=project_root / "workspace",
     )
     app = build_app(settings)
     return app.openapi()

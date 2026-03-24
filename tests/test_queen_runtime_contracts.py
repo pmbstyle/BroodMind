@@ -4,8 +4,8 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from broodmind.runtime.queen.core import Queen
-from broodmind.runtime.workers.contracts import WorkerResult
+from octopal.runtime.queen.core import Queen
+from octopal.runtime.workers.contracts import WorkerResult
 
 
 def test_queen_output_channel_uses_owner_lease() -> None:
@@ -46,7 +46,7 @@ def test_queen_passes_approval_requester_to_runtime(monkeypatch) -> None:
             return None
 
     async def fake_bootstrap_context(store, chat_id: int):
-        from broodmind.runtime.queen.prompt_builder import BootstrapContext
+        from octopal.runtime.queen.prompt_builder import BootstrapContext
 
         return BootstrapContext(content="", hash="", files=[])
 
@@ -62,7 +62,7 @@ def test_queen_passes_approval_requester_to_runtime(monkeypatch) -> None:
     ):
         return "ok"
 
-    import broodmind.runtime.queen.core as queen_core
+    import octopal.runtime.queen.core as queen_core
 
     monkeypatch.setattr(queen_core, "build_bootstrap_context_prompt", fake_bootstrap_context)
     monkeypatch.setattr(queen_core, "route_or_reply", fake_route_or_reply)
@@ -114,7 +114,7 @@ def test_queen_handle_message_preserves_react_tag_for_channels(monkeypatch) -> N
             return None
 
     async def fake_bootstrap_context(store, chat_id: int):
-        from broodmind.runtime.queen.prompt_builder import BootstrapContext
+        from octopal.runtime.queen.prompt_builder import BootstrapContext
 
         return BootstrapContext(content="", hash="", files=[])
 
@@ -132,7 +132,7 @@ def test_queen_handle_message_preserves_react_tag_for_channels(monkeypatch) -> N
     ):
         return "<react>✅</react> All done. <think>hidden</think>"
 
-    import broodmind.runtime.queen.core as queen_core
+    import octopal.runtime.queen.core as queen_core
 
     monkeypatch.setattr(queen_core, "build_bootstrap_context_prompt", fake_bootstrap_context)
     monkeypatch.setattr(queen_core, "route_or_reply", fake_route_or_reply)
@@ -171,7 +171,7 @@ def test_queen_handle_message_preserves_reaction_when_output_is_only_react_tag(m
             return None
 
     async def fake_bootstrap_context(store, chat_id: int):
-        from broodmind.runtime.queen.prompt_builder import BootstrapContext
+        from octopal.runtime.queen.prompt_builder import BootstrapContext
 
         return BootstrapContext(content="", hash="", files=[])
 
@@ -189,7 +189,7 @@ def test_queen_handle_message_preserves_reaction_when_output_is_only_react_tag(m
     ):
         return "<react>👍</react>"
 
-    import broodmind.runtime.queen.core as queen_core
+    import octopal.runtime.queen.core as queen_core
 
     monkeypatch.setattr(queen_core, "build_bootstrap_context_prompt", fake_bootstrap_context)
     monkeypatch.setattr(queen_core, "route_or_reply", fake_route_or_reply)
@@ -252,8 +252,8 @@ def test_start_worker_async_releases_duplicate_reservation_after_run(monkeypatch
             await self.gate.wait()
             return WorkerResult(summary="ok")
 
-    import broodmind.runtime.queen.core as queen_core
-    from broodmind.infrastructure.logging import correlation_id_var
+    import octopal.runtime.queen.core as queen_core
+    from octopal.infrastructure.logging import correlation_id_var
 
     monkeypatch.setattr(queen_core, "_enqueue_internal_result", lambda *args, **kwargs: None)
 
@@ -330,7 +330,7 @@ def test_start_worker_async_emits_failed_progress_when_store_marks_failed(monkey
                 output={"error": "schema mismatch"},
             )
 
-    import broodmind.runtime.queen.core as queen_core
+    import octopal.runtime.queen.core as queen_core
 
     monkeypatch.setattr(queen_core, "_enqueue_internal_result", lambda *args, **kwargs: None)
 
@@ -398,7 +398,7 @@ def test_start_worker_async_infers_longer_timeout_for_context_heavy_network_task
             self.captured_timeout = task_request.timeout_seconds
             return WorkerResult(summary="ok")
 
-    import broodmind.runtime.queen.core as queen_core
+    import octopal.runtime.queen.core as queen_core
 
     monkeypatch.setattr(queen_core, "_enqueue_internal_result", lambda *args, **kwargs: None)
 
@@ -465,7 +465,7 @@ def test_start_worker_async_keeps_explicit_timeout_override(monkeypatch) -> None
             self.captured_timeout = task_request.timeout_seconds
             return WorkerResult(summary="ok")
 
-    import broodmind.runtime.queen.core as queen_core
+    import octopal.runtime.queen.core as queen_core
 
     monkeypatch.setattr(queen_core, "_enqueue_internal_result", lambda *args, **kwargs: None)
 

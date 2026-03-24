@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from broodmind.infrastructure.config.settings import Settings
-from broodmind.gateway.dashboard import (
+from octopal.infrastructure.config.settings import Settings
+from octopal.gateway.dashboard import (
     DashboardFilters,
     _build_filters,
     _normalize_log_entry,
@@ -11,8 +11,8 @@ from broodmind.gateway.dashboard import (
 def _settings(tmp_path):
     return Settings(
         TELEGRAM_BOT_TOKEN="123:abc",
-        BROODMIND_STATE_DIR=tmp_path / "state",
-        BROODMIND_WORKSPACE_DIR=tmp_path / "workspace",
+        OCTOPAL_STATE_DIR=tmp_path / "state",
+        OCTOPAL_WORKSPACE_DIR=tmp_path / "workspace",
     )
 
 

@@ -1,6 +1,6 @@
-# BroodMind Hybrid Memory System
+# Octopal Hybrid Memory System
 
-BroodMind uses a sophisticated three-tier hybrid memory architecture designed to balance immediate conversational context, semantic retrieval of past events, and stable long-term knowledge ("Crystallization").
+Octopal uses a sophisticated three-tier hybrid memory architecture designed to balance immediate conversational context, semantic retrieval of past events, and stable long-term knowledge ("Crystallization").
 
 ## 1. Architecture Overview
 
@@ -31,7 +31,7 @@ This is the "Stable" memory of the agent. Unlike the SQLite event store, the Can
 
 ## 3. Decoupled Vector Storage
 
-To ensure scalability and model independence, BroodMind decouples text storage from the vector index.
+To ensure scalability and model independence, Octopal decouples text storage from the vector index.
 
 - **Table `memory_entries`**: Stores the raw text, role, and metadata.
 - **Table `memory_embeddings`**: Stores vectors mapped to entries by UUID, including the model name used for embedding.
@@ -45,7 +45,7 @@ This allows for:
 
 ## 4. The Memory Contract
 
-BroodMind enforces a strict hierarchy for writing to memory:
+Octopal enforces a strict hierarchy for writing to memory:
 
 1. **Workers (Propose):** Workers cannot modify the Canon. They use the `propose_knowledge` tool to flag facts or lessons.
 2. **Queen (Curate):** The Queen reviews worker proposals and her own experiences. She uses `manage_canon` to "crystallize" information into the `.md` files.
@@ -60,7 +60,7 @@ BroodMind enforces a strict hierarchy for writing to memory:
 
 ## 6. Quality Controls (Recent Improvements)
 
-BroodMind now applies additional quality controls in the transient/semantic memory pipeline:
+Octopal now applies additional quality controls in the transient/semantic memory pipeline:
 
 - **Deduplication on Write:** Exact normalized duplicates in recent same-chat history are skipped to reduce noise.
 - **Contradiction Tagging:** Simple assertion conflicts (for example, `X is Y` vs `X is not Y`) are flagged in metadata (`contradiction_detected`, `contradiction_with`) instead of silently treated as equal truth.

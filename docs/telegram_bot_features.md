@@ -1,6 +1,6 @@
 # Telegram Bot Features
 
-This document describes the Telegram UX features currently implemented in BroodMind.
+This document describes the Telegram UX features currently implemented in Octopal.
 
 ## Commands
 

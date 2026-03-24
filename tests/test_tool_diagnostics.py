@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from broodmind.tools.diagnostics import resolve_tool_diagnostics
-from broodmind.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec
+from octopal.tools.diagnostics import resolve_tool_diagnostics
+from octopal.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec
 
 
 def _tool(name: str, permission: str = "network") -> ToolSpec:

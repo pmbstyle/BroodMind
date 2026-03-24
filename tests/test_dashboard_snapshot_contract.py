@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from broodmind.gateway.dashboard import (
+from octopal.gateway.dashboard import (
     _build_kpis,
     _derive_overall_health,
     _estimate_control_latency_p95_ms,
