@@ -722,11 +722,11 @@ def _get_octo_tools(octo: Any, chat_id: int) -> tuple[list[ToolSpec], dict[str, 
     resolution_report = resolve_tool_diagnostics(
         all_tools,
         permissions=perms,
-        profile_name=os.getenv("OCTOPAL_QUEEN_TOOL_PROFILE"),
+        profile_name=os.getenv("OCTOPAL_OCTO_TOOL_PROFILE"),
         policy_pipeline_steps=policy_steps,
     )
     tool_specs = list(resolution_report.available_tools)
-    max_tools = _env_int("OCTOPAL_QUEEN_MAX_TOOL_COUNT", _DEFAULT_MAX_TOOL_COUNT, minimum=8)
+    max_tools = _env_int("OCTOPAL_OCTO_MAX_TOOL_COUNT", _DEFAULT_MAX_TOOL_COUNT, minimum=8)
     tool_specs = _budget_tool_specs(tool_specs, max_count=max_tools)
     ctx["tool_resolution_report"] = resolution_report
     ctx["all_tool_specs"] = all_tools

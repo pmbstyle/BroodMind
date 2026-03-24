@@ -29,7 +29,6 @@ from octopal.runtime.tool_loop import (
     _hash_tool_call,
     _hash_tool_outcome,
     _resolve_tool_loop_thresholds,
-    _tool_no_progress_streak,
 )
 from octopal.runtime.tool_payloads import render_tool_result_for_llm
 from octopal.runtime.workers.contracts import WorkerResult
@@ -94,7 +93,7 @@ _RESULT_SCHEMA = {
     "additionalProperties": True,
 }
 logger = structlog.get_logger(__name__)
-_QUEEN_PROXY_TOOLS = {
+_OCTO_PROXY_TOOLS = {
     "list_workers",
     "start_worker",
     "start_child_worker",
@@ -705,7 +704,7 @@ async def _execute_tool(
 def _with_octo_tool_proxies(tools: list[Any], worker: Worker) -> list[Any]:
     proxied: list[Any] = []
     for tool in tools:
-        if getattr(tool, "name", "") not in _QUEEN_PROXY_TOOLS:
+        if getattr(tool, "name", "") not in _OCTO_PROXY_TOOLS:
             proxied.append(tool)
             continue
         proxied.append(_make_octo_proxy_tool(tool, worker))

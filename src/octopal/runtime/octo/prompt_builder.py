@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from octopal.runtime.memory.service import MemoryService
 
 
-_QUEEN_SYSTEM_PROMPT_CONTENT = ""
+_OCTO_SYSTEM_PROMPT_CONTENT = ""
 
 
 @dataclass
@@ -32,20 +32,20 @@ class BootstrapContext:
 async def _load_system_prompt_file() -> str:
     """Loads the content of octo_system.md."""
 
-    global _QUEEN_SYSTEM_PROMPT_CONTENT
+    global _OCTO_SYSTEM_PROMPT_CONTENT
 
-    if not _QUEEN_SYSTEM_PROMPT_CONTENT:
+    if not _OCTO_SYSTEM_PROMPT_CONTENT:
         prompt_path = Path(__file__).parent / "prompts" / "octo_system.md"
 
         try:
-            _QUEEN_SYSTEM_PROMPT_CONTENT = await asyncio.to_thread(
+            _OCTO_SYSTEM_PROMPT_CONTENT = await asyncio.to_thread(
                 prompt_path.read_text, encoding="utf-8"
             )
 
         except FileNotFoundError:
-            _QUEEN_SYSTEM_PROMPT_CONTENT = "You are the Octopal Octo. Your configuration files are missing. Tell the user that you are missing the configuration files and ask them to create them."
+            _OCTO_SYSTEM_PROMPT_CONTENT = "You are the Octopal Octo. Your configuration files are missing. Tell the user that you are missing the configuration files and ask them to create them."
 
-    return _QUEEN_SYSTEM_PROMPT_CONTENT
+    return _OCTO_SYSTEM_PROMPT_CONTENT
 
 
 async def get_prompt_section(title: str) -> list[str]:
