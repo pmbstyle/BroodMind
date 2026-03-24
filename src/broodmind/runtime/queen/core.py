@@ -56,12 +56,22 @@ _FOLLOWUP_QUEUES: dict[int, asyncio.Queue] = {}
 _FOLLOWUP_TASKS: dict[int, asyncio.Task] = {}
 _INTERNAL_QUEUES: dict[int, asyncio.Queue] = {}
 _INTERNAL_TASKS: dict[int, asyncio.Task] = {}
+_WORKER_FOLLOWUP_BATCHES: dict[tuple[int, str], "_PendingWorkerFollowupBatch"] = {}
 _QUEUE_IDLE_TIMEOUT_SECONDS = 300.0
 # Worker-result follow-up can include multiple provider retries and a fallback
 # pass through Queen, so it needs a wider budget than a single LLM request.
 _WORKER_RESULT_ROUTING_TIMEOUT_SECONDS = 900.0
 _RESET_CONFIRM_THRESHOLD = 2
 _RESET_CONFIDENCE_MIN = 0.7
+
+
+@dataclass
+class _PendingWorkerFollowupBatch:
+    texts: list[str]
+    task: asyncio.Task | None = None
+    loop: asyncio.AbstractEventLoop | None = None
+
+
 def _build_worker_result_timeout_followup(result: WorkerResult) -> str:
     """Return a minimal user-facing fallback when Queen routing times out."""
     lead = "Worker finished, but the follow-up routing step timed out."
@@ -105,6 +115,15 @@ def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: floa
     except (TypeError, ValueError):
         return default
     return min(maximum, max(minimum, value))
+
+
+_WORKER_FOLLOWUP_BATCH_WINDOW_SECONDS = float(
+    _env_int(
+        "BROODMIND_WORKER_FOLLOWUP_BATCH_WINDOW_SECONDS",
+        8,
+        minimum=1,
+    )
+)
 
 
 _PENDING_CONVERSATIONAL_CLOSURE_TTL_SECONDS = _env_int(
@@ -330,6 +349,137 @@ def _enqueue_followup(chat_id: int, coro) -> asyncio.Future[str]:
     return future
 
 
+def _merge_worker_followup_texts(texts: list[str]) -> str:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for raw_text in texts:
+        text = normalize_plain_text(raw_text)
+        if not should_send_worker_followup(text):
+            continue
+        fingerprint = text.casefold()
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        merged.append(text)
+    if not merged:
+        return ""
+    if len(merged) == 1:
+        return merged[0]
+    return "\n\n".join(merged)
+
+
+async def _send_worker_followup(
+    queen: "Queen",
+    chat_id: int,
+    correlation_id: str | None,
+    text: str,
+    *,
+    batched_count: int = 1,
+) -> None:
+    if not should_send_worker_followup(text):
+        logger.info("Internal worker follow-up skipped", chat_id=chat_id, reason="no_user_response")
+        return
+    if queen.internal_send:
+        await queen.internal_send(chat_id, text)
+        queen.clear_pending_conversational_closure(correlation_id)
+        logger.info(
+            "Internal worker follow-up sent",
+            chat_id=chat_id,
+            text_len=len(text),
+            batched_count=batched_count,
+        )
+        await queen.memory.add_message(
+            "assistant",
+            text,
+            {
+                "chat_id": chat_id,
+                "worker_followup": True,
+                "batched_count": batched_count,
+            },
+        )
+    else:
+        logger.info(
+            "Worker follow-up produced but no sender attached",
+            chat_id=chat_id,
+            text_len=len(text),
+            batched_count=batched_count,
+        )
+
+
+async def _flush_worker_followup_batch(queen: "Queen", chat_id: int, correlation_id: str) -> None:
+    try:
+        await asyncio.sleep(_WORKER_FOLLOWUP_BATCH_WINDOW_SECONDS)
+        batch_key = (chat_id, correlation_id)
+        batch = _WORKER_FOLLOWUP_BATCHES.pop(batch_key, None)
+        if batch is None:
+            return
+        final_text = _merge_worker_followup_texts(batch.texts)
+        if not final_text:
+            logger.info(
+                "Internal worker follow-up skipped",
+                chat_id=chat_id,
+                reason="empty_batched_followup",
+                batched_count=len(batch.texts),
+            )
+            return
+        await _send_worker_followup(
+            queen,
+            chat_id,
+            correlation_id,
+            final_text,
+            batched_count=len(batch.texts),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Failed to flush batched worker follow-up", chat_id=chat_id)
+
+
+def _schedule_worker_followup_flush(queen: "Queen", chat_id: int, correlation_id: str | None) -> None:
+    if not correlation_id:
+        return
+    batch_key = (chat_id, correlation_id)
+    batch = _WORKER_FOLLOWUP_BATCHES.get(batch_key)
+    if batch is None:
+        return
+    if not queen.should_flush_worker_followups(correlation_id):
+        existing_task = batch.task
+        if existing_task and not existing_task.done():
+            existing_task.cancel()
+        batch.task = None
+        return
+    existing_task = batch.task
+    if existing_task and not existing_task.done():
+        existing_task.cancel()
+    batch.task = asyncio.create_task(_flush_worker_followup_batch(queen, chat_id, correlation_id))
+
+
+async def _enqueue_batched_worker_followup(
+    queen: "Queen",
+    chat_id: int,
+    correlation_id: str | None,
+    text: str,
+) -> None:
+    if not correlation_id:
+        await _send_worker_followup(queen, chat_id, correlation_id, text)
+        return
+
+    loop = asyncio.get_running_loop()
+    batch_key = (chat_id, correlation_id)
+    batch = _WORKER_FOLLOWUP_BATCHES.get(batch_key)
+    if batch is not None and batch.loop not in (None, loop):
+        prior_task = batch.task
+        if prior_task and not prior_task.done():
+            prior_task.cancel()
+        _WORKER_FOLLOWUP_BATCHES.pop(batch_key, None)
+        batch = None
+    if batch is None:
+        batch = _PendingWorkerFollowupBatch(texts=[], loop=loop)
+        _WORKER_FOLLOWUP_BATCHES[batch_key] = batch
+    batch.texts.append(text)
+    _schedule_worker_followup_flush(queen, chat_id, correlation_id)
+
+
 async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> None:
     """Process completed worker results.
 
@@ -337,6 +487,7 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
     The queen decides what to communicate based on worker results.
     """
     while True:
+        correlation_id: str | None = None
         try:
             task_text, result, correlation_id = await asyncio.wait_for(queue.get(), timeout=_QUEUE_IDLE_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -381,6 +532,7 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
                     final_text = _build_worker_result_timeout_followup(result)
 
                 pending_closure = queen.has_pending_conversational_closure(correlation_id)
+                suppress_followup = queen.should_suppress_turn_followups(correlation_id)
                 if (
                     not should_send_worker_followup(final_text)
                     and (should_force_worker_followup(result) or pending_closure)
@@ -388,28 +540,28 @@ async def _internal_worker(queen: Queen, chat_id: int, queue: asyncio.Queue) -> 
                     logger.info("Forcing substantive worker follow-up", chat_id=chat_id)
                     final_text = build_forced_worker_followup(result)
 
-                if should_send_worker_followup(final_text):
-                    if queen.internal_send:
-                        await queen.internal_send(chat_id, final_text)
-                        queen.clear_pending_conversational_closure(correlation_id)
-                        logger.info("Internal worker follow-up sent", chat_id=chat_id, text_len=len(final_text))
-                        await queen.memory.add_message(
-                            "assistant",
-                            final_text,
-                            {"chat_id": chat_id, "worker_followup": True},
-                        )
-                    else:
-                        logger.info(
-                            "Worker follow-up produced but no sender attached",
-                            chat_id=chat_id,
-                            text_len=len(final_text),
-                        )
+                if suppress_followup:
+                    queen.clear_pending_conversational_closure(correlation_id)
+                    logger.info(
+                        "Internal worker follow-up skipped",
+                        chat_id=chat_id,
+                        reason="suppressed_turn_followup",
+                    )
+                elif should_send_worker_followup(final_text):
+                    await _enqueue_batched_worker_followup(
+                        queen,
+                        chat_id,
+                        correlation_id,
+                        final_text,
+                    )
                 else:
                     logger.info("Internal worker follow-up skipped", chat_id=chat_id, reason="no_user_response")
             logger.debug("Worker result processed", summary_len=len(result.summary or ""))
         except Exception:
             logger.exception("Failed to process internal worker result")
         finally:
+            queen.mark_internal_result_processed(correlation_id)
+            _schedule_worker_followup_flush(queen, chat_id, correlation_id)
             queue.task_done()
     _INTERNAL_TASKS.pop(chat_id, None)
     if queue.empty():
@@ -438,6 +590,7 @@ def _enqueue_internal_result(
         _INTERNAL_QUEUES[chat_id] = queue
     if chat_id not in _INTERNAL_TASKS or _INTERNAL_TASKS[chat_id].done():
         _INTERNAL_TASKS[chat_id] = asyncio.create_task(_internal_worker(queen, chat_id, queue))
+    queen.mark_internal_result_pending(correlation_id)
     queue.put_nowait((task_text, result, correlation_id))
     logger.info("Queued internal worker result", chat_id=chat_id, queue_size=queue.qsize())
     _publish_runtime_metrics()
@@ -473,11 +626,15 @@ class Queen:
     _worker_depth: dict[str, int] | None = None
     _lineage_children_total: dict[str, int] | None = None
     _lineage_children_active: dict[str, set[str]] | None = None
+    _worker_correlation_by_run_id: dict[str, str] | None = None
+    _active_workers_by_correlation: dict[str, set[str]] | None = None
+    _pending_internal_results_by_correlation: dict[str, int] | None = None
     _housekeeping_cfg: dict[str, int] | None = None
     _pending_wakeup_by_chat: dict[int, str] | None = None
     _context_health_by_chat: dict[int, dict[str, Any]] | None = None
     _last_reply_norm_by_chat: dict[int, str] | None = None
     _pending_conversational_closure_by_correlation: dict[str, Any] | None = None
+    _suppressed_followups_by_correlation: dict[str, Any] | None = None
     _no_progress_turns_by_chat: dict[int, int] | None = None
     _progress_revision_by_chat: dict[int, int] | None = None
     _reset_streak_without_progress_by_chat: dict[int, int] | None = None
@@ -501,6 +658,12 @@ class Queen:
             self._lineage_children_total = {}
         if self._lineage_children_active is None:
             self._lineage_children_active = {}
+        if self._worker_correlation_by_run_id is None:
+            self._worker_correlation_by_run_id = {}
+        if self._active_workers_by_correlation is None:
+            self._active_workers_by_correlation = {}
+        if self._pending_internal_results_by_correlation is None:
+            self._pending_internal_results_by_correlation = {}
         if self._pending_wakeup_by_chat is None:
             self._pending_wakeup_by_chat = {}
         if self._context_health_by_chat is None:
@@ -509,6 +672,8 @@ class Queen:
             self._last_reply_norm_by_chat = {}
         if self._pending_conversational_closure_by_correlation is None:
             self._pending_conversational_closure_by_correlation = {}
+        if self._suppressed_followups_by_correlation is None:
+            self._suppressed_followups_by_correlation = {}
         if self._no_progress_turns_by_chat is None:
             self._no_progress_turns_by_chat = {}
         if self._progress_revision_by_chat is None:
@@ -760,6 +925,9 @@ class Queen:
         self._worker_depth.clear()
         self._lineage_children_total.clear()
         self._lineage_children_active.clear()
+        self._worker_correlation_by_run_id.clear()
+        self._active_workers_by_correlation.clear()
+        self._pending_internal_results_by_correlation.clear()
 
         worker_by_id: dict[str, Any] = {}
         for worker in workers:
@@ -769,8 +937,11 @@ class Queen:
             worker_by_id[run_id] = worker
             lineage_id = str(getattr(worker, "lineage_id", "") or run_id).strip() or run_id
             depth = max(0, int(getattr(worker, "spawn_depth", 0) or 0))
+            correlation_id = str(getattr(worker, "correlation_id", "") or "").strip() or None
             self._worker_lineage[run_id] = lineage_id
             self._worker_depth[run_id] = depth
+            if correlation_id:
+                self._worker_correlation_by_run_id[run_id] = correlation_id
 
         orphan_reconciled = 0
         for run_id, worker in worker_by_id.items():
@@ -795,6 +966,9 @@ class Queen:
                 int(self._lineage_children_total.get(lineage_id, 0)) + 1
             )
             if _is_active_worker_status(getattr(worker, "status", "")):
+                correlation_id = self._worker_correlation_by_run_id.get(run_id)
+                if correlation_id:
+                    self._active_workers_by_correlation.setdefault(correlation_id, set()).add(run_id)
                 self._lineage_children_active.setdefault(lineage_id, set()).add(run_id)
 
         stale_reconciled = self._reconcile_startup_stale_workers(worker_by_id)
@@ -953,6 +1127,86 @@ class Queen:
         ]
         for correlation_id in expired:
             pending.pop(correlation_id, None)
+
+    def suppress_turn_followups(self, correlation_id: str | None) -> None:
+        if not correlation_id:
+            return
+        self._prune_suppressed_followups()
+        suppressed = self._suppressed_followups_by_correlation
+        if suppressed is None:
+            suppressed = {}
+            self._suppressed_followups_by_correlation = suppressed
+        suppressed[correlation_id] = utc_now()
+
+    def should_suppress_turn_followups(self, correlation_id: str | None) -> bool:
+        if not correlation_id:
+            return False
+        self._prune_suppressed_followups()
+        suppressed = self._suppressed_followups_by_correlation
+        if suppressed is None:
+            return False
+        return correlation_id in suppressed
+
+    def clear_suppressed_turn_followups(self, correlation_id: str | None) -> None:
+        if not correlation_id:
+            return
+        suppressed = self._suppressed_followups_by_correlation
+        if suppressed is None:
+            return
+        suppressed.pop(correlation_id, None)
+
+    def register_worker_correlation(self, run_id: str, correlation_id: str | None) -> None:
+        if not run_id or not correlation_id:
+            return
+        self._worker_correlation_by_run_id[run_id] = correlation_id
+        self._active_workers_by_correlation.setdefault(correlation_id, set()).add(run_id)
+
+    def has_active_workers_for_correlation(self, correlation_id: str | None) -> bool:
+        if not correlation_id:
+            return False
+        return bool(self._active_workers_by_correlation.get(correlation_id))
+
+    def mark_internal_result_pending(self, correlation_id: str | None) -> None:
+        if not correlation_id:
+            return
+        pending = self._pending_internal_results_by_correlation
+        pending[correlation_id] = int(pending.get(correlation_id, 0)) + 1
+
+    def mark_internal_result_processed(self, correlation_id: str | None) -> None:
+        if not correlation_id:
+            return
+        pending = self._pending_internal_results_by_correlation
+        remaining = int(pending.get(correlation_id, 0)) - 1
+        if remaining <= 0:
+            pending.pop(correlation_id, None)
+            return
+        pending[correlation_id] = remaining
+
+    def has_pending_internal_results_for_correlation(self, correlation_id: str | None) -> bool:
+        if not correlation_id:
+            return False
+        return int(self._pending_internal_results_by_correlation.get(correlation_id, 0)) > 0
+
+    def should_flush_worker_followups(self, correlation_id: str | None) -> bool:
+        if not correlation_id:
+            return True
+        return (
+            not self.has_active_workers_for_correlation(correlation_id)
+            and not self.has_pending_internal_results_for_correlation(correlation_id)
+        )
+
+    def _prune_suppressed_followups(self) -> None:
+        suppressed = self._suppressed_followups_by_correlation
+        if not suppressed:
+            return
+        cutoff = utc_now() - timedelta(seconds=_PENDING_CONVERSATIONAL_CLOSURE_TTL_SECONDS)
+        expired = [
+            correlation_id
+            for correlation_id, created_at in suppressed.items()
+            if not created_at or created_at < cutoff
+        ]
+        for correlation_id in expired:
+            suppressed.pop(correlation_id, None)
 
     def clear_context_wakeup(self, chat_id: int) -> None:
         pending = self._pending_wakeup_by_chat or {}
@@ -1334,6 +1588,8 @@ class Queen:
                 self._approval_requesters[chat_id] = approval_requester
             logger.info("Handling message", chat_id=chat_id, is_ws=is_ws, has_images=bool(images))
             logger.debug("Received message text", text_len=len(text), text=text[:500])
+            if not track_progress:
+                self.suppress_turn_followups(correlation_id)
             if persist_to_memory:
                 await self.memory.add_message(
                     "user",
@@ -1419,6 +1675,8 @@ class Queen:
                 reaction=reaction_emoji,
             )
         finally:
+            if track_progress:
+                self.clear_suppressed_turn_followups(correlation_id)
             if correlation_token is not None:
                 correlation_id_var.reset(correlation_token)
 
@@ -1535,6 +1793,7 @@ class Queen:
                 root_task_id=effective_root_task_id,
                 spawn_depth=effective_spawn_depth,
             )
+            self.register_worker_correlation(run_id, correlation_id)
 
             requester = self._approval_requesters.get(chat_id)
             if requester is None and getattr(self.approvals, "bot", None):
@@ -1694,6 +1953,13 @@ class Queen:
             active.add(run_id)
 
     def _mark_worker_inactive(self, run_id: str) -> None:
+        correlation_id = self._worker_correlation_by_run_id.pop(run_id, None)
+        if correlation_id:
+            active_by_correlation = self._active_workers_by_correlation.get(correlation_id)
+            if active_by_correlation and run_id in active_by_correlation:
+                active_by_correlation.discard(run_id)
+                if not active_by_correlation:
+                    self._active_workers_by_correlation.pop(correlation_id, None)
         lineage_id = self._worker_lineage.get(run_id)
         if not lineage_id:
             return
