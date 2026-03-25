@@ -110,7 +110,7 @@ uv run octopal start
 
 Open [http://127.0.0.1:8001/dashboard](http://127.0.0.1:8001/dashboard) (change IP to your instance)
 
-If you enabled dashboard protection during `octopal configure`, use the value of `OCTOPAL_DASHBOARD_TOKEN` from `.env` when the dashboard or dashboard API asks for it.
+If you enabled dashboard protection during `octopal configure`, use the `gateway.dashboard_token` value from `config.json` when the dashboard or dashboard API asks for it.
 
 If the page says the dashboard is unavailable, build and enable the web app first:
 
@@ -119,7 +119,7 @@ cd webapp
 npm run build
 ```
 
-Then set `OCTOPAL_WEBAPP_ENABLED=1` in `.env` and start Octopal again.
+Then enable the dashboard bundle in `config.json` by setting `"gateway": { "webapp_enabled": true }` and start Octopal again.
 
 <img alt="Octopal dashboard" src="https://github.com/user-attachments/assets/0fcf993b-97c6-4f90-840a-63011f0d55f0" />
 
@@ -152,7 +152,19 @@ Then run:
 octopal configure
 ```
 
-`configure` creates/updates `.env` and bootstraps workspace files if missing.
+`configure` creates or updates `config.json` and bootstraps workspace files if missing.
+
+### Configuration model
+
+`config.json` is now the primary configuration file.
+
+- `uv run octopal configure` writes the structured config there.
+- Runtime loads `config.json` first and maps it into legacy settings for older code paths.
+- `.env` is still supported as a legacy fallback and migration source.
+- If both files exist, `config.json` wins for overlapping settings.
+- You can override the default locations with `OCTOPAL_CONFIG_FILE` and `OCTOPAL_ENV_FILE`.
+
+In practice: use the wizard and treat `.env.example` as a compatibility reference, not the main setup path.
 
 ### 5. Start
 
@@ -190,7 +202,18 @@ Default runtime is non-Docker. If you want Dockerized workers:
 uv run octopal build-worker-image --tag octopal-worker:latest
 ```
 
-Then set in `.env`:
+Then set in `config.json`:
+
+```json
+{
+  "workers": {
+    "launcher": "docker",
+    "docker_image": "octopal-worker:latest"
+  }
+}
+```
+
+Legacy `.env` values still work if you need them:
 
 ```env
 OCTOPAL_WORKER_LAUNCHER=docker
@@ -287,14 +310,14 @@ See [docs/skills.md](docs/skills.md) for the current format and behavior.
 
 ### Telegram bot starts but does not reply
 
-- Verify `TELEGRAM_BOT_TOKEN`
-- Verify your chat ID is in `ALLOWED_TELEGRAM_CHAT_IDS`
+- Verify `telegram.bot_token` in `config.json`
+- Verify your chat ID is listed in `telegram.allowed_chat_ids`
 - Check `uv run octopal status` and `uv run octopal logs --follow`
 
 ### WhatsApp is selected, but not receiving messages
 
-- Verify `OCTOPAL_USER_CHANNEL=whatsapp`
-- Verify your phone number is in `ALLOWED_WHATSAPP_NUMBERS`
+- Verify `user_channel` is set to `whatsapp` in `config.json`
+- Verify your phone number is listed in `whatsapp.allowed_numbers`
 - Run `uv run octopal whatsapp install-bridge`
 - Run `uv run octopal whatsapp link`
 - Start Octopal again and check `uv run octopal whatsapp status`
@@ -302,8 +325,8 @@ See [docs/skills.md](docs/skills.md) for the current format and behavior.
 ### LLM errors
 
 - Run `uv run octopal configure` and pick the provider you want to use.
-- For unified LiteLLM config: set `OCTOPAL_LITELLM_PROVIDER_ID`, `OCTOPAL_LITELLM_MODEL`, and `OCTOPAL_LITELLM_API_KEY`.
-- Existing `ZAI_*` and `OPENROUTER_*` variables still work as legacy fallbacks.
+- For the current structured config, check `llm.provider_id`, `llm.model`, and `llm.api_key` in `config.json`.
+- Existing `OCTOPAL_LITELLM_*`, `ZAI_*`, and `OPENROUTER_*` environment variables still work as legacy fallbacks.
 
 ### Web search/fetch issues
 
