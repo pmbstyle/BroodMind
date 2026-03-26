@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     webapp_enabled: bool = Field(False, alias="OCTOPAL_WEBAPP_ENABLED")
     webapp_dist_dir: Path | None = Field(default=None, alias="OCTOPAL_WEBAPP_DIST_DIR")
 
-    worker_launcher: str = Field("same_env", alias="OCTOPAL_WORKER_LAUNCHER")
+    worker_launcher: str = Field("docker", alias="OCTOPAL_WORKER_LAUNCHER")
     worker_docker_image: str = Field("octopal-worker:latest", alias="OCTOPAL_WORKER_DOCKER_IMAGE")
     worker_docker_workspace: str = Field("/workspace", alias="OCTOPAL_WORKER_DOCKER_WORKSPACE")
     worker_docker_host_workspace: str | None = Field(

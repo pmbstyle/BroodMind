@@ -57,7 +57,7 @@ class GatewayConfig(BaseModel):
 
 
 class WorkerRuntimeConfig(BaseModel):
-    launcher: str = "same_env"
+    launcher: str = "docker"
     docker_image: str = "octopal-worker:latest"
     docker_workspace: str = "/workspace"
     docker_host_workspace: str | None = None

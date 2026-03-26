@@ -28,6 +28,7 @@ from octopal.infrastructure.config.settings import (
     save_config,
 )
 from octopal.infrastructure.providers.catalog import get_provider_catalog_entry
+from octopal.runtime.workers.launcher_factory import detect_docker_cli
 
 console = Console()
 ACCENT = "#6aafae"
@@ -566,6 +567,24 @@ def _configure_dashboard(config: OctopalConfig, prompter) -> None:
 
 def _configure_runtime_advanced(config: OctopalConfig, prompter) -> None:
     _print_section_header("Advanced Runtime")
+    docker_ok, docker_detail = detect_docker_cli()
+
+    if docker_ok:
+        prompter.note(
+            "Worker Launcher",
+            [
+                "Docker workers are the recommended default for isolation.",
+                f"Docker detected: {docker_detail}",
+            ],
+        )
+    else:
+        prompter.note(
+            "Worker Launcher",
+            [
+                "Docker workers are the recommended default, but Docker CLI was not detected on this machine.",
+                "If you keep the docker launcher selected, Octopal will fall back to same_env until Docker is installed.",
+            ],
+        )
 
     config.log_level = prompter.select(
         WizardSelectParams(
@@ -584,8 +603,8 @@ def _configure_runtime_advanced(config: OctopalConfig, prompter) -> None:
             message="Worker launcher",
             initial_value=config.workers.launcher,
             options=[
-                WizardSelectOption(value="same_env", label="same_env", hint="Run workers in the current Python environment."),
                 WizardSelectOption(value="docker", label="docker", hint="Launch workers in Docker containers."),
+                WizardSelectOption(value="same_env", label="same_env", hint="Run workers in the current Python environment."),
             ],
         )
     )
