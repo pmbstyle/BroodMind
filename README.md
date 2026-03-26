@@ -219,6 +219,14 @@ Restart Octopal after config changes.
 
 If Docker CLI and the Docker daemon are available but the configured worker image is missing, Octopal will try to build it automatically on startup. If Docker is unavailable or the automatic build fails, Octopal will temporarily fall back to `same_env` and surface the reason in `octopal status` and the dashboard.
 
+## Optional: WhatsApp setup
+
+After you configure your WhatsApp number in the config link Octopal as a new device
+
+```bash
+uv run octopal whatapp link
+```
+
 
 ## ✨ Key Features
 
