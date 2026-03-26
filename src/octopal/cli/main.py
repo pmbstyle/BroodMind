@@ -39,6 +39,10 @@ from octopal.runtime.state import (
     read_status,
     write_start_status,
 )
+from octopal.runtime.workers.launcher_factory import (
+    ensure_worker_launcher_status,
+    get_worker_launcher_status,
+)
 from octopal.runtime.workers.templates import sync_default_templates
 from octopal.tools import get_tools, resolve_tool_diagnostics
 from octopal.tools.registry import ToolPolicy, ToolPolicyPipelineStep, ToolSpec
@@ -340,6 +344,12 @@ def start(
     _init_logging(settings)
     _ensure_webapp_built(settings)
     _maybe_enable_tailscale_serve(settings)
+    launcher_status = ensure_worker_launcher_status(settings)
+    if launcher_status.configured_launcher == "docker" and launcher_status.effective_launcher != "docker":
+        console.print(
+            "[bold yellow]Docker workers are configured, but this run will use same_env.[/bold yellow]"
+        )
+        console.print(f"   [dim]Reason:[/dim] {launcher_status.reason}")
 
     with console.status("[bold green]Initializing Octopal Octo...[/bold green]", spinner="dots"):
         write_start_status(settings)
@@ -603,6 +613,12 @@ def status() -> None:
     grid.add_row("Process ID", f"[bold]{pid}[/bold]" if pid else "[dim]N/A[/dim]")
     grid.add_row("Last Heartbeat", str(last_message) if last_message else "[dim]Never[/dim]")
     grid.add_row("Configuration", "[bright_green]Valid[/bright_green]" if config_ok else "[bright_red]Invalid[/bright_red]")
+    launcher_status = get_worker_launcher_status(settings)
+    launcher_value = f"[bold]{launcher_status.effective_launcher}[/bold]"
+    if launcher_status.configured_launcher != launcher_status.effective_launcher:
+        launcher_value += f" [dim](configured: {launcher_status.configured_launcher})[/dim]"
+    grid.add_row("Worker Launcher", launcher_value)
+    grid.add_row("Launcher Health", launcher_status.reason)
 
     metrics = read_metrics_snapshot(settings.state_dir)
     octo_metrics = metrics.get("octo", {}) if isinstance(metrics, dict) else {}
@@ -1661,6 +1677,7 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
     whatsapp_metrics = metrics.get("whatsapp", {}) if isinstance(metrics, dict) else {}
     exec_metrics = metrics.get("exec_run", {}) if isinstance(metrics, dict) else {}
     connectivity_metrics = metrics.get("connectivity", {}) if isinstance(metrics, dict) else {}
+    launcher_status = get_worker_launcher_status(settings)
 
     if store is None:
         store = SQLiteStore(settings)
@@ -1729,6 +1746,12 @@ def _build_dashboard_snapshot(settings: Settings, last: int, store: SQLiteStore 
             "started_at": status_data.get("started_at"),
             "last_heartbeat": status_data.get("last_message_at"),
             "uptime": _uptime_human(status_data.get("started_at")),
+            "worker_launcher": {
+                "configured": launcher_status.configured_launcher,
+                "effective": launcher_status.effective_launcher,
+                "available": launcher_status.available,
+                "reason": launcher_status.reason,
+            },
         },
         "octo": {
             "state": octo_state,
