@@ -22,6 +22,10 @@ from octopal.infrastructure.store.models import AuditEvent, WorkerRecord, Worker
 from octopal.infrastructure.store.sqlite import SQLiteStore
 from octopal.runtime.metrics import read_metrics_snapshot
 from octopal.runtime.state import is_pid_running, read_status
+from octopal.runtime.workers.launcher_factory import (
+    WorkerLauncherStatus,
+    get_worker_launcher_status,
+)
 
 _WINDOW_CHOICES = {15, 60, 240, 1440}
 _SERVICE_CHOICES = {"all", "gateway", "octo", "telegram", "whatsapp", "exec_run", "mcp", "workers"}
@@ -161,6 +165,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
     async def dashboard_settings(request: Request) -> dict[str, Any]:
         settings = _get_settings(app)
         _verify_dashboard_token(request, settings)
+        launcher_status = get_worker_launcher_status(settings)
         return {
             "gateway_host": settings.gateway_host,
             "gateway_port": settings.gateway_port,
@@ -169,6 +174,13 @@ def register_dashboard_routes(app: FastAPI) -> None:
             "log_level": settings.log_level,
             "tailscale_ips_configured": bool(settings.tailscale_ips.strip()),
             "dashboard_token_configured": bool(settings.dashboard_token.strip()),
+            "worker_launcher": {
+                "configured": launcher_status.configured_launcher,
+                "effective": launcher_status.effective_launcher,
+                "available": launcher_status.available,
+                "reason": launcher_status.reason,
+                "docker_image": settings.worker_docker_image,
+            },
         }
 
     @app.get("/api/dashboard/worker-templates")
@@ -1038,6 +1050,7 @@ def _build_snapshot(settings: Settings, store: SQLiteStore, last: int, filters: 
     whatsapp_metrics = metrics.get("whatsapp", {}) if isinstance(metrics, dict) else {}
     exec_metrics = metrics.get("exec_run", {}) if isinstance(metrics, dict) else {}
     connectivity_metrics = metrics.get("connectivity", {}) if isinstance(metrics, dict) else {}
+    launcher_status = get_worker_launcher_status(settings)
     active_channel = _resolve_active_channel(status_data, settings)
     active_channel_label = user_channel_label(active_channel)
     channel_metrics = _select_active_channel_metrics(
@@ -1085,6 +1098,7 @@ def _build_snapshot(settings: Settings, store: SQLiteStore, last: int, filters: 
         now=now,
         system_running=running,
         system_last_heartbeat=status_data.get("last_message_at"),
+        launcher_status=launcher_status,
         octo_metrics=octo_metrics,
         telegram_metrics=telegram_metrics,
         whatsapp_metrics=whatsapp_metrics,
@@ -1145,6 +1159,12 @@ def _build_snapshot(settings: Settings, store: SQLiteStore, last: int, filters: 
             "started_at": status_data.get("started_at"),
             "last_heartbeat": status_data.get("last_message_at"),
             "uptime": _uptime_human(status_data.get("started_at")),
+            "worker_launcher": {
+                "configured": launcher_status.configured_launcher,
+                "effective": launcher_status.effective_launcher,
+                "available": launcher_status.available,
+                "reason": launcher_status.reason,
+            },
         },
         "octo": {
             "state": octo_state,
@@ -1252,6 +1272,7 @@ def _build_service_health(
     now: datetime,
     system_running: bool,
     system_last_heartbeat: str | None,
+    launcher_status: WorkerLauncherStatus,
     octo_metrics: dict[str, Any],
     telegram_metrics: dict[str, Any],
     whatsapp_metrics: dict[str, Any],
@@ -1272,6 +1293,24 @@ def _build_service_health(
             "status": gateway_status,
             "reason": gateway_reason,
             "updated_at": system_last_heartbeat,
+        }
+    )
+
+    launcher_service_status = "ok" if launcher_status.effective_launcher == "docker" else "warning"
+    if launcher_status.configured_launcher != "docker":
+        launcher_service_status = "ok"
+    out.append(
+        {
+            "id": "worker-launcher",
+            "name": "Worker Launcher",
+            "status": launcher_service_status,
+            "reason": launcher_status.reason,
+            "updated_at": system_last_heartbeat,
+            "metrics": {
+                "configured": launcher_status.configured_launcher,
+                "effective": launcher_status.effective_launcher,
+                "available": launcher_status.available,
+            },
         }
     )
 

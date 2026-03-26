@@ -196,9 +196,9 @@ uv run octopal status
 uv run octopal logs --f
 ```
 
-## Optional: Docker Worker Launcher
+## Docker Worker Launcher
 
-Default runtime is non-Docker. If you want Dockerized workers:
+Docker workers are the default and recommended runtime. You can build the worker image up front:
 
 ```bash
 uv run octopal build-worker-image --tag octopal-worker:latest
@@ -217,6 +217,10 @@ Then set in `config.json`:
 
 Restart Octopal after config changes.
 
+If Docker CLI and the Docker daemon are available but the configured worker image is missing, Octopal will try to build it automatically on startup. If Docker is unavailable or the automatic build fails, Octopal will temporarily fall back to `same_env` and surface the reason in `octopal status` and the dashboard.
+
+Workers keep their own scratch workspace by default. To share files from Octo's main workspace with a worker, pass explicit `allowed_paths`; if `allowed_paths` is omitted, the worker does not get broad workspace access.
+
 ## Optional: WhatsApp setup
 
 After you configure your WhatsApp number in the config link Octopal as a new device
@@ -224,6 +228,7 @@ After you configure your WhatsApp number in the config link Octopal as a new dev
 ```bash
 uv run octopal whatapp link
 ```
+
 
 ## ✨ Key Features
 

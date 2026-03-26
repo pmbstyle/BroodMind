@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from octopal.gateway.app import build_app
@@ -103,7 +104,7 @@ def test_dashboard_v2_workers_exposes_worker_result_details(tmp_path) -> None:
     assert recent[0]["output"] == {"report": {"status": "ok", "items": 3}}
 
 
-def test_dashboard_v2_uses_whatsapp_metrics_for_active_channel(tmp_path) -> None:
+def test_dashboard_v2_uses_whatsapp_metrics_for_active_channel(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(
         TELEGRAM_BOT_TOKEN="123:abc",
         OCTOPAL_USER_CHANNEL="whatsapp",
@@ -140,6 +141,20 @@ def test_dashboard_v2_uses_whatsapp_metrics_for_active_channel(tmp_path) -> None
         encoding="utf-8",
     )
 
+    monkeypatch.setattr(
+        "octopal.gateway.dashboard.get_worker_launcher_status",
+        lambda _settings: type(
+            "_Status",
+            (),
+            {
+                "configured_launcher": "docker",
+                "effective_launcher": "docker",
+                "available": True,
+                "reason": "Docker worker runtime is ready.",
+            },
+        )(),
+    )
+
     app = build_app(settings)
     client = TestClient(app)
     headers = {"x-octopal-token": settings.dashboard_token} if settings.dashboard_token else {}
@@ -162,3 +177,46 @@ def test_dashboard_v2_uses_whatsapp_metrics_for_active_channel(tmp_path) -> None
     assert octo_payload["queues"]["channel_chat_mappings"] == 2
     assert octo_payload["queues"]["channel_queue_depth"] == 0
     assert octo_payload["queues"]["channel_send_tasks"] is None
+
+
+def test_dashboard_system_and_settings_include_worker_launcher_health(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        TELEGRAM_BOT_TOKEN="123:abc",
+        OCTOPAL_STATE_DIR=tmp_path / "state",
+        OCTOPAL_WORKSPACE_DIR=tmp_path / "workspace",
+        OCTOPAL_WORKER_LAUNCHER="docker",
+        OCTOPAL_WORKER_DOCKER_IMAGE="octopal-worker:latest",
+    )
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    write_start_status(settings)
+
+    monkeypatch.setattr(
+        "octopal.gateway.dashboard.get_worker_launcher_status",
+        lambda _settings: type(
+            "_Status",
+            (),
+            {
+                "configured_launcher": "docker",
+                "effective_launcher": "same_env",
+                "available": False,
+                "reason": "Docker image 'octopal-worker:latest' is not available.",
+            },
+        )(),
+    )
+
+    app = build_app(settings)
+    client = TestClient(app)
+    headers = {"x-octopal-token": settings.dashboard_token} if settings.dashboard_token else {}
+
+    system_resp = client.get("/api/dashboard/v2/system", headers=headers)
+    assert system_resp.status_code == 200
+    system_payload = system_resp.json()
+    assert system_payload["system"]["worker_launcher"]["configured"] == "docker"
+    assert system_payload["system"]["worker_launcher"]["effective"] == "same_env"
+    assert system_payload["system"]["worker_launcher"]["available"] is False
+
+    settings_resp = client.get("/api/dashboard/settings", headers=headers)
+    assert settings_resp.status_code == 200
+    settings_payload = settings_resp.json()
+    assert settings_payload["worker_launcher"]["configured"] == "docker"
+    assert settings_payload["worker_launcher"]["effective"] == "same_env"
