@@ -78,6 +78,7 @@ irm https://octopal.ca/octopal.ps1 | iex
   WhatsApp Web linking via QR
 - Bring your own LLM API key:
   OpenRouter, OpenAI, Anthropic, Google Gemini, Mistral AI, Together AI, Groq, Z.ai, Custom OpenAI-compatible, Ollama
+- [Tailscale](https://tailscale.com/) (optional) if you want to access the dashboard remotely or connect via Websocket client
 
 Install `uv` if needed:
 
@@ -119,7 +120,7 @@ After bootstrap, start Octopal and then open the dashboard in your browser:
 uv run octopal start
 ```
 
-Open [http://127.0.0.1:8001/dashboard](http://127.0.0.1:8001/dashboard) (change IP to your instance)
+Open [http://127.0.0.1:8001/dashboard](http://127.0.0.1:8001/dashboard) (change to Tailscale IP for remote access)
 
 If you enabled dashboard protection during `octopal configure`, use the `gateway.dashboard_token` value from `config.json` when the dashboard or dashboard API asks for it.
 
@@ -187,22 +188,14 @@ uv run octopal start
 uv run octopal start --foreground
 ```
 
-### 6. Check Health
-
-```bash
-uv run octopal status
-uv run octopal logs --follow
-```
-
 ## Core Commands
 
 ```bash
-# lifecycle
 uv run octopal start
 uv run octopal stop
 uv run octopal restart
 uv run octopal status
-uv run octopal logs --follow
+uv run octopal logs --f
 ```
 
 ## Optional: Docker Worker Launcher
@@ -222,13 +215,6 @@ Then set in `config.json`:
     "docker_image": "octopal-worker:latest"
   }
 }
-```
-
-Legacy `.env` values still work if you need them:
-
-```env
-OCTOPAL_WORKER_LAUNCHER=docker
-OCTOPAL_WORKER_DOCKER_IMAGE=octopal-worker:latest
 ```
 
 Restart Octopal after config changes.
@@ -290,7 +276,7 @@ Communication channels, by default, provide full support of functions like:
 - text communication
 - image attachments
 - message reactions
-- 5s grace window for user messages.
+- 5s grace window for user messages:
 
   You can send a followback message before the Octo executes it - this helps to prevent typos, wrong commands, etc.
 
@@ -318,8 +304,6 @@ Octopal features first-class integration with **Tailscale** to provide secure re
   }
 }
 ```
-
-It gracefully degrades if Tailscale is not present or if `tailscale_auto_serve` is set to `false`.
 
 ### 🧩 Skills and skill bundles
 
@@ -363,6 +347,12 @@ See [docs/skills.md](docs/skills.md) for the current format and behavior.
 
 ### Web search/fetch issues
 
-- Add `BRAVE_API_KEY` for `web_search`
-- Add `FIRECRAWL_API_KEY` for richer page extraction
+Add the preferred search engine API key in your `config.json`
+
+```json
+"search": {
+    "brave_api_key": null,
+    "firecrawl_api_key": null
+},
+```
 
