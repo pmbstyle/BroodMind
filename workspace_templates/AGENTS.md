@@ -50,17 +50,19 @@ This ensures:
 5. On worker failure, capture cause and mitigation in memory/canon when relevant
 6. NEVER delegate LOCAL operations to workers — do them directly
 7. Prefer to create one worker for one specific task or interaction with a specific service. Do not duplicate functionality, do not duplicate workers, change them if needed.
-8. Workers may use `fs_read` and `fs_write`, but only inside their own temporary worker workspace.
-9. Workers cannot directly read from or write to the Octo workspace. Do not rely on worker filesystem access to shared workspace files.
-10. If work depends on a local file from the Octo workspace, the Octo must read it first and pass the relevant content in worker inputs.
-11. If a worker produces file updates that should be saved in the Octo workspace, the Octo must verify the result and write those updates herself.
-12. Do not ask a worker to save important final artifacts unless the full content is also returned in the worker response.
-13. Workers are the default path for external work. A worker failure is a debugging signal, not permission for the Octo to immediately take over the network task.
-14. If a worker stumbles, first inspect worker fit, tools, permissions, inputs, and upstream health. Only consider Octo-side external fallback when there is no viable worker path and waiting would be worse than the risk.
-15. Treat worker template defaults as the baseline. Do not pass `timeout_seconds` unless there is a concrete task-specific reason.
-16. For scheduled or network-heavy work, do not reduce `timeout_seconds` below the worker template default just to be conservative.
-17. If one external task splits into several independent external substeps, prefer a worker that can spawn child workers or launch a bounded parallel batch rather than having the Octo orchestrate every small external action directly.
-18. Use subworkers only for independent subtasks with clear boundaries. Avoid duplicative fan-out and unnecessary recursion.
+8. Workers may use `fs_read` and `fs_write` inside their own temporary worker workspace.
+9. Workers do not automatically get access to the Octo main workspace. If a worker needs specific workspace files, pass the smallest necessary `allowed_paths`.
+10. Use `allowed_paths` only for the exact files or directories a worker must inspect or modify. Prefer narrow paths over broad directories.
+11. If only a small part of a local file is needed, the Octo should usually read it first and pass the relevant content in worker inputs instead of sharing a broader path.
+12. If a worker produces changes that affect shared workspace files, the Octo must verify those changes before treating the task as complete.
+13. Do not rely on omitting `allowed_paths` to grant workspace access. No shared workspace access should be assumed unless it is passed explicitly.
+14. Do not ask a worker to save important final artifacts unless the full content is also returned in the worker response.
+15. Workers are the default path for external work. A worker failure is a debugging signal, not permission for the Octo to immediately take over the network task.
+16. If a worker stumbles, first inspect worker fit, tools, permissions, inputs, and upstream health. Only consider Octo-side external fallback when there is no viable worker path and waiting would be worse than the risk.
+17. Treat worker template defaults as the baseline. Do not pass `timeout_seconds` unless there is a concrete task-specific reason.
+18. For scheduled or network-heavy work, do not reduce `timeout_seconds` below the worker template default just to be conservative.
+19. If one external task splits into several independent external substeps, prefer a worker that can spawn child workers or launch a bounded parallel batch rather than having the Octo orchestrate every small external action directly.
+20. Use subworkers only for independent subtasks with clear boundaries. Avoid duplicative fan-out and unnecessary recursion.
 
 ## Runtime Memory
 
