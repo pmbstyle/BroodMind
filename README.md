@@ -217,6 +217,13 @@ Then set in `config.json`:
 
 Restart Octopal after config changes.
 
+## Optional: WhatsApp setup
+
+After you configure your WhatsApp number in the config link Octopal as a new device
+
+```bash
+uv run octopal whatapp link
+```
 
 ## ✨ Key Features
 
