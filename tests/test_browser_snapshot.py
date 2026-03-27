@@ -18,8 +18,9 @@ class _PageWithoutAriaSnapshot:
         return """
         <html>
           <body>
-            <button aria-label="Save">Save</button>
-            <a title="Docs" href="/docs">Docs</a>
+            <button class="primary">Save</button>
+            <a href="/docs">Docs</a>
+            <input type="search" placeholder="Search docs" />
             <p>Hello from fallback snapshot mode.</p>
           </body>
         </html>
@@ -90,6 +91,8 @@ def test_capture_aria_snapshot_falls_back_when_page_lacks_aria_snapshot() -> Non
 
     assert 'button "Save" [ref=e1]' in result["snapshot"]
     assert 'link "Docs" [ref=e2]' in result["snapshot"]
+    assert 'searchbox "Search docs" [ref=e3]' in result["snapshot"]
     assert "Hello from fallback snapshot mode." in result["snapshot"]
     assert result["refs"]["e1"] == {"role": "button", "name": "Save", "nth": 0}
     assert result["refs"]["e2"] == {"role": "link", "name": "Docs", "nth": 0}
+    assert result["refs"]["e3"] == {"role": "searchbox", "name": "Search docs", "nth": 0}

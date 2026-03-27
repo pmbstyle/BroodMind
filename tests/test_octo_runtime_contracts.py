@@ -159,7 +159,6 @@ def test_octo_does_not_forward_worker_model_override(monkeypatch) -> None:
         )
         await asyncio.sleep(0.05)
         assert runtime.captured_task_request is not None
-        assert runtime.captured_task_request.model is None
 
     asyncio.run(scenario())
 

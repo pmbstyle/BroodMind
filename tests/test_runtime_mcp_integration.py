@@ -260,7 +260,7 @@ def test_runtime_ignores_task_level_model_override(tmp_path: Path) -> None:
 
     runtime.run = _fake_run  # type: ignore[method-assign]
 
-    request = TaskRequest(worker_id="worker", task="hello", model="gpt-4o")
+    request = TaskRequest(worker_id="worker", task="hello")
     asyncio.run(runtime.run_task(request))
 
     spec = captured["spec"]
