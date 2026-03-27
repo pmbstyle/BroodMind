@@ -148,7 +148,7 @@ class WorkerRuntime:
             system_prompt=template.system_prompt,
             available_tools=requested_tool_names,
             mcp_tools=mcp_tools_data,
-            model=task_request.model or template.model,
+            model=template.model,
             llm_config=llm_config,
             granted_capabilities=[c.model_dump() for c in granted],
             timeout_seconds=task_request.timeout_seconds or template.default_timeout_seconds,
@@ -196,11 +196,10 @@ class WorkerRuntime:
         # Create a copy to avoid modifying the original config
         resolved = worker_config.model_copy()
 
-        # 4. Apply TaskRequest/Template model override if provided
-        # This is strictly a model name override, keeping other provider settings.
-        model_override = task_request.model or template.model
-        if model_override:
-            resolved.model = model_override
+        # 4. Apply worker template model override if provided.
+        # Per-task worker model overrides from Octo are intentionally ignored.
+        if template.model:
+            resolved.model = template.model
 
         return resolved
 

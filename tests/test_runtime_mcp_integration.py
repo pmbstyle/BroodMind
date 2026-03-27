@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
+from octopal.infrastructure.config.models import LLMConfig, OctopalConfig
 from octopal.infrastructure.config.settings import Settings
 from octopal.infrastructure.store.models import WorkerTemplateRecord
 from octopal.runtime.workers.contracts import Capability, TaskRequest, WorkerResult
@@ -212,3 +213,56 @@ def test_runtime_launch_env_includes_workspace_dir(tmp_path: Path) -> None:
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["OCTOPAL_WORKSPACE_DIR"] == str(runtime.workspace_dir.resolve())
+
+
+def test_runtime_ignores_task_level_model_override(tmp_path: Path) -> None:
+    template = WorkerTemplateRecord(
+        id="worker",
+        name="Worker",
+        description="Test worker",
+        system_prompt="Do work",
+        available_tools=["fs_read"],
+        required_permissions=["network"],
+        model=None,
+        max_thinking_steps=3,
+        default_timeout_seconds=30,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    class _Store:
+        def get_worker_template(self, worker_id: str):
+            return template
+
+    class _Policy:
+        def grant_capabilities(self, capabilities):
+            return [Capability(type="network", scope="worker")]
+
+    settings = Settings(
+        config_obj=OctopalConfig(
+            llm=LLMConfig(provider_id="zai", model="glm-5"),
+            worker_llm_default=LLMConfig(provider_id="openrouter", model="anthropic/claude-sonnet-4"),
+        )
+    )
+    runtime = WorkerRuntime(
+        store=_Store(),
+        policy=_Policy(),
+        workspace_dir=tmp_path,
+        launcher=object(),
+        settings=settings,
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _fake_run(spec, approval_requester=None):
+        captured["spec"] = spec
+        return WorkerResult(summary="ok")
+
+    runtime.run = _fake_run  # type: ignore[method-assign]
+
+    request = TaskRequest(worker_id="worker", task="hello", model="gpt-4o")
+    asyncio.run(runtime.run_task(request))
+
+    spec = captured["spec"]
+    assert spec.model is None
+    assert spec.llm_config.model == "anthropic/claude-sonnet-4"

@@ -1785,7 +1785,6 @@ class Octo:
                 task=task,
                 inputs=inputs or {},
                 tools=tools,
-                model=model,
                 timeout_seconds=resolved_timeout_seconds,
                 run_id=run_id,
                 correlation_id=correlation_id,
