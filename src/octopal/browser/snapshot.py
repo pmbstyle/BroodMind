@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from typing import TypedDict
 
 import structlog
@@ -27,10 +28,127 @@ def _get_indent_level(line: str) -> int:
     match = re.match(r"^(\s*)", line)
     return len(match.group(1)) // 2 if match else 0
 
+
+class _FallbackSnapshotParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.refs: dict[str, ElementRef] = {}
+        self.lines: list[str] = []
+        self._ref_counter = 1
+        self._text_parts: list[str] = []
+        self._stack: list[dict[str, str | None]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_map = {key.lower(): value for key, value in attrs}
+        normalized_role = self._normalized_role(tag, attrs_map)
+        label = self._preferred_label(tag, attrs_map)
+        entry = {"tag": tag.lower(), "role": normalized_role, "label": label, "text": ""}
+        self._stack.append(entry)
+
+        if normalized_role is None or label:
+            return
+        if entry["tag"] in {"input", "textarea", "select"}:
+            self._record_ref(normalized_role, label)
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._stack:
+            return
+        entry = self._stack.pop()
+        if str(entry.get("tag")) != tag.lower():
+            return
+
+        role = entry.get("role")
+        if role is None:
+            return
+
+        label = str(entry.get("label") or "").strip()
+        if not label:
+            label = str(entry.get("text") or "").strip() or None
+        self._record_ref(str(role), label)
+
+    def handle_data(self, data: str) -> None:
+        text = re.sub(r"\s+", " ", data).strip()
+        if not text:
+            return
+        self._text_parts.append(text)
+        for entry in self._stack:
+            existing = str(entry.get("text") or "").strip()
+            entry["text"] = f"{existing} {text}".strip() if existing else text
+
+    def snapshot_result(self) -> SnapshotResult:
+        text = " ".join(self._text_parts).strip()
+        if text:
+            preview = text[:400]
+            suffix = "..." if len(text) > 400 else ""
+            self.lines.append(f"Text: {preview}{suffix}")
+
+        if not self.lines:
+            self.lines.append("Page snapshot unavailable")
+
+        return {"snapshot": "\n".join(self.lines), "refs": self.refs}
+
+    def _record_ref(self, role: str, name: str | None) -> None:
+        ref_id = f"e{self._ref_counter}"
+        clean_name = name.strip() if isinstance(name, str) else None
+        self.refs[ref_id] = {"role": role, "name": clean_name or None, "nth": 0}
+        if clean_name:
+            self.lines.append(f'- {role} "{clean_name}" [ref={ref_id}]')
+        else:
+            self.lines.append(f"- {role} [ref={ref_id}]")
+        self._ref_counter += 1
+
+    @staticmethod
+    def _normalized_role(tag: str, attrs: dict[str, str | None]) -> str | None:
+        tag = tag.lower()
+        if tag == "a":
+            return "link"
+        if tag == "button":
+            return "button"
+        if tag == "textarea":
+            return "textbox"
+        if tag == "select":
+            return "combobox"
+        if tag == "input":
+            input_type = str(attrs.get("type") or "text").lower()
+            return {
+                "button": "button",
+                "submit": "button",
+                "reset": "button",
+                "checkbox": "checkbox",
+                "radio": "radio",
+                "search": "searchbox",
+                "range": "slider",
+                "number": "spinbutton",
+            }.get(input_type, "textbox")
+        return None
+
+    @staticmethod
+    def _preferred_label(tag: str, attrs: dict[str, str | None]) -> str | None:
+        for key in ("aria-label", "title", "value", "placeholder", "alt", "name"):
+            value = attrs.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if tag.lower() == "a":
+            return None
+        return None
+
+
+def _fallback_snapshot_from_html(html: str) -> SnapshotResult:
+    parser = _FallbackSnapshotParser()
+    parser.feed(re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", html))
+    parser.close()
+    return parser.snapshot_result()
+
 async def capture_aria_snapshot(page: Page) -> SnapshotResult:
     """Capture an ARIA snapshot and inject stable references."""
+    if hasattr(page, "aria_snapshot"):
+        raw_snapshot = await page.aria_snapshot()
+    else:
+        logger.info("Page aria_snapshot unavailable; falling back to DOM-based snapshot")
+        html = await page.content()
+        return _fallback_snapshot_from_html(html)
+
     # Playwright's aria_snapshot returns a YAML-like string
-    raw_snapshot = await page.aria_snapshot()
     lines = raw_snapshot.splitlines()
 
     result_lines = []

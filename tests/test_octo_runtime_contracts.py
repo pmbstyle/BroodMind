@@ -98,6 +98,71 @@ def test_octo_passes_approval_requester_to_runtime(monkeypatch) -> None:
     asyncio.run(scenario())
 
 
+def test_octo_does_not_forward_worker_model_override(monkeypatch) -> None:
+    class DummyRuntime:
+        def __init__(self) -> None:
+            self.captured_task_request = None
+
+        async def run_task(self, task_request, approval_requester=None):
+            self.captured_task_request = task_request
+            return WorkerResult(summary="ok")
+
+    class DummyApprovals:
+        bot = None
+
+    class DummyMemory:
+        async def add_message(self, role: str, text: str, metadata: dict):
+            return None
+
+    async def fake_bootstrap_context(store, chat_id: int):
+        from octopal.runtime.octo.prompt_builder import BootstrapContext
+
+        return BootstrapContext(content="", hash="", files=[])
+
+    async def fake_route_or_reply(
+        octo,
+        provider,
+        memory,
+        user_text: str,
+        chat_id: int,
+        bootstrap_context: str,
+        show_typing: bool = True,
+        saved_file_paths=None,
+    ):
+        return "ok"
+
+    import octopal.runtime.octo.core as octo_core
+
+    monkeypatch.setattr(octo_core, "build_bootstrap_context_prompt", fake_bootstrap_context)
+    monkeypatch.setattr(octo_core, "route_or_reply", fake_route_or_reply)
+
+    runtime = DummyRuntime()
+    octo = Octo(
+        provider=object(),
+        store=object(),
+        policy=object(),
+        runtime=runtime,
+        approvals=DummyApprovals(),
+        memory=DummyMemory(),
+        canon=object(),
+    )
+
+    async def scenario() -> None:
+        await octo._start_worker_async(
+            worker_id="coder",
+            task="do thing",
+            chat_id=123,
+            inputs={},
+            tools=None,
+            model="gpt-4o",
+            timeout_seconds=5,
+        )
+        await asyncio.sleep(0.05)
+        assert runtime.captured_task_request is not None
+
+    asyncio.run(scenario())
+
+
 def test_octo_handle_message_preserves_react_tag_for_channels(monkeypatch) -> None:
     class DummyApprovals:
         bot = None

@@ -83,10 +83,6 @@ def get_worker_tools() -> list[ToolSpec]:
                         "items": {"type": "string"},
                         "description": "Override default tools for this task (optional).",
                     },
-                    "model": {
-                        "type": "string",
-                        "description": "Override model for this task (optional, e.g., 'gpt-4o', 'anthropic/claude-3-opus').",
-                    },
                     "timeout_seconds": {
                         "type": "number",
                         "description": "Override default timeout (optional).",
@@ -149,10 +145,6 @@ def get_worker_tools() -> list[ToolSpec]:
                         "items": {"type": "string"},
                         "description": "Override default tools for this task (optional).",
                     },
-                    "model": {
-                        "type": "string",
-                        "description": "Override model for this task (optional).",
-                    },
                     "timeout_seconds": {
                         "type": "number",
                         "description": "Override default timeout (optional).",
@@ -197,7 +189,7 @@ def get_worker_tools() -> list[ToolSpec]:
                 "properties": {
                     "tasks": {
                         "type": "array",
-                        "description": "List of tasks to launch. Each item may include worker_id, task, inputs, tools, model, timeout_seconds, required_tools, required_permissions.",
+                        "description": "List of tasks to launch. Each item may include worker_id, task, inputs, tools, timeout_seconds, required_tools, required_permissions.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -205,7 +197,6 @@ def get_worker_tools() -> list[ToolSpec]:
                                 "task": {"type": "string"},
                                 "inputs": {"type": "object", "additionalProperties": True},
                                 "tools": {"type": "array", "items": {"type": "string"}},
-                                "model": {"type": "string"},
                                 "timeout_seconds": {"type": "number"},
                                 "required_tools": {"type": "array", "items": {"type": "string"}},
                                 "required_permissions": {"type": "array", "items": {"type": "string"}},
@@ -746,7 +737,6 @@ async def _start_worker_common(
     tools = args.get("tools") if isinstance(args.get("tools"), list) else None
     required_tools = _normalize_str_list(args.get("required_tools"))
     required_permissions = _normalize_str_list(args.get("required_permissions"))
-    model = str(args.get("model", "")).strip() or None
     timeout_seconds = int(args.get("timeout_seconds")) if args.get("timeout_seconds") else None
     scheduled_task_id = str(args.get("scheduled_task_id", "")).strip() or None
 
@@ -785,7 +775,7 @@ async def _start_worker_common(
         chat_id=chat_id,
         inputs=inputs,
         tools=tools,
-        model=model,
+        model=None,
         timeout_seconds=timeout_seconds,
         scheduled_task_id=scheduled_task_id,
         parent_worker_id=child_ctx["run_id"] if child_ctx else None,
@@ -852,7 +842,6 @@ async def _tool_start_workers_parallel(args: dict[str, object], ctx: dict[str, o
         worker_id = str(item.get("worker_id", "")).strip()
         inputs = item.get("inputs") if isinstance(item.get("inputs"), dict) else {}
         tools = item.get("tools") if isinstance(item.get("tools"), list) else None
-        model = str(item.get("model", "")).strip() or None
         timeout_seconds = int(item.get("timeout_seconds")) if item.get("timeout_seconds") else None
         required_tools = _normalize_str_list(item.get("required_tools"))
         required_permissions = _normalize_str_list(item.get("required_permissions"))
@@ -885,7 +874,7 @@ async def _tool_start_workers_parallel(args: dict[str, object], ctx: dict[str, o
                 chat_id=chat_id,
                 inputs=inputs,
                 tools=tools,
-                model=model,
+                model=None,
                 timeout_seconds=timeout_seconds,
                 scheduled_task_id=None,
                 parent_worker_id=child_ctx["run_id"] if child_ctx else None,

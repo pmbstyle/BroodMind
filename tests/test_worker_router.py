@@ -92,3 +92,46 @@ def test_start_worker_auto_routes_and_returns_router_metadata() -> None:
     assert result["router_used"] is True
     assert result["worker_template_id"] == "web_researcher"
     assert isinstance(result["router_reason"], str) and result["router_reason"]
+
+
+def test_start_worker_passes_null_model_to_runtime() -> None:
+    templates = [
+        _template("coder", "Coder", "Handles code refactors and bugfixes", ["fs_read"], ["filesystem_read"]),
+    ]
+
+    class _Store:
+        def list_worker_templates(self):
+            return templates
+
+        def get_worker_template(self, worker_id: str):
+            for t in templates:
+                if t.id == worker_id:
+                    return t
+            return None
+
+    class _Octo:
+        def __init__(self) -> None:
+            self.store = _Store()
+            self.captured = None
+
+        async def _start_worker_async(self, **kwargs):
+            self.captured = kwargs
+            return {"status": "started", "worker_id": "run-1", "run_id": "run-1", **kwargs}
+
+    octo = _Octo()
+
+    async def _scenario() -> dict:
+        payload = await _tool_start_worker(
+            {
+                "task": "Fix parser bug",
+                "worker_id": "coder",
+                "model": "gpt-4o",
+            },
+            {"octo": octo, "chat_id": 123},
+        )
+        return json.loads(payload)
+
+    result = asyncio.run(_scenario())
+    assert result["worker_template_id"] == "coder"
+    assert octo.captured is not None
+    assert octo.captured["model"] is None
