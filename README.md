@@ -10,15 +10,6 @@ Octopal is a local AI runtime that executes autonomous agents in isolated enviro
 
 It acts as a persistent operator that plans work, spawns specialized workers, and runs tasks on your behalf — without exposing your system to risk.
 
-Running AI agents without isolation is unsafe.  
-Octopal fixes this by design.
-
-- Workers run in ephemeral Docker containers by default  
-- No access to your system or workspace unless explicitly granted  
-- Filesystem access is restricted via allowlisted paths  
-- Secrets and environment variables are never exposed  
-- Every execution is sandboxed and disposable  
-
 The **Octo** is the long-running coordinator: it holds memory, plans work, chooses tools, and delegates execution.  
 **Workers** are short-lived specialists with bounded context, strict permissions, and isolated execution.
 
