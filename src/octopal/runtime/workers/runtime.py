@@ -878,23 +878,15 @@ class WorkerRuntime:
             await proc.wait()
             return
 
-        if _is_process_group_leader(process.pid):
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-        else:
-            with contextlib.suppress(ProcessLookupError):
-                process.terminate()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
         try:
             await asyncio.wait_for(process.wait(), timeout=2)
             return
         except Exception:
             pass
-        if _is_process_group_leader(process.pid):
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-        else:
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
 
     def _log_non_json_output(self, text: str) -> None:
         """Log non-JSON output from worker intelligently."""
@@ -1111,18 +1103,6 @@ def _classify_recoverable_error(exc: Exception) -> tuple[bool, str]:
     if "connection reset" in lowered or "temporarily unavailable" in lowered:
         return True, "transient_io"
     return False, "non_recoverable"
-
-
-def _is_process_group_leader(pid: int) -> bool:
-    if pid <= 0 or os.name == "nt":
-        return False
-    try:
-        return os.getpgid(pid) == pid
-    except ProcessLookupError:
-        return False
-    except Exception:
-        logger.debug("Failed to inspect process group leadership", pid=pid, exc_info=True)
-        return False
 
 
 def _sanitize_task_text(text: str, *, limit: int) -> str:

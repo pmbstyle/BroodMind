@@ -86,38 +86,3 @@ def test_cleanup_background_sessions_terminates_and_clears_registry(monkeypatch)
     assert proc.stdout.closed is True
     assert proc.stderr.closed is True
     assert exec_run_tools._PROCESS_REGISTRY == original_registry
-
-
-def test_terminate_session_process_falls_back_to_single_process_when_not_group_leader(monkeypatch) -> None:
-    class _Proc:
-        def __init__(self) -> None:
-            self.pid = 2345
-            self.terminate_calls = 0
-            self.kill_calls = 0
-            self.wait_calls = 0
-
-        def poll(self):
-            return None
-
-        def terminate(self) -> None:
-            self.terminate_calls += 1
-
-        def kill(self) -> None:
-            self.kill_calls += 1
-
-        def wait(self, timeout: int = 0):
-            self.wait_calls += 1
-            return 0
-
-    proc = _Proc()
-    killpg_calls: list[tuple[int, int]] = []
-
-    monkeypatch.setattr(exec_run_tools.os, "name", "posix")
-    monkeypatch.setattr(exec_run_tools.os, "getpgid", lambda _pid: 999, raising=False)
-    monkeypatch.setattr(exec_run_tools.os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)), raising=False)
-
-    exec_run_tools._terminate_session_process({"process": proc})
-
-    assert killpg_calls == []
-    assert proc.terminate_calls == 1
-    assert proc.wait_calls >= 1

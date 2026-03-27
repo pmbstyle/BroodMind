@@ -309,23 +309,15 @@ def _terminate_session_process(session: dict[str, Any]) -> None:
             proc.wait(timeout=2)
         return
 
-    if _is_process_group_leader(proc.pid):
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGTERM)
-    else:
-        with contextlib.suppress(Exception):
-            proc.terminate()
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
     try:
         proc.wait(timeout=2)
         return
     except subprocess.TimeoutExpired:
         pass
-    if _is_process_group_leader(proc.pid):
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-    else:
-        with contextlib.suppress(Exception):
-            proc.kill()
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=2)
 
@@ -340,14 +332,3 @@ def _close_session_pipes(session: dict[str, Any]) -> None:
             continue
         with contextlib.suppress(Exception):
             pipe.close()
-
-
-def _is_process_group_leader(pid: int) -> bool:
-    if pid <= 0 or os.name == "nt":
-        return False
-    try:
-        return os.getpgid(pid) == pid
-    except ProcessLookupError:
-        return False
-    except Exception:
-        return False
