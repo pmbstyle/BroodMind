@@ -13,6 +13,19 @@ class _PageStub:
         return self._snapshot
 
 
+class _PageWithoutAriaSnapshot:
+    async def content(self) -> str:
+        return """
+        <html>
+          <body>
+            <button aria-label="Save">Save</button>
+            <a title="Docs" href="/docs">Docs</a>
+            <p>Hello from fallback snapshot mode.</p>
+          </body>
+        </html>
+        """
+
+
 def test_get_indent_level_counts_two_space_steps() -> None:
     assert _get_indent_level("") == 0
     assert _get_indent_level("  - button") == 1
@@ -70,3 +83,13 @@ def test_capture_aria_snapshot_preserves_unmatched_lines() -> None:
     assert result["refs"] == {
         "e1": {"role": "link", "name": "Docs", "nth": 0},
     }
+
+
+def test_capture_aria_snapshot_falls_back_when_page_lacks_aria_snapshot() -> None:
+    result = asyncio.run(capture_aria_snapshot(_PageWithoutAriaSnapshot()))
+
+    assert 'button "Save" [ref=e1]' in result["snapshot"]
+    assert 'link "Docs" [ref=e2]' in result["snapshot"]
+    assert "Hello from fallback snapshot mode." in result["snapshot"]
+    assert result["refs"]["e1"] == {"role": "button", "name": "Save", "nth": 0}
+    assert result["refs"]["e2"] == {"role": "link", "name": "Docs", "nth": 0}
