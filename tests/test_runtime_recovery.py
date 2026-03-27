@@ -9,6 +9,7 @@ from octopal.runtime.workers.runtime import (
     WorkerRuntime,
     _classify_recoverable_error,
     _classify_worker_text_log_level,
+    _is_process_group_leader,
     _sanitize_task_text,
 )
 
@@ -47,9 +48,16 @@ class _FakeProcess:
         self.stdin = None
         self.stdout = None
         self.wait_calls = 0
+        self.terminate_calls = 0
+        self.kill_calls = 0
 
     def kill(self) -> None:
+        self.kill_calls += 1
         self.returncode = -9
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        self.returncode = -15
 
     async def wait(self) -> int:
         self.wait_calls += 1
@@ -402,3 +410,38 @@ def test_wait_for_worker_exit_terminates_stuck_process(tmp_path: Path) -> None:
     asyncio.run(runtime._wait_for_worker_exit("w1", process))
 
     assert terminated == [456]
+
+
+def test_is_process_group_leader_handles_lookup_failures(monkeypatch) -> None:
+    import octopal.runtime.workers.runtime as runtime_mod
+
+    def _raise(_pid: int) -> int:
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(runtime_mod.os, "getpgid", _raise, raising=False)
+
+    assert _is_process_group_leader(123) is False
+
+
+def test_terminate_process_tree_falls_back_to_single_process_when_not_group_leader(tmp_path: Path, monkeypatch) -> None:
+    import octopal.runtime.workers.runtime as runtime_mod
+
+    runtime = WorkerRuntime(
+        store=_StoreStub(),
+        policy=_PolicyStub(),
+        workspace_dir=tmp_path,
+        launcher=_LauncherStub(),
+        mcp_manager=None,
+        settings=Settings(),
+    )
+    process = _FakeProcess(pid=789)
+    killpg_calls: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(runtime_mod.os, "name", "posix")
+    monkeypatch.setattr(runtime_mod.os, "getpgid", lambda _pid: 999, raising=False)
+    monkeypatch.setattr(runtime_mod.os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)), raising=False)
+
+    asyncio.run(runtime._terminate_process_tree(process))
+
+    assert killpg_calls == []
+    assert process.terminate_calls == 1
