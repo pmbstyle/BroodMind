@@ -80,6 +80,9 @@ class DockerLauncher:
         host_worker_dir = Path(cwd).resolve()
         container_worker_dir = f"{container_ws}/workers/{worker_id}"
         cmd_args.extend(["-v", f"{host_worker_dir}:{container_worker_dir}"])
+        container_env = _filter_container_env(env, worker_workspace=container_worker_dir)
+        for key, value in container_env.items():
+            cmd_args.extend(["-e", f"{key}={value}"])
 
         host_ws_path = Path(self.host_workspace).resolve()
         seen_mounts: set[tuple[str, str]] = set()
@@ -127,13 +130,15 @@ class DockerLauncher:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=_filter_env(env, worker_workspace=container_worker_dir),
+            env=os.environ.copy(),
             **popen_kwargs,
         )
 
 
-def _filter_env(env: dict[str, str], *, worker_workspace: str | None = None) -> dict[str, str]:
-    # Docker env must be explicit; keep only a safe subset.
+def _filter_container_env(
+    env: dict[str, str], *, worker_workspace: str | None = None
+) -> dict[str, str]:
+    # Container env must be explicit; keep only a safe subset.
     allowed = {"PYTHONPATH", "OCTOPAL_WORKSPACE_DIR"}
     filtered = {key: value for key, value in env.items() if key in allowed}
     if worker_workspace:

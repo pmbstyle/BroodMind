@@ -42,9 +42,12 @@ def test_docker_launcher_mounts_only_worker_dir_when_allowed_paths_missing(
     assert "1000:1000" in args
     assert f"{worker_dir}:/workspace/workers/worker-1" in args
     assert f"{workspace / 'skills'}:/workspace/workers/worker-1/skills" in args
+    assert "-e" in args
+    assert "OCTOPAL_WORKSPACE_DIR=/workspace/workers/worker-1" in args
+    assert "PYTHONPATH=src" in args
     assert f"{workspace}:/workspace" not in args
-    assert "SECRET" not in captured["kwargs"]["env"]
-    assert captured["kwargs"]["env"]["OCTOPAL_WORKSPACE_DIR"] == "/workspace/workers/worker-1"
+    assert "SECRET" not in args
+    assert "PATH" in captured["kwargs"]["env"]
 
 
 def test_docker_launcher_mounts_worker_dir_and_shared_paths_when_restricted(
@@ -84,5 +87,5 @@ def test_docker_launcher_mounts_worker_dir_and_shared_paths_when_restricted(
     assert f"{workspace / 'skills'}:/workspace/workers/worker-1/skills" in args
     assert f"{shared_dir}:/workspace/src" in args
     assert f"{shared_dir}:/workspace/workers/worker-1/src" in args
-    assert captured["kwargs"]["env"]["OCTOPAL_WORKSPACE_DIR"] == "/workspace/workers/worker-1"
+    assert "OCTOPAL_WORKSPACE_DIR=/workspace/workers/worker-1" in args
     assert f"{workspace}:/workspace" not in args
