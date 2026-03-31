@@ -1195,11 +1195,7 @@ def connector_auth(
     )
 
     result = asyncio.run(connector.authorize())
-    if (
-        result.get("status") != "success"
-        and name == "google"
-        and "could not locate runnable browser" in str(result.get("error", "")).lower()
-    ):
+    if result.get("status") == "manual_required" and name == "google":
         start = asyncio.run(connector.begin_manual_authorize())
         _print_google_headless_auth_help(start["auth_url"])
         authorization_response = typer.prompt("Authorization response URL")

@@ -182,7 +182,7 @@ def test_connector_auth_falls_back_to_manual_flow_when_browser_is_unavailable(tm
     monkeypatch.setattr("octopal.cli.main.typer.prompt", lambda *args, **kwargs: "http://localhost/?code=abc")
 
     async def fake_authorize(self):
-        return {"error": "Failed to authorize Google connector: could not locate runnable browser"}
+        return {"status": "manual_required", "error": "could not locate runnable browser"}
 
     async def fake_begin_manual_authorize(self):
         return {"auth_url": "https://accounts.google.com/mock-auth", "redirect_uri": "http://localhost"}

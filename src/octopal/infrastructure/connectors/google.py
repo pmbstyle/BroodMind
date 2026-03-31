@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import webbrowser
 from typing import Any
 
 import structlog
@@ -227,6 +228,15 @@ class GoogleConnector(Connector):
                     f"{', '.join(self._get_enabled_services())}."
                 ),
             }
+        except webbrowser.Error as e:
+            if "could not locate runnable browser" in str(e).lower():
+                return {
+                    "status": "manual_required",
+                    "message": "No runnable browser found on this machine.",
+                    "error": str(e),
+                }
+            logger.exception("Failed to authorize Google connector")
+            return {"error": f"Failed to authorize Google connector: {e}"}
         except Exception as e:
             logger.exception("Failed to authorize Google connector")
             return {"error": f"Failed to authorize Google connector: {e}"}
