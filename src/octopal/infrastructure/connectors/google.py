@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import webbrowser
+from contextlib import contextmanager
 from typing import Any
 
 import structlog
@@ -8,6 +10,20 @@ import structlog
 from octopal.infrastructure.connectors.base import Connector
 
 logger = structlog.get_logger(__name__)
+
+
+@contextmanager
+def _oauthlib_insecure_transport_for_localhost():
+    """Allow oauthlib to parse localhost callback URLs in CLI/manual flows."""
+    original = os.environ.get("OAUTHLIB_INSECURE_TRANSPORT")
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
+        else:
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = original
 
 
 class GoogleConnector(Connector):
@@ -292,10 +308,11 @@ class GoogleConnector(Connector):
         flow.redirect_uri = "http://localhost"
 
         try:
-            if authorization_response.startswith("http://") or authorization_response.startswith("https://"):
-                flow.fetch_token(authorization_response=authorization_response)
-            else:
-                flow.fetch_token(code=authorization_response)
+            with _oauthlib_insecure_transport_for_localhost():
+                if authorization_response.startswith("http://") or authorization_response.startswith("https://"):
+                    flow.fetch_token(authorization_response=authorization_response)
+                else:
+                    flow.fetch_token(code=authorization_response)
             self._store_credentials(flow.credentials)
 
             if self.manager.mcp_manager is not None:

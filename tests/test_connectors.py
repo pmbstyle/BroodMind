@@ -6,6 +6,7 @@ import pytest
 
 from octopal.cli.configure import _collect_connector_next_steps
 from octopal.infrastructure.config.models import ConnectorInstanceConfig, OctopalConfig
+from octopal.infrastructure.connectors.google import _oauthlib_insecure_transport_for_localhost
 from octopal.infrastructure.connectors.manager import ConnectorManager
 
 
@@ -152,3 +153,12 @@ def test_connector_manager_reconciles_not_ready_google_connector_into_disconnect
 
     assert mcp.connected == []
     assert mcp.disconnected == ["google-gmail"]
+
+
+def test_oauthlib_insecure_transport_context_is_temporary(monkeypatch) -> None:
+    monkeypatch.delenv("OAUTHLIB_INSECURE_TRANSPORT", raising=False)
+
+    with _oauthlib_insecure_transport_for_localhost():
+        assert __import__("os").environ["OAUTHLIB_INSECURE_TRANSPORT"] == "1"
+
+    assert "OAUTHLIB_INSECURE_TRANSPORT" not in __import__("os").environ
