@@ -106,6 +106,8 @@ def test_connector_auth_success_uses_cli_flow(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
+    answers = iter(["client-id-from-prompt", "client-secret-from-prompt"])
+    monkeypatch.setattr("octopal.cli.main.typer.prompt", lambda *args, **kwargs: next(answers))
 
     async def fake_authorize(self):
         return {"status": "success", "message": "Google connector authorized for gmail."}
@@ -158,6 +160,57 @@ def test_connector_auth_prints_google_setup_help_when_credentials_missing(tmp_pa
     assert "Desktop app" in result.stdout
     assert "console.cloud.google.com/apis/credentials" in result.stdout
     assert "docs/google_gmail_connector_setup.md" in result.stdout
+
+
+def test_connector_auth_prompts_for_credentials_even_when_saved(tmp_path, monkeypatch) -> None:
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "connectors": {
+                    "instances": {
+                        "google": {
+                            "enabled": True,
+                            "enabled_services": ["gmail"],
+                            "credentials": {
+                                "client_id": "saved-client-id",
+                                "client_secret": "saved-client-secret",
+                            },
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    prompts: list[str] = []
+    answers = iter(["fresh-client-id", "fresh-client-secret"])
+
+    def fake_prompt(message: str, *args, **kwargs):
+        prompts.append(message)
+        return next(answers)
+
+    monkeypatch.setattr("octopal.cli.main.typer.prompt", fake_prompt)
+
+    async def fake_authorize(self):
+        config = self._get_config()
+        assert config.credentials.client_id == "fresh-client-id"
+        assert config.credentials.client_secret == "fresh-client-secret"
+        return {"status": "success", "message": "Google connector authorized for gmail."}
+
+    monkeypatch.setattr(
+        "octopal.infrastructure.connectors.google.GoogleConnector.authorize",
+        fake_authorize,
+    )
+
+    result = runner.invoke(app, ["connector", "auth", "google"])
+
+    assert result.exit_code == 0
+    assert prompts == [
+        "Your Google OAuth Desktop App client ID",
+        "Your Google OAuth Desktop App client secret",
+    ]
 
 
 def test_connector_auth_falls_back_to_manual_flow_when_browser_is_unavailable(tmp_path, monkeypatch) -> None:

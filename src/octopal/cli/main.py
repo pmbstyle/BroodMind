@@ -1176,14 +1176,12 @@ def connector_auth(
         )
         raise typer.Exit(code=1)
 
-    current_client_id = str(instance.credentials.client_id or "")
-    current_client_secret = str(instance.credentials.client_secret or "")
-    if name == "google" and (not current_client_id or not current_client_secret):
+    if name == "google":
         _print_google_auth_setup_help()
-    resolved_client_id = client_id or current_client_id or typer.prompt(
+    resolved_client_id = client_id or typer.prompt(
         "Your Google OAuth Desktop App client ID"
     )
-    resolved_client_secret = client_secret or current_client_secret or typer.prompt(
+    resolved_client_secret = client_secret or typer.prompt(
         "Your Google OAuth Desktop App client secret",
         hide_input=True,
     )
