@@ -1083,6 +1083,18 @@ def _connector_next_action(name: str, status: dict[str, object]) -> str:
     return "inspect config"
 
 
+def _connector_disconnect_message(name: str, *, forget_credentials: bool) -> str:
+    if forget_credentials:
+        return (
+            f"[bold yellow]{name} disconnected.[/bold yellow] "
+            "Stored client credentials were removed."
+        )
+    return (
+        f"[bold yellow]{name} disconnected.[/bold yellow] "
+        "Stored client credentials were kept so you can re-authorize later."
+    )
+
+
 @connector_app.command("status")
 def connector_status(json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")) -> None:
     """Show connector status and any required next action."""
@@ -1161,6 +1173,35 @@ def connector_auth(
 
     console.print(f"[bold green][V] {result['message']}[/bold green]")
     console.print("Run [magenta]octopal connector status[/magenta] to confirm readiness.")
+
+
+@connector_app.command("disconnect")
+def connector_disconnect(
+    name: str = typer.Argument(..., help="Connector name to disconnect."),
+    forget_credentials: bool = typer.Option(
+        False,
+        "--forget-credentials",
+        help="Also remove stored client_id/client_secret.",
+    ),
+) -> None:
+    """Disconnect a connector and clear its authorization state."""
+    settings = load_settings()
+    manager = _build_connector_manager(settings)
+
+    try:
+        result = asyncio.run(
+            manager.disconnect_connector(name, forget_credentials=forget_credentials)
+        )
+    except RuntimeError as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        raise typer.Exit(code=1) from None
+
+    if result.get("status") != "success":
+        console.print(f"[bold red]Disconnect failed:[/bold red] {result.get('message', 'unknown error')}")
+        raise typer.Exit(code=1)
+
+    console.print(_connector_disconnect_message(name, forget_credentials=forget_credentials))
+    console.print("Run [magenta]octopal connector status[/magenta] to verify the updated state.")
 
 
 @app.command()

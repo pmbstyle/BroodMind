@@ -71,3 +71,30 @@ def test_collect_connector_next_steps_prompts_for_auth_when_google_added() -> No
     assert any("octopal connector auth google" in line for line in lines)
     assert any("octopal connector status" in line for line in lines)
     assert any("octopal restart" in line for line in lines)
+
+
+def test_google_connector_disconnect_clears_auth_state_but_keeps_client_credentials() -> None:
+    config = OctopalConfig()
+    config.connectors.instances["google"] = ConnectorInstanceConfig(
+        enabled=True,
+        settings={
+            "enabled_services": ["gmail"],
+            "authorized_services": ["gmail"],
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+            "refresh_token": "refresh-token",
+            "token": "access-token",
+        },
+    )
+    manager = _build_manager(config)
+    connector = manager.get_connector("google")
+
+    result = asyncio.run(connector.disconnect())
+
+    assert result["status"] == "success"
+    settings = config.connectors.instances["google"].settings
+    assert "refresh_token" not in settings
+    assert "token" not in settings
+    assert "authorized_services" not in settings
+    assert settings["client_id"] == "client-id"
+    assert settings["client_secret"] == "client-secret"

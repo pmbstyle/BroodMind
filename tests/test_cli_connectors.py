@@ -119,3 +119,42 @@ def test_connector_auth_success_uses_cli_flow(tmp_path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "authorized for gmail" in result.stdout
+
+
+def test_connector_disconnect_clears_auth_state(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "connectors": {
+                    "instances": {
+                        "google": {
+                            "enabled": True,
+                            "settings": {
+                                "enabled_services": ["gmail"],
+                                "client_id": "client-id",
+                                "client_secret": "client-secret",
+                                "authorized_services": ["gmail"],
+                                "refresh_token": "refresh-token",
+                                "token": "access-token",
+                            },
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["connector", "disconnect", "google"])
+
+    assert result.exit_code == 0
+    assert "disconnected" in result.stdout
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    settings = payload["connectors"]["instances"]["google"]["settings"]
+    assert "refresh_token" not in settings
+    assert "token" not in settings
+    assert "authorized_services" not in settings
+    assert settings["client_id"] == "client-id"

@@ -30,3 +30,8 @@ class Connector(ABC):
     async def start(self) -> None:
         """Start any runtime integrations needed by the connector."""
         pass
+
+    @abstractmethod
+    async def disconnect(self, *, forget_credentials: bool = False) -> dict[str, Any]:
+        """Disconnect the connector, clear auth state, and stop any active integrations."""
+        pass

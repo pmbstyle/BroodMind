@@ -11,6 +11,7 @@ logger = structlog.get_logger(__name__)
 
 class GoogleConnector(Connector):
     _SUPPORTED_SERVICES = ("gmail",)
+    _MCP_SERVER_IDS = ("google-gmail",)
 
     def __init__(self, manager: Any):
         self.manager = manager
@@ -253,3 +254,35 @@ class GoogleConnector(Connector):
                 transport="stdio"
             )
             await self.manager.mcp_manager.connect_server(gmail_cfg)
+
+    async def disconnect(self, *, forget_credentials: bool = False) -> dict[str, Any]:
+        """Disconnect Gmail integration and clear authorization state."""
+        config = self._get_config()
+        if not config:
+            return {"status": "noop", "message": "Google connector is not configured."}
+
+        if self.manager.mcp_manager is not None:
+            for server_id in self._MCP_SERVER_IDS:
+                try:
+                    await self.manager.mcp_manager.disconnect_server(server_id, intentional=True)
+                except Exception:
+                    logger.warning("Failed to disconnect MCP server for Google connector", server_id=server_id, exc_info=True)
+
+        settings = config.settings
+        for key in ("refresh_token", "token", "authorized_services"):
+            settings.pop(key, None)
+        if forget_credentials:
+            for key in ("client_id", "client_secret"):
+                settings.pop(key, None)
+
+        self.manager.save_config()
+
+        if forget_credentials:
+            return {
+                "status": "success",
+                "message": "Google connector disconnected and stored client credentials were removed.",
+            }
+        return {
+            "status": "success",
+            "message": "Google connector disconnected. Client credentials were kept for easy re-authorization.",
+        }
