@@ -12,17 +12,27 @@ logger = structlog.get_logger(__name__)
 class GoogleConnector(Connector):
     def __init__(self, manager: Any):
         self.manager = manager
-        self._scopes = [
-            "https://www.googleapis.com/auth/gmail.modify",
-            "https://www.googleapis.com/auth/calendar",
-            "https://www.googleapis.com/auth/drive",
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/documents",
-        ]
+        self._service_scopes = {
+            "gmail": "https://www.googleapis.com/auth/gmail.modify",
+            "calendar": "https://www.googleapis.com/auth/calendar",
+            "drive": "https://www.googleapis.com/auth/drive",
+            "sheets": "https://www.googleapis.com/auth/spreadsheets",
+            "docs": "https://www.googleapis.com/auth/documents",
+        }
 
     @property
     def name(self) -> str:
         return "google"
+
+    def _get_enabled_services(self) -> list[str]:
+        config = self.manager.config.instances.get(self.name)
+        if not config:
+            return []
+        return config.settings.get("enabled_services", ["gmail", "drive", "calendar", "sheets", "docs"])
+
+    def _get_scopes(self) -> list[str]:
+        enabled = self._get_enabled_services()
+        return [self._service_scopes[svc] for svc in enabled if svc in self._service_scopes]
 
     async def get_status(self) -> dict[str, Any]:
         config = self.manager.config.instances.get(self.name)
@@ -30,13 +40,27 @@ class GoogleConnector(Connector):
             return {"status": "disabled"}
         
         settings = config.settings
+        enabled_services = self._get_enabled_services()
+        
         if not settings.get("client_id") or not settings.get("client_secret"):
-            return {"status": "not_configured", "message": "Missing client_id or client_secret"}
+            return {
+                "status": "not_configured", 
+                "message": "Missing client_id or client_secret",
+                "services": enabled_services
+            }
         
         if not settings.get("refresh_token"):
-            return {"status": "needs_auth", "message": "Connector configured but needs user authorization"}
+            return {
+                "status": "needs_auth", 
+                "message": "Connector configured but needs user authorization",
+                "services": enabled_services
+            }
         
-        return {"status": "ready", "message": "Google connector is ready"}
+        return {
+            "status": "ready", 
+            "message": f"Google connector is ready with services: {', '.join(enabled_services)}",
+            "services": enabled_services
+        }
 
     async def configure(self, settings: dict[str, Any]) -> None:
         """Update settings for the Google connector."""
@@ -71,6 +95,10 @@ class GoogleConnector(Connector):
         if not client_id or not client_secret:
             return {"error": "Missing client_id or client_secret in Google connector settings."}
 
+        scopes = self._get_scopes()
+        if not scopes:
+            return {"error": "No Google services enabled. Please enable at least one service (gmail, drive, etc.) in configuration."}
+
         client_config = {
             "web": {
                 "client_id": client_id,
@@ -82,7 +110,7 @@ class GoogleConnector(Connector):
 
         flow = Flow.from_client_config(
             client_config,
-            scopes=self._scopes,
+            scopes=scopes,
             redirect_uri="urn:ietf:wg:oauth:2.0:oob" # Out-of-band for CLI/Bot
         )
 
@@ -90,7 +118,7 @@ class GoogleConnector(Connector):
         
         return {
             "auth_url": auth_url,
-            "message": "Please visit the URL above to authorize Octo to access your Google services. After authorizing, you will receive a code. Provide this code to complete the setup."
+            "message": f"Please visit the URL above to authorize Octo to access your Google services ({', '.join(self._get_enabled_services())}). After authorizing, you will receive a code. Provide this code to complete the setup."
         }
 
     async def complete_setup(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -118,7 +146,7 @@ class GoogleConnector(Connector):
 
         flow = Flow.from_client_config(
             client_config,
-            scopes=self._scopes,
+            scopes=self._get_scopes(),
             redirect_uri="urn:ietf:wg:oauth:2.0:oob"
         )
 
@@ -133,70 +161,50 @@ class GoogleConnector(Connector):
             # Save config
             self.manager.save_config()
             
-            # Register MCP server automatically
+            # Register MCP servers automatically
             await self._register_mcp_server()
             
-            return {"status": "success", "message": "Google connector setup complete and MCP server registered."}
+            return {"status": "success", "message": f"Google connector setup complete for {', '.join(self._get_enabled_services())}."}
         except Exception as e:
             logger.exception("Failed to complete Google connector setup")
             return {"error": f"Failed to exchange code for tokens: {e}"}
 
     async def _register_mcp_server(self) -> None:
-        """Register the Google MCP server in mcp_servers.json."""
+        """Register enabled Google MCP servers in mcp_servers.json."""
         config = self.manager.config.instances.get(self.name)
         settings = config.settings
-        
-        # We can use the community-maintained Google MCP server
-        # This requires node/npx.
-        
-        server_id = "google-connector"
-        mcp_config = {
-            "name": "Google Connector (Gmail, Calendar, Drive)",
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-google-drive"], # Note: this is just one, we might want a combined one or multiple
-            "env": {
-                "GOOGLE_CLIENT_ID": settings.get("client_id"),
-                "GOOGLE_CLIENT_SECRET": settings.get("client_secret"),
-                "GOOGLE_REFRESH_TOKEN": settings.get("refresh_token"),
-            }
-        }
-        
-        # Actually there are separate servers for Gmail and Drive.
-        # For simplicity in this prototype, let's just register Drive.
-        # In a real implementation, we'd register multiple or a combined one.
+        enabled_services = self._get_enabled_services()
         
         from octopal.infrastructure.mcp.manager import MCPServerConfig
         
-        cfg = MCPServerConfig(
-            id=server_id,
-            name=mcp_config["name"],
-            command=mcp_config["command"],
-            args=mcp_config["args"],
-            env=mcp_config["env"],
-            transport="stdio"
-        )
-        
-        await self.manager.mcp_manager.connect_server(cfg)
-        
-        # Also register Gmail if possible
-        gmail_mcp_config = {
-            "id": "gmail-connector",
-            "name": "Gmail Connector",
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-gmail"],
-            "env": {
-                "GOOGLE_CLIENT_ID": settings.get("client_id"),
-                "GOOGLE_CLIENT_SECRET": settings.get("client_secret"),
-                "GOOGLE_REFRESH_TOKEN": settings.get("refresh_token"),
-            }
+        common_env = {
+            "GOOGLE_CLIENT_ID": settings.get("client_id"),
+            "GOOGLE_CLIENT_SECRET": settings.get("client_secret"),
+            "GOOGLE_REFRESH_TOKEN": settings.get("refresh_token"),
         }
+
+        # Google Drive / Docs / Sheets often use the same server
+        if any(s in enabled_services for s in ["drive", "docs", "sheets"]):
+            drive_cfg = MCPServerConfig(
+                id="google-drive",
+                name="Google Drive & Docs",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-google-drive"],
+                env=common_env,
+                transport="stdio"
+            )
+            await self.manager.mcp_manager.connect_server(drive_cfg)
+
+        if "gmail" in enabled_services:
+            gmail_cfg = MCPServerConfig(
+                id="google-gmail",
+                name="Gmail Connector",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-gmail"],
+                env=common_env,
+                transport="stdio"
+            )
+            await self.manager.mcp_manager.connect_server(gmail_cfg)
         
-        cfg_gmail = MCPServerConfig(
-            id=gmail_mcp_config["id"],
-            name=gmail_mcp_config["name"],
-            command=gmail_mcp_config["command"],
-            args=gmail_mcp_config["args"],
-            env=gmail_mcp_config["env"],
-            transport="stdio"
-        )
-        await self.manager.mcp_manager.connect_server(cfg_gmail)
+        # Note: Calendar might need its own MCP server if available, 
+        # or it might be part of another one. For now we handle Gmail and Drive.

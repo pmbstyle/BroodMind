@@ -580,6 +580,76 @@ def _configure_runtime_advanced(config: OctopalConfig, prompter) -> None:
             )
         )
 
+
+def _configure_connectors(config: OctopalConfig, prompter) -> None:
+    _print_section_header("Connectors")
+
+    prompter.note(
+        "Connectors",
+        [
+            "Connectors allow Octo to link with external services like Google (Gmail, Drive, Calendar).",
+            "Enabling a connector here will allow you to run its setup flow later via Octo tools.",
+        ],
+    )
+
+    available_connectors = [
+        WizardSelectOption(
+            value="google",
+            label="Google",
+            hint="Integrate with Gmail, Google Drive, and Google Calendar.",
+        ),
+    ]
+
+    initial_values = [
+        name for name, instance in config.connectors.instances.items()
+        if instance.enabled
+    ]
+
+    selected = prompter.multiselect(
+        WizardMultiSelectParams(
+            message="Select connectors to enable",
+            initial_values=initial_values,
+            options=available_connectors,
+        )
+    )
+
+    selected_set = set(selected)
+    from octopal.infrastructure.config.models import ConnectorInstanceConfig
+
+    # Update enabled status for all available connectors
+    for option in available_connectors:
+        name = option.value
+        is_enabled = name in selected_set
+
+        if name not in config.connectors.instances:
+            config.connectors.instances[name] = ConnectorInstanceConfig(enabled=is_enabled)
+        else:
+            config.connectors.instances[name].enabled = is_enabled
+
+        # Granular settings for Google
+        if name == "google" and is_enabled:
+            google_services = [
+                WizardSelectOption(value="gmail", label="Gmail"),
+                WizardSelectOption(value="drive", label="Google Drive"),
+                WizardSelectOption(value="calendar", label="Google Calendar"),
+                WizardSelectOption(value="sheets", label="Google Sheets"),
+                WizardSelectOption(value="docs", label="Google Docs"),
+            ]
+            
+            current_google_services = config.connectors.instances[name].settings.get(
+                "enabled_services", ["gmail", "drive", "calendar", "sheets", "docs"]
+            )
+            
+            selected_google = prompter.multiselect(
+                WizardMultiSelectParams(
+                    message="Select specific Google services to enable",
+                    initial_values=current_google_services,
+                    options=google_services,
+                )
+            )
+            config.connectors.instances[name].settings["enabled_services"] = selected_google
+
+
 def _build_sections(config: OctopalConfig, prompter) -> list[WizardSection]:
     sections = [
         WizardSection(
@@ -617,6 +687,12 @@ def _build_sections(config: OctopalConfig, prompter) -> list[WizardSection]:
             run=lambda cfg: _configure_features(cfg, prompter),
         ),
         WizardSection(
+            key="connectors",
+            title="Connectors",
+            render_status=lambda cfg: _connectors_status(cfg),
+            run=lambda cfg: _configure_connectors(cfg, prompter),
+        ),
+        WizardSection(
             key="dashboard",
             title="Dashboard",
             render_status=lambda cfg: _dashboard_status(cfg),
@@ -642,6 +718,15 @@ def _features_status(config: OctopalConfig) -> str:
         if is_enabled
     ]
     return ", ".join(enabled) if enabled else "No optional tools enabled"
+
+
+def _connectors_status(config: OctopalConfig) -> str:
+    enabled = [
+        name.capitalize()
+        for name, instance in config.connectors.instances.items()
+        if instance.enabled
+    ]
+    return ", ".join(enabled) if enabled else "No connectors enabled"
 
 
 def _dashboard_status(config: OctopalConfig) -> str:
