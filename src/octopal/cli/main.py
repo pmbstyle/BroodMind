@@ -1109,6 +1109,18 @@ def _print_google_auth_setup_help() -> None:
     console.print()
 
 
+def _print_google_headless_auth_help(auth_url: str) -> None:
+    console.print()
+    console.print("[bold]Headless Google authorization[/bold]")
+    console.print("No runnable browser was found on this machine, so Octopal switched to a manual flow.")
+    console.print("Open this URL in a browser on your own computer:")
+    console.print(f"  [cyan]{auth_url}[/cyan]")
+    console.print("After approval, Google will redirect to a localhost URL in your browser.")
+    console.print("That page may fail to load on your computer or VPS, and that is expected.")
+    console.print("Copy the full URL from your browser address bar and paste it back here.")
+    console.print()
+
+
 @connector_app.command("status")
 def connector_status(json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")) -> None:
     """Show connector status and any required next action."""
@@ -1183,6 +1195,16 @@ def connector_auth(
     )
 
     result = asyncio.run(connector.authorize())
+    if (
+        result.get("status") != "success"
+        and name == "google"
+        and "could not locate runnable browser" in str(result.get("error", "")).lower()
+    ):
+        start = asyncio.run(connector.begin_manual_authorize())
+        _print_google_headless_auth_help(start["auth_url"])
+        authorization_response = typer.prompt("Authorization response URL")
+        result = asyncio.run(connector.complete_manual_authorize(authorization_response))
+
     if result.get("status") != "success":
         console.print(f"[bold red]Authorization failed:[/bold red] {result.get('error', 'unknown error')}")
         raise typer.Exit(code=1)

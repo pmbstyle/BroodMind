@@ -158,6 +158,60 @@ def test_connector_auth_prints_google_setup_help_when_credentials_missing(tmp_pa
     assert "console.cloud.google.com/apis/credentials" in result.stdout
 
 
+def test_connector_auth_falls_back_to_manual_flow_when_browser_is_unavailable(tmp_path, monkeypatch) -> None:
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "connectors": {
+                    "instances": {
+                        "google": {
+                            "enabled": True,
+                            "enabled_services": ["gmail"],
+                            "credentials": {
+                                "client_id": "client-id",
+                                "client_secret": "client-secret",
+                            },
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("octopal.cli.main.typer.prompt", lambda *args, **kwargs: "http://localhost/?code=abc")
+
+    async def fake_authorize(self):
+        return {"error": "Failed to authorize Google connector: could not locate runnable browser"}
+
+    async def fake_begin_manual_authorize(self):
+        return {"auth_url": "https://accounts.google.com/mock-auth", "redirect_uri": "http://localhost"}
+
+    async def fake_complete_manual_authorize(self, authorization_response: str):
+        assert authorization_response == "http://localhost/?code=abc"
+        return {"status": "success", "message": "Google connector authorized for gmail."}
+
+    monkeypatch.setattr(
+        "octopal.infrastructure.connectors.google.GoogleConnector.authorize",
+        fake_authorize,
+    )
+    monkeypatch.setattr(
+        "octopal.infrastructure.connectors.google.GoogleConnector.begin_manual_authorize",
+        fake_begin_manual_authorize,
+    )
+    monkeypatch.setattr(
+        "octopal.infrastructure.connectors.google.GoogleConnector.complete_manual_authorize",
+        fake_complete_manual_authorize,
+    )
+
+    result = runner.invoke(app, ["connector", "auth", "google"])
+
+    assert result.exit_code == 0
+    assert "Headless Google authorization" in result.stdout
+    assert "accounts.google.com/mock-auth" in result.stdout
+    assert "authorized for gmail" in result.stdout
+
+
 def test_connector_disconnect_clears_auth_state(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(

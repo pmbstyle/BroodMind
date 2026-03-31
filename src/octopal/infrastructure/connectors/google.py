@@ -61,6 +61,26 @@ class GoogleConnector(Connector):
         enabled = self._get_enabled_services()
         return [self._service_scopes[svc] for svc in enabled if svc in self._service_scopes]
 
+    def _build_client_config(self, client_id: str, client_secret: str) -> dict[str, dict[str, str]]:
+        return {
+            "installed": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        }
+
+    def _store_credentials(self, credentials) -> None:
+        config = self._get_config()
+        if config is None:
+            raise RuntimeError("Google connector config disappeared during authorization.")
+        config.auth.refresh_token = credentials.refresh_token
+        config.auth.access_token = credentials.token
+        config.auth.authorized_services = self._get_enabled_services()
+        config.auth.last_error = None
+        self.manager.save_config()
+
     async def get_status(self) -> dict[str, Any]:
         config = self._get_config()
         if not config or not config.enabled:
@@ -180,14 +200,7 @@ class GoogleConnector(Connector):
         if not scopes:
             return {"error": "No supported Google services are enabled. Re-run `octopal configure`."}
 
-        client_config = {
-            "installed": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        }
+        client_config = self._build_client_config(client_id, client_secret)
 
         try:
             flow = InstalledAppFlow.from_client_config(client_config, scopes=scopes)
@@ -202,12 +215,7 @@ class GoogleConnector(Connector):
                 access_type="offline",
                 prompt="consent",
             )
-
-            config.auth.refresh_token = credentials.refresh_token
-            config.auth.access_token = credentials.token
-            config.auth.authorized_services = self._get_enabled_services()
-            config.auth.last_error = None
-            self.manager.save_config()
+            self._store_credentials(credentials)
 
             if self.manager.mcp_manager is not None:
                 await self.start()
@@ -222,6 +230,77 @@ class GoogleConnector(Connector):
         except Exception as e:
             logger.exception("Failed to authorize Google connector")
             return {"error": f"Failed to authorize Google connector: {e}"}
+
+    async def begin_manual_authorize(self) -> dict[str, str]:
+        """Return an auth URL for a headless/manual OAuth flow."""
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+        except ImportError as exc:
+            raise RuntimeError("google-auth-oauthlib is not installed.") from exc
+
+        config = self._get_config()
+        if not config:
+            raise RuntimeError("Google connector is not enabled. Run `octopal configure` first.")
+
+        client_id = config.credentials.client_id
+        client_secret = config.credentials.client_secret
+        if not client_id or not client_secret:
+            raise RuntimeError("Missing client_id or client_secret in Google connector settings.")
+
+        scopes = self._get_scopes()
+        if not scopes:
+            raise RuntimeError("No supported Google services are enabled. Re-run `octopal configure`.")
+
+        flow = InstalledAppFlow.from_client_config(
+            self._build_client_config(client_id, client_secret),
+            scopes=scopes,
+        )
+        flow.redirect_uri = "http://localhost"
+        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+        return {"auth_url": auth_url, "redirect_uri": flow.redirect_uri}
+
+    async def complete_manual_authorize(self, authorization_response: str) -> dict[str, Any]:
+        """Complete a manual OAuth flow from a pasted redirect URL or auth code."""
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+        except ImportError:
+            return {"error": "google-auth-oauthlib is not installed."}
+
+        config = self._get_config()
+        if not config:
+            return {"error": "Google connector is not enabled. Run `octopal configure` first."}
+
+        client_id = config.credentials.client_id
+        client_secret = config.credentials.client_secret
+        if not client_id or not client_secret:
+            return {"error": "Missing client_id or client_secret in Google connector settings."}
+
+        flow = InstalledAppFlow.from_client_config(
+            self._build_client_config(client_id, client_secret),
+            scopes=self._get_scopes(),
+        )
+        flow.redirect_uri = "http://localhost"
+
+        try:
+            if authorization_response.startswith("http://") or authorization_response.startswith("https://"):
+                flow.fetch_token(authorization_response=authorization_response)
+            else:
+                flow.fetch_token(code=authorization_response)
+            self._store_credentials(flow.credentials)
+
+            if self.manager.mcp_manager is not None:
+                await self.start()
+
+            return {
+                "status": "success",
+                "message": (
+                    "Google connector authorized for "
+                    f"{', '.join(self._get_enabled_services())}."
+                ),
+            }
+        except Exception as e:
+            logger.exception("Failed to complete manual Google authorization")
+            return {"error": f"Failed to complete manual Google authorization: {e}"}
 
     async def start(self) -> None:
         """Start the Gmail MCP server when the connector is ready."""
