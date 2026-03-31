@@ -10,6 +10,7 @@ from octopal.channels.telegram.approvals import ApprovalManager
 from octopal.channels.telegram.handlers import register_handlers
 from octopal.infrastructure.config.settings import Settings
 from octopal.runtime.app import build_octo
+from octopal.runtime.octo.delivery import DeliveryMode
 from octopal.runtime.octo.core import Octo, OctoReply
 from octopal.utils import is_control_response
 
@@ -48,11 +49,21 @@ async def _heartbeat_poker(octo: Octo, interval_seconds: int, chat_id: int):
                 persist_to_memory=False,
                 track_progress=False,
                 include_wakeup=False,
+                background_delivery=True,
             )
-            # Heartbeat replies are control-plane responses; don't send them to Telegram chat.
             if isinstance(reply, OctoReply):
                 text = (reply.immediate or "").strip()
-                if is_control_response(text):
+                if reply.delivery_mode == DeliveryMode.IMMEDIATE and text:
+                    if octo.internal_send:
+                        await octo.internal_send(chat_id, text)
+                        logger.info("Heartbeat delivered user-visible update", chat_id=chat_id, text_len=len(text))
+                    else:
+                        logger.warning(
+                            "Heartbeat produced user-visible update but no sender is attached",
+                            chat_id=chat_id,
+                            preview=text[:200],
+                        )
+                elif is_control_response(text):
                     logger.debug("Heartbeat processed successfully (control response acknowledged)", response=text)
                 elif not text:
                     logger.warning("Heartbeat produced empty response")

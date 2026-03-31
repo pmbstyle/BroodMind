@@ -18,6 +18,7 @@ from octopal.channels.whatsapp.ids import (
 from octopal.infrastructure.config.settings import Settings
 from octopal.runtime.app import build_octo
 from octopal.runtime.metrics import update_component_gauges
+from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.octo.core import Octo
 from octopal.runtime.pending_turns import PendingTurnAggregator
 from octopal.runtime.state import update_last_message
@@ -25,7 +26,6 @@ from octopal.utils import (
     extract_reaction_and_strip,
     normalize_reaction_emoji,
     sanitize_user_facing_text,
-    should_suppress_user_delivery,
 )
 
 logger = structlog.get_logger(__name__)
@@ -46,10 +46,11 @@ class WhatsAppRuntime:
 
     def attach_octo_output(self) -> None:
         async def _internal_send(chat_id: int, text: str) -> None:
-            if should_suppress_user_delivery(text):
+            decision = resolve_user_delivery(text)
+            if not decision.user_visible:
                 return
 
-            emoji, final_text = extract_reaction_and_strip(text)
+            emoji, final_text = extract_reaction_and_strip(decision.text)
             if emoji:
                 to = self._number_by_chat_id.get(chat_id)
                 # We need a message ID to react. This simple runtime currently doesn't
@@ -276,8 +277,9 @@ class WhatsAppRuntime:
                         exc_info=True,
                     )
 
-            if final_text and not should_suppress_user_delivery(final_text):
-                await self.octo.internal_send(chat_id, final_text)
+            decision = resolve_user_delivery(final_text)
+            if decision.user_visible:
+                await self.octo.internal_send(chat_id, decision.text)
 
 
 def _chunk_text(text: str, limit: int) -> list[str]:

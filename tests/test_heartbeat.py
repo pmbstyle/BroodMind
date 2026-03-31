@@ -1,9 +1,11 @@
 import asyncio
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from octopal.runtime.octo import core as octo_core
+from octopal.runtime.octo.delivery import DeliveryMode, resolve_user_delivery, resolve_worker_followup_delivery
 from octopal.runtime.octo.core import (
     Octo,
     _build_worker_result_timeout_followup,
@@ -55,6 +57,26 @@ def test_should_send_worker_followup():
     assert should_send_worker_followup("Done.\nNO USER RESPONSE") is False
     assert should_send_worker_followup("I have finished the task.") is True
     assert should_send_worker_followup("HEARTBEAT_OK\nI did something else too.") is False
+
+
+def test_resolve_user_delivery_classifies_control_and_visible_text():
+    assert resolve_user_delivery("HEARTBEAT_OK").mode == DeliveryMode.SILENT
+    visible = resolve_user_delivery("Готово, вот итог.")
+    assert visible.mode == DeliveryMode.IMMEDIATE
+    assert visible.text == "Готово, вот итог."
+
+
+def test_resolve_worker_followup_delivery_uses_deferred_mode_when_suppressed():
+    decision = resolve_worker_followup_delivery(
+        "Подготовила итог по расписанию.",
+        result=WorkerResult(summary="Prepared report.", output={"report_path": "research/report.md"}),
+        pending_closure=False,
+        suppress_followup=True,
+        should_force=False,
+        forced_text_factory=build_forced_worker_followup,
+    )
+    assert decision.mode == DeliveryMode.DEFERRED
+    assert decision.reason == "suppressed_turn_followup"
 
 
 def test_force_worker_followup_for_substantive_results():
@@ -361,6 +383,52 @@ async def test_suppressed_worker_followup_is_deferred_until_internal_turn_finish
     assert any(
         role == "assistant" and text == "Подготовила итог по расписанию."
         for role, text, _metadata in memory_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_delivery_keeps_user_visible_heartbeat_reply_and_records_memory(monkeypatch):
+    memory_messages = []
+
+    class DummyMemory:
+        async def add_message(self, role, text, metadata):
+            memory_messages.append((role, text, metadata))
+
+    async def _route_or_reply(*args, **kwargs):
+        return "Утренний брифинг готов."
+
+    async def _bootstrap_context(*args, **kwargs):
+        return SimpleNamespace(content="", hash="", files=[])
+
+    monkeypatch.setattr(octo_core, "route_or_reply", _route_or_reply)
+    monkeypatch.setattr(octo_core, "build_bootstrap_context_prompt", _bootstrap_context)
+
+    octo = Octo(
+        approvals=None,
+        memory=DummyMemory(),
+        canon=None,
+        provider=None,
+        store=None,
+        policy=None,
+        runtime=None,
+    )
+
+    reply = await octo.handle_message(
+        "heartbeat task",
+        123,
+        persist_to_memory=False,
+        track_progress=False,
+        include_wakeup=False,
+        background_delivery=True,
+    )
+
+    assert reply.delivery_mode == DeliveryMode.IMMEDIATE
+    assert reply.immediate == "Утренний брифинг готов."
+    assert any(
+        role == "assistant"
+        and text == "Утренний брифинг готов."
+        and metadata.get("background_delivery") is True
+        for role, text, metadata in memory_messages
     )
 
 

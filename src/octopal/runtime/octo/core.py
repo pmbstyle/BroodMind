@@ -31,6 +31,11 @@ from octopal.runtime.memory.canon import CanonService
 from octopal.runtime.memory.memchain import memchain_record
 from octopal.runtime.memory.service import MemoryService
 from octopal.runtime.metrics import update_component_gauges
+from octopal.runtime.octo.delivery import (
+    DeliveryMode,
+    resolve_user_delivery,
+    resolve_worker_followup_delivery,
+)
 from octopal.runtime.octo.prompt_builder import (
     build_bootstrap_context_prompt,
 )
@@ -40,7 +45,6 @@ from octopal.runtime.octo.router import (
     route_or_reply,
     route_worker_result_back_to_octo,
     should_force_worker_followup,
-    should_send_worker_followup,
 )
 from octopal.runtime.policy.engine import PolicyEngine
 from octopal.runtime.scheduler.service import SchedulerService
@@ -358,7 +362,7 @@ def _merge_worker_followup_texts(texts: list[str]) -> str:
     seen: set[str] = set()
     for raw_text in texts:
         text = normalize_plain_text(raw_text)
-        if not should_send_worker_followup(text):
+        if not resolve_user_delivery(text).user_visible:
             continue
         fingerprint = text.casefold()
         if fingerprint in seen:
@@ -380,21 +384,22 @@ async def _send_worker_followup(
     *,
     batched_count: int = 1,
 ) -> None:
-    if not should_send_worker_followup(text):
-        logger.info("Internal worker follow-up skipped", chat_id=chat_id, reason="no_user_response")
+    decision = resolve_user_delivery(text)
+    if not decision.user_visible:
+        logger.info("Internal worker follow-up skipped", chat_id=chat_id, reason=decision.reason)
         return
     if octo.internal_send:
-        await octo.internal_send(chat_id, text)
+        await octo.internal_send(chat_id, decision.text)
         octo.clear_pending_conversational_closure(correlation_id)
         logger.info(
             "Internal worker follow-up sent",
             chat_id=chat_id,
-            text_len=len(text),
+            text_len=len(decision.text),
             batched_count=batched_count,
         )
         await octo.memory.add_message(
             "assistant",
-            text,
+            decision.text,
             {
                 "chat_id": chat_id,
                 "worker_followup": True,
@@ -542,43 +547,44 @@ async def _internal_worker(octo: Octo, chat_id: int, queue: asyncio.Queue) -> No
                     final_text = _build_worker_result_timeout_followup(result)
 
                 pending_closure = octo.has_pending_conversational_closure(correlation_id)
-                suppress_followup = octo.should_suppress_turn_followups(correlation_id)
-                if (
-                    not should_send_worker_followup(final_text)
-                    and (should_force_worker_followup(result) or pending_closure)
-                ):
+                delivery = resolve_worker_followup_delivery(
+                    final_text,
+                    result=result,
+                    pending_closure=pending_closure,
+                    suppress_followup=octo.should_suppress_turn_followups(correlation_id),
+                    should_force=should_force_worker_followup(result),
+                    forced_text_factory=build_forced_worker_followup,
+                )
+                if delivery.reason == "forced_substantive_followup":
                     logger.info("Forcing substantive worker follow-up", chat_id=chat_id)
-                    final_text = build_forced_worker_followup(result)
 
-                if suppress_followup and should_send_worker_followup(final_text):
+                if delivery.mode == DeliveryMode.DEFERRED:
                     await _enqueue_batched_worker_followup(
                         octo,
                         chat_id,
                         correlation_id,
-                        final_text,
+                        delivery.text,
                     )
                     octo.clear_pending_conversational_closure(correlation_id)
                     logger.info(
                         "Internal worker follow-up deferred",
                         chat_id=chat_id,
-                        reason="suppressed_turn_followup",
+                        reason=delivery.reason,
                     )
-                elif suppress_followup:
+                elif delivery.mode == DeliveryMode.SILENT:
                     octo.clear_pending_conversational_closure(correlation_id)
                     logger.info(
                         "Internal worker follow-up skipped",
                         chat_id=chat_id,
-                        reason="suppressed_turn_followup",
+                        reason=delivery.reason,
                     )
-                elif should_send_worker_followup(final_text):
+                elif delivery.mode == DeliveryMode.IMMEDIATE:
                     await _enqueue_batched_worker_followup(
                         octo,
                         chat_id,
                         correlation_id,
-                        final_text,
+                        delivery.text,
                     )
-                else:
-                    logger.info("Internal worker follow-up skipped", chat_id=chat_id, reason="no_user_response")
             logger.debug("Worker result processed", summary_len=len(result.summary or ""))
         except Exception:
             logger.exception("Failed to process internal worker result")
@@ -1610,6 +1616,7 @@ class Octo:
         persist_to_memory: bool = True,
         track_progress: bool = True,
         include_wakeup: bool = True,
+        background_delivery: bool = False,
     ) -> OctoReply:
         if not is_ws and self._ws_active:
             logger.info("Ignoring Telegram message while WebSocket is active", chat_id=chat_id)
@@ -1674,8 +1681,12 @@ class Octo:
             initial_reaction_emoji, _ = extract_reaction_and_strip(reply_text or "")
             reply_text, wants_followup = _extract_followup_required_marker(reply_text)
             if not track_progress:
-                reply_text = _coerce_control_plane_reply(reply_text)
                 wants_followup = False
+                background_decision = resolve_user_delivery(reply_text)
+                if background_delivery and background_decision.user_visible:
+                    reply_text = background_decision.text
+                else:
+                    reply_text = _coerce_control_plane_reply(reply_text)
             logger.info("Octo response ready")
             if persist_to_memory:
                 await self.memory.add_message("assistant", reply_text, {"chat_id": chat_id, "heartbeat": not track_progress})
@@ -1702,17 +1713,26 @@ class Octo:
             immediate_text = sanitize_user_facing_text_preserving_reaction(reply_text)
             reaction_emoji, _ = extract_reaction_and_strip(reply_text or "")
             reaction_emoji = reaction_emoji or initial_reaction_emoji
+            delivery = resolve_user_delivery(immediate_text, followup_required=wants_followup)
             logger.debug(
                 "OctoReply prepared for channel delivery",
                 chat_id=chat_id,
                 has_react_tag="<react>" in immediate_text.lower(),
                 reaction=reaction_emoji,
+                delivery_mode=delivery.mode,
             )
+            if not persist_to_memory and delivery.user_visible:
+                await self.memory.add_message(
+                    "assistant",
+                    delivery.text,
+                    {"chat_id": chat_id, "background_delivery": True, "heartbeat": not track_progress},
+                )
             return OctoReply(
-                immediate=immediate_text,
+                immediate=delivery.text,
                 followup=None,
-                followup_required=wants_followup,
+                followup_required=delivery.followup_required,
                 reaction=reaction_emoji,
+                delivery_mode=delivery.mode,
             )
         finally:
             if track_progress:
@@ -2336,3 +2356,4 @@ class OctoReply:
     followup: asyncio.Task[str] | None
     followup_required: bool = False
     reaction: str | None = None
+    delivery_mode: DeliveryMode = DeliveryMode.IMMEDIATE

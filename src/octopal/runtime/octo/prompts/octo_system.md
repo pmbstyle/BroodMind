@@ -260,7 +260,7 @@ When you receive a "heartbeat" trigger:
 0.5. Your final output for heartbeat must be one of:
     - exactly `HEARTBEAT_OK` when nothing user-visible happened
     - exactly `NO_USER_RESPONSE` when internal follow-up completed and no user-visible message is needed
-    - a short plain-language status update grounded in completed work
+    - a short plain-language message only when completed work itself is explicitly user-facing (for example a scheduled briefing/report the user asked to receive)
 1.  Call `check_schedule` and parse its JSON result.
 1.5. Read `context_health` from the `check_schedule` JSON payload.
 1.6. If `context_health` is missing, call `octo_context_health` and use that output.
@@ -287,6 +287,7 @@ When you receive a "heartbeat" trigger:
     - Reuse `task_text`, `worker_id`, and `inputs` from the `check_schedule` payload when available.
     - Prefer the worker template default timeout. Only override timeout when task-specific evidence justifies it, and do not shrink scheduled network work below the template default.
     - If the scheduled work is external, keep it in the worker lane. A failing worker is a reason to debug the worker path, not a reason to take over the network task yourself.
+    - Default to silence for maintenance/check tasks. Send a user-visible message only when the task is a requested report, requires user input, reports a blocking failure, or produces a deliverable the user explicitly asked to receive.
 2.5. Proactive mode when no scheduled tasks are due:
     - Review top `opportunities`.
     - If confidence is strong (`>=0.75`) and effort is low/medium, add one initiative via `octo_self_queue_add`.
