@@ -1,9 +1,11 @@
 import asyncio
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from octopal.runtime.octo import core as octo_core
+from octopal.runtime.octo.delivery import DeliveryMode, resolve_user_delivery, resolve_worker_followup_delivery
 from octopal.runtime.octo.core import (
     Octo,
     _build_worker_result_timeout_followup,
@@ -55,6 +57,55 @@ def test_should_send_worker_followup():
     assert should_send_worker_followup("Done.\nNO USER RESPONSE") is False
     assert should_send_worker_followup("I have finished the task.") is True
     assert should_send_worker_followup("HEARTBEAT_OK\nI did something else too.") is False
+
+
+def test_resolve_user_delivery_classifies_control_and_visible_text():
+    assert resolve_user_delivery("HEARTBEAT_OK").mode == DeliveryMode.SILENT
+    visible = resolve_user_delivery("Готово, вот итог.")
+    assert visible.mode == DeliveryMode.IMMEDIATE
+    assert visible.text == "Готово, вот итог."
+
+
+def test_resolve_worker_followup_delivery_uses_deferred_mode_when_suppressed():
+    decision = resolve_worker_followup_delivery(
+        "Подготовила итог по расписанию.",
+        result=WorkerResult(summary="Prepared report.", output={"report_path": "research/report.md"}),
+        pending_closure=False,
+        suppress_followup=True,
+        should_force=False,
+        forced_text_factory=build_forced_worker_followup,
+    )
+    assert decision.mode == DeliveryMode.DEFERRED
+    assert decision.reason == "suppressed_turn_followup"
+
+
+def test_resolve_worker_followup_delivery_honors_scheduled_notify_never():
+    decision = resolve_worker_followup_delivery(
+        "Подготовила сводку.",
+        result=WorkerResult(summary="Prepared report.", output={"report_path": "research/report.md"}),
+        pending_closure=False,
+        suppress_followup=False,
+        should_force=True,
+        notify_user="never",
+        forced_text_factory=build_forced_worker_followup,
+    )
+    assert decision.mode == DeliveryMode.SILENT
+    assert decision.reason == "scheduled_notify_never"
+
+
+def test_resolve_worker_followup_delivery_honors_scheduled_notify_always():
+    decision = resolve_worker_followup_delivery(
+        "NO_USER_RESPONSE",
+        result=WorkerResult(summary="Prepared report.", output={"report_path": "research/report.md"}),
+        pending_closure=False,
+        suppress_followup=False,
+        should_force=False,
+        notify_user="always",
+        forced_text_factory=build_forced_worker_followup,
+    )
+    assert decision.mode == DeliveryMode.IMMEDIATE
+    assert decision.reason == "scheduled_notify_always"
+    assert "research/report.md" in decision.text
 
 
 def test_force_worker_followup_for_substantive_results():
@@ -303,6 +354,111 @@ async def test_batched_worker_followups_send_single_combined_message(monkeypatch
         )
     ]
     assert octo_core._WORKER_FOLLOWUP_BATCHES == {}
+
+
+@pytest.mark.asyncio
+async def test_suppressed_worker_followup_is_deferred_until_internal_turn_finishes(monkeypatch):
+    monkeypatch.setattr(octo_core, "_WORKER_FOLLOWUP_BATCH_WINDOW_SECONDS", 0.01)
+    monkeypatch.setattr(octo_core, "_QUEUE_IDLE_TIMEOUT_SECONDS", 0.01)
+    octo_core._WORKER_FOLLOWUP_BATCHES.clear()
+
+    sent_messages = []
+    memory_messages = []
+
+    class DummyMemory:
+        async def add_message(self, role, text, metadata):
+            memory_messages.append((role, text, metadata))
+
+    async def _send(chat_id, text):
+        sent_messages.append((chat_id, text))
+
+    async def _route_worker_result_back_to_octo(_octo, _chat_id, _task_text, _result):
+        return "Подготовила итог по расписанию."
+
+    monkeypatch.setattr(
+        octo_core,
+        "route_worker_result_back_to_octo",
+        _route_worker_result_back_to_octo,
+    )
+
+    octo = Octo(
+        approvals=None,
+        memory=DummyMemory(),
+        canon=None,
+        provider=None,
+        store=None,
+        policy=None,
+        runtime=None,
+        internal_send=_send,
+    )
+    correlation_id = "heartbeat-turn"
+    octo.suppress_turn_followups(correlation_id)
+    octo.mark_internal_result_pending(correlation_id)
+
+    queue: asyncio.Queue = asyncio.Queue()
+    queue.put_nowait(
+        (
+            "[Scheduled] Prepare summary",
+            WorkerResult(summary="Built the scheduled summary.", output={"report_path": "research/digest.md"}),
+            correlation_id,
+        )
+    )
+
+    await octo_core._internal_worker(octo, 123, queue)
+    await asyncio.sleep(0.03)
+
+    assert sent_messages == [(123, "Подготовила итог по расписанию.")]
+    assert octo.should_suppress_turn_followups(correlation_id) is False
+    assert any(
+        role == "assistant" and text == "Подготовила итог по расписанию."
+        for role, text, _metadata in memory_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_delivery_keeps_user_visible_heartbeat_reply_and_records_memory(monkeypatch):
+    memory_messages = []
+
+    class DummyMemory:
+        async def add_message(self, role, text, metadata):
+            memory_messages.append((role, text, metadata))
+
+    async def _route_or_reply(*args, **kwargs):
+        return "Утренний брифинг готов."
+
+    async def _bootstrap_context(*args, **kwargs):
+        return SimpleNamespace(content="", hash="", files=[])
+
+    monkeypatch.setattr(octo_core, "route_or_reply", _route_or_reply)
+    monkeypatch.setattr(octo_core, "build_bootstrap_context_prompt", _bootstrap_context)
+
+    octo = Octo(
+        approvals=None,
+        memory=DummyMemory(),
+        canon=None,
+        provider=None,
+        store=None,
+        policy=None,
+        runtime=None,
+    )
+
+    reply = await octo.handle_message(
+        "heartbeat task",
+        123,
+        persist_to_memory=False,
+        track_progress=False,
+        include_wakeup=False,
+        background_delivery=True,
+    )
+
+    assert reply.delivery_mode == DeliveryMode.IMMEDIATE
+    assert reply.immediate == "Утренний брифинг готов."
+    assert any(
+        role == "assistant"
+        and text == "Утренний брифинг готов."
+        and metadata.get("background_delivery") is True
+        for role, text, metadata in memory_messages
+    )
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ import structlog
 
 from octopal.infrastructure.providers.base import InferenceProvider, Message
 from octopal.runtime.memory.service import MemoryService
+from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.octo.prompt_builder import (
     build_bootstrap_context_prompt,
     build_octo_prompt,
@@ -594,7 +595,7 @@ async def route_worker_result_back_to_octo(
 
 def should_send_worker_followup(text: str) -> bool:
     """Determine if a worker follow-up should be sent to the user."""
-    return not should_suppress_user_delivery(text)
+    return resolve_user_delivery(text).user_visible
 
 
 def should_force_worker_followup(result: WorkerResult) -> bool:

@@ -8,8 +8,9 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 
+from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.octo.core import Octo, OctoReply
-from octopal.utils import get_tailscale_ips, should_suppress_user_delivery
+from octopal.utils import get_tailscale_ips
 
 logger = structlog.get_logger(__name__)
 
@@ -175,7 +176,8 @@ async def _handle_message(
         response = f"Error: {exc}"
 
     text_out = response.immediate if isinstance(response, OctoReply) else str(response)
-    if should_suppress_user_delivery(text_out):
+    decision = resolve_user_delivery(text_out)
+    if not decision.user_visible:
         logger.debug("Suppressed control response for WebSocket reply", chat_id=chat_id)
         return
-    await socket.send_json({"type": "message", "text": text_out})
+    await socket.send_json({"type": "message", "text": decision.text})

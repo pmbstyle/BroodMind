@@ -22,6 +22,7 @@ from octopal.channels.telegram.approvals import ApprovalManager
 from octopal.infrastructure.config.settings import Settings
 from octopal.infrastructure.logging import correlation_id_var
 from octopal.runtime.metrics import update_component_gauges
+from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.octo.core import Octo, OctoReply
 from octopal.runtime.pending_turns import PendingTurnAggregator
 from octopal.runtime.state import update_last_message
@@ -31,7 +32,6 @@ from octopal.utils import (
     extract_reaction_and_strip,
     normalize_reaction_emoji,
     sanitize_user_facing_text,
-    should_suppress_user_delivery,
     strip_reaction_tags,
     utc_now,
 )
@@ -150,10 +150,11 @@ def register_handlers(
         await message.answer("This chat is not authorized to use Octopal.")
 
     async def _internal_send(chat_id: int, text: str) -> None:
-        if should_suppress_user_delivery(text):
+        decision = resolve_user_delivery(text)
+        if not decision.user_visible:
             logger.debug("Suppressed control response for Telegram delivery", chat_id=chat_id)
             return
-        await _enqueue_send(bot, chat_id, text)
+        await _enqueue_send(bot, chat_id, decision.text)
 
     async def _internal_progress_send(
         chat_id: int,
@@ -460,7 +461,8 @@ async def _send_message_safe(bot: Bot, chat_id: int, text: str, reply_to_message
 
 
 async def _enqueue_send(bot: Bot, chat_id: int, text: str, reply_to_message_id: int | None = None) -> None:
-    if should_suppress_user_delivery(text):
+    decision = resolve_user_delivery(text)
+    if not decision.user_visible:
         logger.debug("Suppressed control response before queueing", chat_id=chat_id)
         return
 
@@ -474,7 +476,7 @@ async def _enqueue_send(bot: Bot, chat_id: int, text: str, reply_to_message_id: 
         _CHAT_SEND_TASKS[chat_id] = asyncio.create_task(_sender_loop(bot, chat_id, queue))
     _publish_runtime_metrics()
 
-    await queue.put(QueuedMessage(text=text, reply_to_message_id=reply_to_message_id))
+    await queue.put(QueuedMessage(text=decision.text, reply_to_message_id=reply_to_message_id))
 
 
 async def _sender_loop(bot: Bot, chat_id: int, queue: asyncio.Queue[QueuedMessage]) -> None:
@@ -617,8 +619,9 @@ def _flush_pending_turn_factory(
                 return
 
         update_last_message(settings)
-        if not should_suppress_user_delivery(str(reply)):
-            await _enqueue_send(bot, chat_id, str(reply), reply_to_message_id=reply_to_message_id)
+        decision = resolve_user_delivery(str(reply))
+        if decision.user_visible:
+            await _enqueue_send(bot, chat_id, decision.text, reply_to_message_id=reply_to_message_id)
 
     return _flush_pending_turn
 
