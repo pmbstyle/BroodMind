@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 
 import pytest
 
@@ -162,3 +164,34 @@ def test_oauthlib_insecure_transport_context_is_temporary(monkeypatch) -> None:
         assert __import__("os").environ["OAUTHLIB_INSECURE_TRANSPORT"] == "1"
 
     assert "OAUTHLIB_INSECURE_TRANSPORT" not in __import__("os").environ
+
+
+def test_google_manual_authorize_requires_matching_state(monkeypatch) -> None:
+    config = OctopalConfig()
+    config.connectors.instances["google"] = ConnectorInstanceConfig(
+        enabled=True,
+        enabled_services=["gmail"],
+        credentials={"client_id": "client-id", "client_secret": "client-secret"},
+    )
+    manager = _build_manager(config)
+    connector = manager.get_connector("google")
+    connector._pending_manual_auth = {  # type: ignore[attr-defined]
+        "redirect_uri": "http://localhost",
+        "code_verifier": "verifier",
+        "state": "expected-state",
+    }
+    fake_flow_module = types.ModuleType("google_auth_oauthlib.flow")
+
+    class _FakeInstalledAppFlow:
+        @classmethod
+        def from_client_config(cls, *args, **kwargs):
+            return cls()
+
+    fake_flow_module.InstalledAppFlow = _FakeInstalledAppFlow
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib.flow", fake_flow_module)
+
+    result = asyncio.run(
+        connector.complete_manual_authorize("http://localhost/?state=wrong-state&code=abc")
+    )
+
+    assert result["error"] == "State mismatch while completing Google authorization."

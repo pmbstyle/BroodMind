@@ -4,6 +4,7 @@ import os
 import webbrowser
 from contextlib import contextmanager
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import structlog
 
@@ -32,6 +33,7 @@ class GoogleConnector(Connector):
 
     def __init__(self, manager: Any):
         self.manager = manager
+        self._pending_manual_auth: dict[str, str] | None = None
         self._service_scopes = {
             "gmail": "https://www.googleapis.com/auth/gmail.modify",
         }
@@ -282,7 +284,12 @@ class GoogleConnector(Connector):
             scopes=scopes,
         )
         flow.redirect_uri = "http://localhost"
-        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+        auth_url, state = flow.authorization_url(access_type="offline", prompt="consent")
+        self._pending_manual_auth = {
+            "redirect_uri": flow.redirect_uri,
+            "code_verifier": str(flow.code_verifier or ""),
+            "state": str(state or ""),
+        }
         return {"auth_url": auth_url, "redirect_uri": flow.redirect_uri}
 
     async def complete_manual_authorize(self, authorization_response: str) -> dict[str, Any]:
@@ -305,15 +312,27 @@ class GoogleConnector(Connector):
             self._build_client_config(client_id, client_secret),
             scopes=self._get_scopes(),
         )
-        flow.redirect_uri = "http://localhost"
+        pending = dict(self._pending_manual_auth or {})
+        flow.redirect_uri = str(pending.get("redirect_uri") or "http://localhost")
+        flow.code_verifier = pending.get("code_verifier") or None
 
         try:
             with _oauthlib_insecure_transport_for_localhost():
                 if authorization_response.startswith("http://") or authorization_response.startswith("https://"):
-                    flow.fetch_token(authorization_response=authorization_response)
+                    parsed = urlparse(authorization_response)
+                    params = parse_qs(parsed.query)
+                    returned_state = str((params.get("state") or [""])[0] or "")
+                    expected_state = str(pending.get("state") or "")
+                    if expected_state and returned_state and returned_state != expected_state:
+                        return {"error": "State mismatch while completing Google authorization."}
+                    auth_code = str((params.get("code") or [""])[0] or "")
+                    if not auth_code:
+                        return {"error": "Authorization response URL did not contain a code."}
+                    flow.fetch_token(code=auth_code)
                 else:
                     flow.fetch_token(code=authorization_response)
             self._store_credentials(flow.credentials)
+            self._pending_manual_auth = None
 
             if self.manager.mcp_manager is not None:
                 await self.start()
