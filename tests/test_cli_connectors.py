@@ -121,6 +121,43 @@ def test_connector_auth_success_uses_cli_flow(tmp_path, monkeypatch) -> None:
     assert "authorized for gmail" in result.stdout
 
 
+def test_connector_auth_prints_google_setup_help_when_credentials_missing(tmp_path, monkeypatch) -> None:
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "connectors": {
+                    "instances": {
+                        "google": {
+                            "enabled": True,
+                            "enabled_services": ["gmail"],
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    answers = iter(["client-id-from-prompt", "client-secret-from-prompt"])
+    monkeypatch.setattr("octopal.cli.main.typer.prompt", lambda *args, **kwargs: next(answers))
+
+    async def fake_authorize(self):
+        return {"status": "success", "message": "Google connector authorized for gmail."}
+
+    monkeypatch.setattr(
+        "octopal.infrastructure.connectors.google.GoogleConnector.authorize",
+        fake_authorize,
+    )
+
+    result = runner.invoke(app, ["connector", "auth", "google"])
+
+    assert result.exit_code == 0
+    assert "Google OAuth setup" in result.stdout
+    assert "Desktop app" in result.stdout
+    assert "console.cloud.google.com/apis/credentials" in result.stdout
+
+
 def test_connector_disconnect_clears_auth_state(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
