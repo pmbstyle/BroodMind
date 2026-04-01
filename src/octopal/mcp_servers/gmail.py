@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,35 @@ if TYPE_CHECKING:
 
 class GmailConfigError(RuntimeError):
     """Raised when required Gmail MCP configuration is missing."""
+
+
+class GmailApiError(RuntimeError):
+    """Raised when Gmail API returns a structured error response."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        reason: str | None,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.reason = reason
+        self.details = details or {}
+        parts = [f"Gmail API {status_code}"]
+        if reason:
+            parts.append(reason)
+        parts.append(message)
+        super().__init__(": ".join(parts))
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "status_code": self.status_code,
+            "reason": self.reason,
+            "message": str(self),
+            "details": self.details,
+        }
 
 
 @dataclass
@@ -137,6 +167,48 @@ def _normalize_message(message: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _parse_google_api_error(response: httpx.Response) -> GmailApiError:
+    payload: dict[str, Any] = {}
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        text = response.text.strip() or response.reason_phrase
+        return GmailApiError(
+            status_code=response.status_code,
+            reason=None,
+            message=text,
+            details={},
+        )
+
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message") or response.reason_phrase or "Unknown Gmail API error").strip()
+        errors = error.get("errors")
+        reason = None
+        if isinstance(errors, list) and errors:
+            first_error = errors[0]
+            if isinstance(first_error, dict):
+                reason = str(first_error.get("reason") or "").strip() or None
+        if reason is None:
+            status = error.get("status")
+            if status:
+                reason = str(status).strip()
+        return GmailApiError(
+            status_code=response.status_code,
+            reason=reason,
+            message=message,
+            details=error,
+        )
+
+    text = response.text.strip() or response.reason_phrase
+    return GmailApiError(
+        status_code=response.status_code,
+        reason=None,
+        message=text,
+        details=payload if isinstance(payload, dict) else {},
+    )
+
+
 class GmailApiClient:
     def __init__(self) -> None:
         self._credentials = self._load_credentials()
@@ -198,7 +270,8 @@ class GmailApiClient:
                 params=params,
                 headers={"Authorization": f"Bearer {token}"},
             )
-        response.raise_for_status()
+        if response.is_error:
+            raise _parse_google_api_error(response)
         return response.json()
 
     async def get_profile(self) -> dict[str, Any]:

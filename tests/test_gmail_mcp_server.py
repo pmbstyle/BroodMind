@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 
+import httpx
+
 from octopal.mcp_servers.gmail import (
     _extract_attachments,
     _extract_body,
     _header_map,
     _normalize_message,
+    _parse_google_api_error,
 )
 
 
@@ -101,3 +104,33 @@ def test_normalize_message_returns_headers_bodies_and_attachments() -> None:
     assert normalized["text_body"] == "hello text"
     assert normalized["attachment_count"] == 1
     assert normalized["attachments"][0]["attachment_id"] == "att-9"
+
+
+def test_parse_google_api_error_prefers_reason_and_message_from_json_payload() -> None:
+    response = httpx.Response(
+        403,
+        json={
+            "error": {
+                "code": 403,
+                "message": "Request had insufficient authentication scopes.",
+                "status": "PERMISSION_DENIED",
+                "errors": [{"reason": "insufficientPermissions"}],
+            }
+        },
+    )
+
+    error = _parse_google_api_error(response)
+
+    assert error.status_code == 403
+    assert error.reason == "insufficientPermissions"
+    assert "Request had insufficient authentication scopes." in str(error)
+
+
+def test_parse_google_api_error_handles_non_json_responses() -> None:
+    response = httpx.Response(403, text="Forbidden")
+
+    error = _parse_google_api_error(response)
+
+    assert error.status_code == 403
+    assert error.reason is None
+    assert str(error) == "Gmail API 403: Forbidden"
