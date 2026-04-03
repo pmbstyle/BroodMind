@@ -12,6 +12,14 @@ from octopal.tools.registry import ToolSpec
 _DRIVE_SERVER_ID = "google-drive"
 
 
+def _encode_text_content(content: str, encoding: str) -> str:
+    return base64.b64encode(str(content).encode(encoding)).decode("ascii")
+
+
+def _decode_text_content(content_base64: str, encoding: str) -> str:
+    return base64.b64decode(content_base64.encode("ascii")).decode(encoding)
+
+
 def _extract_mcp_payload(result: Any) -> Any:
     content_items = getattr(result, "content", None)
     if not content_items:
@@ -282,6 +290,129 @@ async def drive_update_from_workspace(
     return payload
 
 
+async def drive_create_text_file(
+    args: dict[str, Any],
+    ctx: dict[str, Any],
+    *,
+    fallback_manager: Any = None,
+) -> dict[str, Any]:
+    manager = _resolve_mcp_manager(ctx, fallback_manager)
+    if manager is None:
+        return {
+            "ok": False,
+            "error": "Drive tools are unavailable because no MCP manager is active.",
+            "hint": "Restart Octopal after authorizing the Google Drive connector.",
+        }
+
+    name = str((args or {}).get("name", "") or "").strip()
+    content = str((args or {}).get("content", "") or "")
+    encoding = str((args or {}).get("encoding", "") or "utf-8").strip() or "utf-8"
+    mime_type = str((args or {}).get("mime_type", "") or "text/plain").strip() or "text/plain"
+    if not name:
+        return {"ok": False, "error": "name is required."}
+
+    upload_args = {
+        "name": name,
+        "content_base64": _encode_text_content(content, encoding),
+        "mime_type": mime_type,
+    }
+    parent_id = str((args or {}).get("parent_id", "") or "").strip()
+    if parent_id:
+        upload_args["parent_id"] = parent_id
+
+    payload = await _drive_mcp_proxy("upload_file", upload_args, ctx, fallback_manager=manager)
+    if isinstance(payload, dict):
+        payload.setdefault("encoding", encoding)
+        payload.setdefault("text_length", len(content))
+    return payload
+
+
+async def drive_update_text_file(
+    args: dict[str, Any],
+    ctx: dict[str, Any],
+    *,
+    fallback_manager: Any = None,
+) -> dict[str, Any]:
+    manager = _resolve_mcp_manager(ctx, fallback_manager)
+    if manager is None:
+        return {
+            "ok": False,
+            "error": "Drive tools are unavailable because no MCP manager is active.",
+            "hint": "Restart Octopal after authorizing the Google Drive connector.",
+        }
+
+    file_id = str((args or {}).get("file_id", "") or "").strip()
+    content = str((args or {}).get("content", "") or "")
+    encoding = str((args or {}).get("encoding", "") or "utf-8").strip() or "utf-8"
+    mime_type = str((args or {}).get("mime_type", "") or "text/plain").strip() or "text/plain"
+    if not file_id:
+        return {"ok": False, "error": "file_id is required."}
+
+    update_args = {
+        "file_id": file_id,
+        "content_base64": _encode_text_content(content, encoding),
+        "mime_type": mime_type,
+    }
+    name = str((args or {}).get("name", "") or "").strip()
+    if name:
+        update_args["name"] = name
+
+    payload = await _drive_mcp_proxy("update_file", update_args, ctx, fallback_manager=manager)
+    if isinstance(payload, dict):
+        payload.setdefault("encoding", encoding)
+        payload.setdefault("text_length", len(content))
+    return payload
+
+
+async def drive_read_text_file(
+    args: dict[str, Any],
+    ctx: dict[str, Any],
+    *,
+    fallback_manager: Any = None,
+) -> dict[str, Any]:
+    manager = _resolve_mcp_manager(ctx, fallback_manager)
+    if manager is None:
+        return {
+            "ok": False,
+            "error": "Drive tools are unavailable because no MCP manager is active.",
+            "hint": "Restart Octopal after authorizing the Google Drive connector.",
+        }
+
+    file_id = str((args or {}).get("file_id", "") or "").strip()
+    encoding = str((args or {}).get("encoding", "") or "utf-8").strip() or "utf-8"
+    export_mime_type = str((args or {}).get("export_mime_type", "") or "").strip() or None
+    if not file_id:
+        return {"ok": False, "error": "file_id is required."}
+
+    remote_tool_name = "export_google_doc" if export_mime_type else "download_file"
+    remote_args = {"file_id": file_id}
+    if export_mime_type:
+        remote_args["export_mime_type"] = export_mime_type
+
+    payload = await _drive_mcp_proxy(remote_tool_name, remote_args, ctx, fallback_manager=manager)
+    if not isinstance(payload, dict) or payload.get("ok") is False:
+        return payload
+
+    try:
+        text = _decode_text_content(str(payload.get("content_base64", "")), encoding)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"Failed to decode Drive file as text: {exc}",
+            "file": payload.get("file"),
+            "export_mime_type": payload.get("export_mime_type"),
+        }
+
+    return {
+        "ok": True,
+        "file": payload.get("file"),
+        "content": text,
+        "encoding": encoding,
+        "text_length": len(text),
+        "export_mime_type": payload.get("export_mime_type"),
+    }
+
+
 def get_drive_connector_tools(mcp_manager: Any = None) -> list[ToolSpec]:
     if mcp_manager is None:
         return []
@@ -445,6 +576,91 @@ def get_drive_connector_tools(mcp_manager: Any = None) -> list[ToolSpec]:
             },
             fallback_manager=mcp_manager,
             capabilities=("drive_write", "connector_use"),
+        ),
+        ToolSpec(
+            name="drive_create_text_file",
+            description="Create a text file in Google Drive without manually encoding content as base64.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "content": {"type": "string"},
+                    "mime_type": {"type": "string"},
+                    "encoding": {"type": "string"},
+                    "parent_id": {"type": "string"},
+                },
+                "required": ["name", "content"],
+                "additionalProperties": False,
+            },
+            permission="mcp_exec",
+            handler=lambda args, ctx, _manager=mcp_manager: drive_create_text_file(
+                args,
+                ctx,
+                fallback_manager=_manager,
+            ),
+            is_async=True,
+            metadata=ToolMetadata(
+                category="connectors",
+                risk="safe",
+                profile_tags=("execution", "writing"),
+                capabilities=("drive_write", "connector_use"),
+            ),
+        ),
+        ToolSpec(
+            name="drive_update_text_file",
+            description="Update an existing text file in Google Drive without manually encoding content as base64.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "name": {"type": "string"},
+                    "mime_type": {"type": "string"},
+                    "encoding": {"type": "string"},
+                },
+                "required": ["file_id", "content"],
+                "additionalProperties": False,
+            },
+            permission="mcp_exec",
+            handler=lambda args, ctx, _manager=mcp_manager: drive_update_text_file(
+                args,
+                ctx,
+                fallback_manager=_manager,
+            ),
+            is_async=True,
+            metadata=ToolMetadata(
+                category="connectors",
+                risk="safe",
+                profile_tags=("execution", "writing"),
+                capabilities=("drive_write", "connector_use"),
+            ),
+        ),
+        ToolSpec(
+            name="drive_read_text_file",
+            description="Read a Drive file as text, optionally exporting a Google Docs-native file first.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                    "encoding": {"type": "string"},
+                    "export_mime_type": {"type": "string"},
+                },
+                "required": ["file_id"],
+                "additionalProperties": False,
+            },
+            permission="mcp_exec",
+            handler=lambda args, ctx, _manager=mcp_manager: drive_read_text_file(
+                args,
+                ctx,
+                fallback_manager=_manager,
+            ),
+            is_async=True,
+            metadata=ToolMetadata(
+                category="connectors",
+                risk="safe",
+                profile_tags=("research", "writing"),
+                capabilities=("drive_read", "connector_use"),
+            ),
         ),
         ToolSpec(
             name="drive_download_to_workspace",

@@ -93,6 +93,9 @@ def test_catalog_includes_first_class_drive_tools_when_mcp_manager_is_present() 
     assert "drive_get_file" in names
     assert "drive_upload_file_content" in names
     assert "drive_update_file_content" in names
+    assert "drive_create_text_file" in names
+    assert "drive_update_text_file" in names
+    assert "drive_read_text_file" in names
     assert "drive_list_children" in names
     assert "drive_trash_file" in names
     assert "drive_download_to_workspace" in names
@@ -329,3 +332,93 @@ def test_drive_update_from_workspace_reads_file(tmp_path) -> None:
 
     assert payload["id"] == "drive-file-1"
     assert payload["updated_from"] == "notes.txt"
+
+
+def test_drive_create_text_file_encodes_plain_text() -> None:
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Result:
+        def __init__(self, text: str) -> None:
+            self.content = [_Text(text)]
+
+    class _Manager:
+        async def call_tool(self, server_id, tool_name, args, allow_name_fallback=False):
+            assert server_id == "google-drive"
+            assert tool_name == "upload_file"
+            assert args["name"] == "notes.md"
+            assert args["content_base64"] == "IyBIZWxsbw=="
+            assert args["mime_type"] == "text/markdown"
+            assert allow_name_fallback is True
+            return _Result('{"id":"drive-file-2","name":"notes.md"}')
+
+    tools = {tool.name: tool for tool in get_drive_connector_tools(_Manager())}
+    payload = asyncio.run(
+        tools["drive_create_text_file"].handler(
+            {"name": "notes.md", "content": "# Hello", "mime_type": "text/markdown"},
+            {},
+        )
+    )
+
+    assert payload["id"] == "drive-file-2"
+    assert payload["text_length"] == 7
+
+
+def test_drive_update_text_file_encodes_plain_text() -> None:
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Result:
+        def __init__(self, text: str) -> None:
+            self.content = [_Text(text)]
+
+    class _Manager:
+        async def call_tool(self, server_id, tool_name, args, allow_name_fallback=False):
+            assert server_id == "google-drive"
+            assert tool_name == "update_file"
+            assert args["file_id"] == "drive-file-2"
+            assert args["content_base64"] == "dXBkYXRlZA=="
+            assert allow_name_fallback is True
+            return _Result('{"id":"drive-file-2","name":"notes.md"}')
+
+    tools = {tool.name: tool for tool in get_drive_connector_tools(_Manager())}
+    payload = asyncio.run(
+        tools["drive_update_text_file"].handler(
+            {"file_id": "drive-file-2", "content": "updated"},
+            {},
+        )
+    )
+
+    assert payload["id"] == "drive-file-2"
+    assert payload["text_length"] == 7
+
+
+def test_drive_read_text_file_decodes_plain_text() -> None:
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Result:
+        def __init__(self, text: str) -> None:
+            self.content = [_Text(text)]
+
+    class _Manager:
+        async def call_tool(self, server_id, tool_name, args, allow_name_fallback=False):
+            assert server_id == "google-drive"
+            assert tool_name == "download_file"
+            assert args == {"file_id": "drive-file-2"}
+            assert allow_name_fallback is True
+            return _Result('{"file":{"id":"drive-file-2","name":"notes.md"},"content_base64":"IyBIZWxsbw=="}')
+
+    tools = {tool.name: tool for tool in get_drive_connector_tools(_Manager())}
+    payload = asyncio.run(
+        tools["drive_read_text_file"].handler(
+            {"file_id": "drive-file-2"},
+            {},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["content"] == "# Hello"
