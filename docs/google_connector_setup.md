@@ -38,11 +38,13 @@ In your project:
 Current connector services:
 - `Gmail API`
 - `Google Calendar API`
+- `Google Drive API`
 
 Direct links:
 
 - `https://console.cloud.google.com/apis/api/gmail.googleapis.com`
 - `https://console.cloud.google.com/apis/api/calendar-json.googleapis.com`
+- `https://console.cloud.google.com/apis/api/drive.googleapis.com`
 
 Wait a minute or two after enabling an API before retrying auth or tool calls.
 
@@ -119,8 +121,9 @@ uv run octopal restart
 
 ## Notes
 
-- Current services: Gmail and Google Calendar
+- Current services: Gmail, Google Calendar, and Google Drive
 - Current model: user-provided OAuth credentials
 - A shared verified Octopal Google app is not required for this self-hosted flow
 - Gmail is read-focused today
 - Calendar currently supports listing calendars, listing/searching events, reading events, and creating events
+- Drive currently supports listing/searching files, listing folder children, reading metadata, downloading files, exporting Google Docs-native files, uploading new files, updating existing files, creating folders, trashing files, moving files between Drive and workspace, returning Drive view links after upload, and reading/writing text files without manual base64 handling

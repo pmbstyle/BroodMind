@@ -7,6 +7,7 @@ This document lists the connectors that are currently supported in Octopal.
 Current supported services:
 - Gmail
 - Calendar
+- Drive
 
 What it can do today:
 - list recent emails
@@ -24,6 +25,19 @@ What it can do today:
 - update an event
 - delete an event
 - run free/busy lookup for one or more calendars
+- list recent Drive files
+- search Drive files
+- inspect Drive file metadata
+- list files inside Drive folders
+- create Drive folders
+- download Drive file contents
+- export Google Docs-native files
+- upload new files to Drive
+- update existing Drive files
+- move Drive files to trash
+- move files between Drive and workspace
+- upload a workspace file and return its Drive link
+- read and write text files without manual base64 handling
 
 What it does not do yet:
 - send email
@@ -38,7 +52,7 @@ Setup guide:
 
 CLI flow:
 1. Run `octopal configure`
-2. Enable `Google -> Gmail` and/or `Google -> Calendar`
+2. Enable any needed Google services such as `Gmail`, `Calendar`, and/or `Drive`
 3. Run `octopal connector auth google`
 4. Run `octopal connector status`
 5. Restart Octopal if needed
