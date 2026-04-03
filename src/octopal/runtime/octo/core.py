@@ -1811,7 +1811,11 @@ class Octo:
             self.mark_user_turn_inactive(correlation_id)
             if track_progress:
                 self.clear_suppressed_turn_followups(correlation_id)
-            if wants_followup:
+            pending_followup_work = (
+                self.has_active_workers_for_correlation(correlation_id)
+                or self.has_pending_internal_results_for_correlation(correlation_id)
+            )
+            if wants_followup and pending_followup_work:
                 _schedule_worker_followup_flush(self, chat_id, correlation_id)
             else:
                 _discard_worker_followup_batch(
