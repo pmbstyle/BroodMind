@@ -57,7 +57,7 @@ def get_tools(mcp_manager=None) -> list[ToolSpec]:
     tools = [
         ToolSpec(
             name="send_file_to_user",
-            description="Send a local workspace file or a downloaded URL attachment to the active user channel.",
+            description="Send a local workspace file or a downloaded URL attachment to the active user channel. Only the Octo can use this.",
             parameters={
                 "type": "object",
                 "properties": {
