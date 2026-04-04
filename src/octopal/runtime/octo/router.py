@@ -53,6 +53,7 @@ _MANDATORY_OCTO_TOOL_NAMES = {
 _PRIORITY_TOOL_NAMES = {
     "octo_context_reset",
     "octo_context_health",
+    "tool_catalog_search",
     "octo_experiment_log",
     "check_schedule",
     "start_worker",
@@ -69,6 +70,7 @@ _ALWAYS_INCLUDE_TOOL_NAMES = {
     "octo_context_health",
     "check_schedule",
     "scheduler_status",
+    "tool_catalog_search",
     # Scheduler control loop
     "list_schedule",
     "schedule_task",
@@ -746,6 +748,7 @@ def _get_octo_tools(octo: Any, chat_id: int) -> tuple[list[ToolSpec], dict[str, 
     )
     max_tools = _env_int("OCTOPAL_OCTO_MAX_TOOL_COUNT", _DEFAULT_MAX_TOOL_COUNT, minimum=8)
     tool_specs = _budget_tool_specs(tool_specs, max_count=max_tools)
+    ctx["active_tool_specs"] = tool_specs
     ctx["tool_resolution_report"] = resolution_report
     ctx["all_tool_specs"] = all_tools
     return tool_specs, ctx

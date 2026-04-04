@@ -27,6 +27,7 @@ def test_budget_keeps_internal_worker_and_scheduler_tools() -> None:
         "list_workers",
         "list_active_workers",
         "schedule_task",
+        "tool_catalog_search",
     }
     assert must_keep.issubset(names)
 
