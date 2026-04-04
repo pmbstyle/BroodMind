@@ -825,7 +825,21 @@ def _is_transient_provider_error(exc: Exception) -> bool:
 
 def _tool_priority(spec: ToolSpec) -> tuple[int, str]:
     name = str(getattr(spec, "name", "") or "")
-    return (0 if name in _PRIORITY_TOOL_NAMES else 1, name)
+    if name in _PRIORITY_TOOL_NAMES:
+        return (0, name)
+    if _is_connector_tool(spec):
+        return (1, name)
+    return (2, name)
+
+
+def _is_connector_tool(spec: ToolSpec) -> bool:
+    metadata = getattr(spec, "metadata", None)
+    category = str(getattr(metadata, "category", "") or "").strip().lower()
+    if category == "connectors":
+        return True
+
+    name = str(getattr(spec, "name", "") or "").strip().lower()
+    return name.startswith(("gmail_", "calendar_", "drive_", "connector_"))
 
 
 def _budget_tool_specs(tool_specs: list[ToolSpec], *, max_count: int) -> list[ToolSpec]:
