@@ -28,22 +28,109 @@ class GitHubApiError(RuntimeError):
         status_code: int,
         message: str,
         details: dict[str, Any] | None = None,
+        method: str | None = None,
+        path: str | None = None,
     ) -> None:
         self.status_code = status_code
         self.details = details or {}
+        self.method = method
+        self.path = path
         super().__init__(f"GitHub API {status_code}: {message}")
 
 
-def _parse_github_api_error(response: httpx.Response) -> GitHubApiError:
+_MAX_LIST_PER_PAGE = 50
+
+
+def _clamp_per_page(per_page: int) -> int:
+    return max(1, min(per_page, _MAX_LIST_PER_PAGE))
+
+
+def _format_permission_hint(method: str, path: str, response: httpx.Response) -> str | None:
+    accepted_permissions = response.headers.get("X-Accepted-GitHub-Permissions", "").strip()
+    accepted_suffix = f" GitHub reports accepted permissions: {accepted_permissions}." if accepted_permissions else ""
+
+    if response.status_code == 403:
+        if method == "POST" and "/issues/" in path and path.endswith("/comments"):
+            return (
+                "GitHub denied write access for issue or pull request conversation comments. "
+                "Fine-grained PATs usually need Issues: write or Pull requests: write. "
+                "Classic PATs need public_repo for public repos or repo for private repos."
+                f"{accepted_suffix}"
+            )
+        if method == "PATCH" and "/issues/comments/" in path:
+            return (
+                "GitHub denied write access for updating an issue or pull request conversation comment. "
+                "Fine-grained PATs usually need Issues: write or Pull requests: write. "
+                "Classic PATs need public_repo for public repos or repo for private repos."
+                f"{accepted_suffix}"
+            )
+        if method == "POST" and "/pulls/" in path and path.endswith("/reviews"):
+            return (
+                "GitHub denied write access for creating a pull request review. "
+                "Fine-grained PATs need Pull requests: write. "
+                "Classic PATs need public_repo for public repos or repo for private repos."
+                f"{accepted_suffix}"
+            )
+        if method == "POST" and path.endswith("/issues"):
+            return (
+                "GitHub denied write access for creating an issue. "
+                "Fine-grained PATs need Issues: write. "
+                "Classic PATs need public_repo for public repos or repo for private repos."
+                f"{accepted_suffix}"
+            )
+        if method == "PATCH" and "/issues/" in path and "/comments/" not in path:
+            return (
+                "GitHub denied write access for updating an issue. "
+                "Fine-grained PATs need Issues: write. "
+                "Classic PATs need public_repo for public repos or repo for private repos."
+                f"{accepted_suffix}"
+            )
+        return (
+            "GitHub denied access for this request. "
+            "For fine-grained PATs, confirm the token has repository access to this repo and the required repository permission."
+            f"{accepted_suffix}"
+        )
+
+    if response.status_code == 404 and path.startswith("/repos/"):
+        return (
+            "GitHub returned 404 for this repository resource. "
+            "Check the owner/repo slug and, for fine-grained PATs, confirm the token includes this repository under Repository access."
+        )
+
+    return None
+
+
+def _parse_github_api_error(response: httpx.Response, *, method: str, path: str) -> GitHubApiError:
     payload: dict[str, Any] = {}
     try:
         payload = response.json()
     except json.JSONDecodeError:
         text = response.text.strip() or response.reason_phrase
-        return GitHubApiError(status_code=response.status_code, message=text, details={})
+        hint = _format_permission_hint(method, path, response)
+        return GitHubApiError(
+            status_code=response.status_code,
+            message=hint or text,
+            details={},
+            method=method,
+            path=path,
+        )
 
     message = str(payload.get("message") or response.reason_phrase or "Unknown GitHub API error").strip()
-    return GitHubApiError(status_code=response.status_code, message=message, details=payload)
+    hint = _format_permission_hint(method, path, response)
+    details = dict(payload)
+    accepted_permissions = response.headers.get("X-Accepted-GitHub-Permissions", "").strip()
+    oauth_scopes = response.headers.get("X-OAuth-Scopes", "").strip()
+    if accepted_permissions:
+        details["accepted_permissions"] = accepted_permissions
+    if oauth_scopes:
+        details["oauth_scopes"] = oauth_scopes
+    return GitHubApiError(
+        status_code=response.status_code,
+        message=hint or message,
+        details=details,
+        method=method,
+        path=path,
+    )
 
 
 def _normalize_user(user: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -311,7 +398,7 @@ class GitHubApiClient:
             },
         )
         if response.is_error:
-            raise _parse_github_api_error(response)
+            raise _parse_github_api_error(response, method=method, path=path)
         if not response.content:
             return {}
         return response.json()
@@ -341,7 +428,7 @@ class GitHubApiClient:
         params: dict[str, Any] = {
             "sort": sort,
             "direction": direction,
-            "per_page": max(1, min(per_page, 100)),
+            "per_page": _clamp_per_page(per_page),
             "page": max(1, page),
         }
         if visibility:
@@ -368,7 +455,7 @@ class GitHubApiClient:
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "state": state,
-            "per_page": max(1, min(per_page, 100)),
+            "per_page": _clamp_per_page(per_page),
             "page": max(1, page),
         }
         if labels:
@@ -459,7 +546,7 @@ class GitHubApiClient:
         payload = await self._request(
             "GET",
             f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
-            params={"per_page": max(1, min(per_page, 100)), "page": max(1, page)},
+            params={"per_page": _clamp_per_page(per_page), "page": max(1, page)},
         )
         return {
             "owner": owner,
@@ -515,7 +602,7 @@ class GitHubApiClient:
             "state": state,
             "sort": sort,
             "direction": direction,
-            "per_page": max(1, min(per_page, 100)),
+            "per_page": _clamp_per_page(per_page),
             "page": max(1, page),
         }
         if head:
@@ -545,7 +632,7 @@ class GitHubApiClient:
         payload = await self._request(
             "GET",
             f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-            params={"per_page": max(1, min(per_page, 100)), "page": max(1, page)},
+            params={"per_page": _clamp_per_page(per_page), "page": max(1, page)},
         )
         return {
             "owner": owner,
@@ -566,7 +653,7 @@ class GitHubApiClient:
         payload = await self._request(
             "GET",
             f"/repos/{owner}/{repo}/pulls/{pull_number}/comments",
-            params={"per_page": max(1, min(per_page, 100)), "page": max(1, page)},
+            params={"per_page": _clamp_per_page(per_page), "page": max(1, page)},
         )
         return {
             "owner": owner,
@@ -614,7 +701,7 @@ class GitHubApiClient:
         payload = await self._request(
             "GET",
             f"/repos/{owner}/{repo}/pulls/{pull_number}/files",
-            params={"per_page": max(1, min(per_page, 100)), "page": max(1, page)},
+            params={"per_page": _clamp_per_page(per_page), "page": max(1, page)},
         )
         return {
             "owner": owner,
@@ -635,7 +722,7 @@ class GitHubApiClient:
         payload = await self._request(
             "GET",
             f"/repos/{owner}/{repo}/pulls/{pull_number}/commits",
-            params={"per_page": max(1, min(per_page, 100)), "page": max(1, page)},
+            params={"per_page": _clamp_per_page(per_page), "page": max(1, page)},
         )
         return {
             "owner": owner,
@@ -656,7 +743,7 @@ class GitHubApiClient:
         payload = await self._request(
             "GET",
             f"/repos/{owner}/{repo}/commits/{commit_sha}/comments",
-            params={"per_page": max(1, min(per_page, 100)), "page": max(1, page)},
+            params={"per_page": _clamp_per_page(per_page), "page": max(1, page)},
         )
         return {
             "owner": owner,

@@ -6,6 +6,7 @@ import types
 
 import pytest
 
+from octopal.infrastructure.connectors import github as github_connector_module
 from octopal.cli.configure import _collect_connector_next_steps
 from octopal.infrastructure.config.models import ConnectorInstanceConfig, OctopalConfig
 from octopal.infrastructure.connectors.google import _oauthlib_insecure_transport_for_localhost
@@ -188,7 +189,7 @@ def test_google_connector_disconnect_clears_auth_state_but_keeps_client_credenti
     assert instance.credentials.client_secret == "client-secret"
 
 
-def test_github_connector_disconnect_clears_access_token() -> None:
+def test_github_connector_disconnect_keeps_access_token_by_default() -> None:
     config = OctopalConfig()
     config.connectors.instances["github"] = ConnectorInstanceConfig(
         enabled=True,
@@ -205,8 +206,88 @@ def test_github_connector_disconnect_clears_access_token() -> None:
 
     assert result["status"] == "success"
     instance = config.connectors.instances["github"]
+    assert instance.auth.access_token == "ghp_test"
+    assert instance.auth.authorized_services == []
+
+
+def test_github_connector_disconnect_forgets_access_token_when_requested() -> None:
+    config = OctopalConfig()
+    config.connectors.instances["github"] = ConnectorInstanceConfig(
+        enabled=True,
+        enabled_services=["repos"],
+        auth={
+            "authorized_services": ["repos"],
+            "access_token": "ghp_test",
+        },
+    )
+    manager = _build_manager(config)
+    connector = manager.get_connector("github")
+
+    result = asyncio.run(connector.disconnect(forget_credentials=True))
+
+    assert result["status"] == "success"
+    instance = config.connectors.instances["github"]
     assert instance.auth.access_token is None
     assert instance.auth.authorized_services == []
+
+
+def test_github_connector_authorize_rejects_classic_token_without_write_scopes(monkeypatch) -> None:
+    config = OctopalConfig()
+    config.connectors.instances["github"] = ConnectorInstanceConfig(
+        enabled=True,
+        enabled_services=["issues"],
+        auth={"access_token": "ghp_test"},
+    )
+    manager = _build_manager(config)
+    connector = manager.get_connector("github")
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path, headers):
+            return github_connector_module.httpx.Response(
+                200,
+                json={"login": "pmbstyle"},
+                headers={"X-OAuth-Scopes": "read:org"},
+            )
+
+    monkeypatch.setattr(github_connector_module.httpx, "AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    result = asyncio.run(connector.authorize())
+
+    assert "public_repo" in result["error"]
+
+
+def test_github_connector_authorize_accepts_fine_grained_token_without_scope_headers(monkeypatch) -> None:
+    config = OctopalConfig()
+    config.connectors.instances["github"] = ConnectorInstanceConfig(
+        enabled=True,
+        enabled_services=["pull_requests"],
+        auth={"access_token": "ghp_test"},
+    )
+    manager = _build_manager(config)
+    connector = manager.get_connector("github")
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path, headers):
+            return github_connector_module.httpx.Response(200, json={"login": "pmbstyle"})
+
+    monkeypatch.setattr(github_connector_module.httpx, "AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    result = asyncio.run(connector.authorize())
+
+    assert result["status"] == "success"
+    assert "fine-grained token" in result["message"]
 
 
 def test_connector_manager_reconciles_ready_github_connector_into_running_mcp() -> None:

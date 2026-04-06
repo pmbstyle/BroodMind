@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from octopal.mcp_servers.github import (
+    GitHubApiClient,
     _normalize_commit,
     _normalize_commit_comment,
     _normalize_issue,
@@ -180,7 +182,46 @@ def test_parse_github_api_error_prefers_message_from_json_payload() -> None:
         json={"message": "Resource not accessible by personal access token", "documentation_url": "https://docs.github.com"},
     )
 
-    error = _parse_github_api_error(response)
+    error = _parse_github_api_error(response, method="GET", path="/repos/octo/demo")
 
     assert error.status_code == 403
-    assert str(error) == "GitHub API 403: Resource not accessible by personal access token"
+    assert "GitHub denied access for this request." in str(error)
+
+
+def test_parse_github_api_error_for_pull_review_write_is_actionable() -> None:
+    response = httpx.Response(
+        403,
+        json={"message": "Resource not accessible by personal access token"},
+        headers={"X-Accepted-GitHub-Permissions": "pull_requests=write"},
+    )
+
+    error = _parse_github_api_error(
+        response,
+        method="POST",
+        path="/repos/pmbstyle/Octopal/pulls/31/reviews",
+    )
+
+    assert "Pull requests: write" in str(error)
+    assert error.details["accepted_permissions"] == "pull_requests=write"
+
+
+@pytest.mark.asyncio
+async def test_list_pull_requests_clamps_per_page_to_internal_limit(monkeypatch) -> None:
+    client = GitHubApiClient.__new__(GitHubApiClient)
+
+    async def _fake_request(method: str, path: str, *, params=None, json_body=None):
+        assert method == "GET"
+        assert path == "/repos/pmbstyle/Octopal/pulls"
+        assert params["per_page"] == 50
+        return []
+
+    client._request = _fake_request  # type: ignore[attr-defined]
+
+    payload = await GitHubApiClient.list_pull_requests(
+        client,
+        owner="pmbstyle",
+        repo="Octopal",
+        per_page=999,
+    )
+
+    assert payload["pull_requests"] == []

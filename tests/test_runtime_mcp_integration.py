@@ -265,7 +265,7 @@ def test_runtime_includes_connector_alias_tools_for_workers(tmp_path: Path) -> N
                     "affiliation": {"type": "string"},
                     "sort": {"type": "string"},
                     "direction": {"type": "string"},
-                    "per_page": {"type": "integer", "minimum": 1, "maximum": 100},
+                        "per_page": {"type": "integer", "minimum": 1, "maximum": 50},
                     "page": {"type": "integer", "minimum": 1},
                 },
                 "additionalProperties": False,

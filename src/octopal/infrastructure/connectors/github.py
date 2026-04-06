@@ -56,6 +56,33 @@ class GitHubConnector(Connector):
         supported = set(self.supported_services())
         return [service for service in self._get_enabled_services() if service not in supported]
 
+    def _validate_classic_token_scopes(
+        self,
+        *,
+        enabled_services: list[str],
+        scopes_header: str,
+    ) -> dict[str, Any]:
+        scopes = [scope.strip() for scope in scopes_header.split(",") if scope.strip()]
+        scope_set = set(scopes)
+        warnings: list[str] = []
+
+        if any(service in {"issues", "pull_requests"} for service in enabled_services):
+            if "repo" not in scope_set and "public_repo" not in scope_set:
+                return {
+                    "ok": False,
+                    "scopes": scopes,
+                    "error": (
+                        "GitHub token is valid, but it does not include write access for issues or pull requests. "
+                        "Classic PATs need `public_repo` for public repositories or `repo` for private repositories."
+                    ),
+                }
+            if "public_repo" in scope_set and "repo" not in scope_set:
+                warnings.append(
+                    "Classic PAT includes `public_repo` but not `repo`, so writes will work only on public repositories."
+                )
+
+        return {"ok": True, "scopes": scopes, "warnings": warnings}
+
     async def get_status(self) -> dict[str, Any]:
         config = self._get_config()
         if not config or not config.enabled:
@@ -168,6 +195,24 @@ class GitHubConnector(Connector):
             if response.is_error:
                 detail = response.text.strip() or response.reason_phrase
                 return {"error": f"GitHub authorization check failed: {detail}"}
+
+            scopes_header = response.headers.get("X-OAuth-Scopes", "").strip()
+            auth_note = ""
+            if scopes_header:
+                validation = self._validate_classic_token_scopes(
+                    enabled_services=enabled_services,
+                    scopes_header=scopes_header,
+                )
+                if not validation["ok"]:
+                    return {"error": validation["error"]}
+                warnings = validation.get("warnings") or []
+                if warnings:
+                    auth_note = " " + " ".join(warnings)
+            else:
+                auth_note = (
+                    " GitHub did not expose classic scope headers for this token. "
+                    "If this is a fine-grained token, repository permissions will still be enforced per repository at runtime."
+                )
         except Exception as exc:
             logger.exception("Failed to authorize GitHub connector")
             return {"error": f"Failed to authorize GitHub connector: {exc}"}
@@ -181,7 +226,7 @@ class GitHubConnector(Connector):
 
         return {
             "status": "success",
-            "message": f"GitHub connector authorized for {', '.join(enabled_services)}.",
+            "message": f"GitHub connector authorized for {', '.join(enabled_services)}.{auth_note}",
         }
 
     async def start(self) -> None:
@@ -227,13 +272,18 @@ class GitHubConnector(Connector):
                         exc_info=True,
                     )
 
-        config.auth.refresh_token = None
-        config.auth.access_token = None
         config.auth.authorized_services = []
         config.auth.last_error = None
+        if forget_credentials:
+            config.auth.refresh_token = None
+            config.auth.access_token = None
         self.manager.save_config()
 
         return {
             "status": "success",
-            "message": "GitHub connector disconnected and stored access credentials were removed.",
+            "message": (
+                "GitHub connector disconnected and stored access credentials were removed."
+                if forget_credentials
+                else "GitHub connector disconnected. Stored access credentials were kept."
+            ),
         }
