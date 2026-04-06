@@ -10,6 +10,7 @@ from octopal.tools.catalog import get_tools
 from octopal.tools.connectors.calendar import get_calendar_connector_tools
 from octopal.tools.connectors.drive import get_drive_connector_tools
 from octopal.tools.connectors.gmail import get_gmail_connector_tools
+from octopal.tools.connectors.github import get_github_connector_tools
 from octopal.tools.connectors.status import connector_status_read
 from octopal.tools.registry import ToolSpec
 
@@ -129,6 +130,20 @@ def test_catalog_includes_first_class_drive_tools_when_mcp_manager_is_present() 
     assert "drive_upload_from_workspace" in names
     assert "drive_upload_and_get_link" in names
     assert "drive_update_from_workspace" in names
+
+
+def test_catalog_includes_first_class_github_tools_when_mcp_manager_is_present() -> None:
+    class _Manager:
+        def get_all_tools(self):
+            return []
+
+    tools = get_tools(mcp_manager=_Manager())
+    names = {tool.name for tool in tools}
+
+    assert "github_list_repositories" in names
+    assert "github_get_repository" in names
+    assert "github_list_issues" in names
+    assert "github_list_pull_requests" in names
 
 
 def test_gmail_connector_tool_proxies_and_parses_json_payload() -> None:
@@ -486,3 +501,26 @@ def test_drive_read_text_file_decodes_plain_text() -> None:
 
     assert payload["ok"] is True
     assert payload["content"] == "# Hello"
+
+
+def test_github_connector_tool_proxies_and_parses_json_payload() -> None:
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Result:
+        def __init__(self, text: str) -> None:
+            self.content = [_Text(text)]
+
+    class _Manager:
+        async def call_tool(self, server_id, tool_name, args, allow_name_fallback=False):
+            assert server_id == "github-core"
+            assert tool_name == "list_repositories"
+            assert args == {"per_page": 1}
+            assert allow_name_fallback is True
+            return _Result('{"repositories":[{"id":1,"full_name":"octo/demo"}]}')
+
+    tools = {tool.name: tool for tool in get_github_connector_tools(_Manager())}
+    payload = asyncio.run(tools["github_list_repositories"].handler({"per_page": 1}, {}))
+
+    assert payload["repositories"][0]["full_name"] == "octo/demo"

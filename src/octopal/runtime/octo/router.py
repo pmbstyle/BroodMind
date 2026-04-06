@@ -50,6 +50,14 @@ _MANDATORY_OCTO_TOOL_NAMES = {
     "fs_write",
     "fs_move",
     "fs_delete",
+    # Connector baseline discovery tools
+    "connector_status",
+    "gmail_list_messages",
+    "gmail_search_messages",
+    "gmail_get_unread_count",
+    "calendar_list_events",
+    "drive_list_files",
+    "github_list_repositories",
 }
 _PRIORITY_TOOL_NAMES = {
     "octo_context_reset",
@@ -95,6 +103,14 @@ _ALWAYS_INCLUDE_TOOL_NAMES = {
     "fs_write",
     "fs_move",
     "fs_delete",
+    # Connector baseline discovery tools
+    "connector_status",
+    "gmail_list_messages",
+    "gmail_search_messages",
+    "gmail_get_unread_count",
+    "calendar_list_events",
+    "drive_list_files",
+    "github_list_repositories",
 }
 _TEXTUAL_TOOL_NAME_RE = re.compile(r"^(?:mcp__[\w-]+__)?[a-z][a-z0-9_]{1,63}$", re.IGNORECASE)
 _TEXTUAL_TOOL_PREVIEW_RE = re.compile(

@@ -56,3 +56,32 @@ CLI flow:
 3. Run `octopal connector auth google`
 4. Run `octopal connector status`
 5. Restart Octopal if needed
+
+## GitHub
+
+Current supported services:
+- Repositories
+- Issues
+- Pull requests
+
+What it can do today:
+- inspect the authenticated GitHub account
+- list repositories visible to that account
+- inspect repository metadata
+- list repository issues
+- read a single issue
+- list pull requests
+- read a single pull request
+
+What it does not do yet:
+- create or edit issues
+- create or merge pull requests
+- read GitHub Actions runs
+- read code contents through the connector
+
+CLI flow:
+1. Run `octopal configure`
+2. Enable any needed GitHub services such as `Repositories`, `Issues`, and/or `Pull Requests`
+3. Run `octopal connector auth github`
+4. Run `octopal connector status`
+5. Restart Octopal if needed
