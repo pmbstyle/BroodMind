@@ -21,6 +21,7 @@ def test_catalog_includes_read_only_connector_status_tool() -> None:
 
     assert "connector_status" in names
     assert "send_file_to_user" in names
+    assert "github_review_bundle" in names
 
 
 def test_connector_status_tool_reads_status_from_octo_context() -> None:
@@ -616,3 +617,50 @@ def test_github_list_pull_files_tool_proxies_and_parses_json_payload() -> None:
 
     assert payload["files"][0]["filename"] == "src/app.py"
     assert payload["files"][0]["patch"] == "@@ -1 +1 @@"
+
+
+def test_github_review_bundle_collects_pr_context() -> None:
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Result:
+        def __init__(self, text: str) -> None:
+            self.content = [_Text(text)]
+
+    class _Manager:
+        def get_all_tools(self):
+            return []
+
+        async def call_tool(self, server_id, tool_name, args, allow_name_fallback=False):
+            assert server_id == "github-core"
+            assert allow_name_fallback is True
+            responses = {
+                "get_pull_request": '{"number":7,"title":"Improve GitHub connector"}',
+                "get_pull_merge_readiness": '{"merge_readiness":{"mergeable":true},"review_summary":{"approvals":1}}',
+                "list_pull_reviews": '{"reviews":[{"id":1,"state":"APPROVED"}]}',
+                "list_pull_review_comments": '{"comments":[{"id":2,"path":"src/x.py"}]}',
+                "list_pull_files": '{"files":[{"filename":"src/x.py","patch":"@@ -1 +1 @@"}]}',
+                "list_pull_commits": '{"commits":[{"sha":"abc123","message":"refactor"}]}',
+                "list_issue_comments": '{"comments":[{"id":3,"body":"general feedback"}]}',
+                "list_commit_comments": '{"comments":[{"id":4,"body":"nit"}]}',
+            }
+            return _Result(responses[tool_name])
+
+    tools = {tool.name: tool for tool in get_tools(mcp_manager=_Manager())}
+    payload = json.loads(
+        asyncio.run(
+            tools["github_review_bundle"].handler(
+                {"owner": "octo", "repo": "demo", "pull_number": 7},
+                {"mcp_manager": _Manager()},
+            )
+        )
+    )
+
+    assert payload["status"] == "ok"
+    assert payload["pull_request"]["title"] == "Improve GitHub connector"
+    assert payload["merge_readiness"]["mergeable"] is True
+    assert payload["review_summary"]["approvals"] == 1
+    assert payload["files"][0]["filename"] == "src/x.py"
+    assert payload["commits"][0]["sha"] == "abc123"
+    assert payload["commit_comments"]["abc123"]["comments"][0]["body"] == "nit"
