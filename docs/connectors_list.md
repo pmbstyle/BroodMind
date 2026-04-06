@@ -70,11 +70,22 @@ What it can do today:
 - inspect repository metadata
 - list repository issues
 - read a single issue
+- create issues
+- update issues
+- list issue and pull request conversation comments
+- create issue and pull request conversation comments
+- update issue and pull request conversation comments
 - list pull requests
 - read a single pull request
+- list pull request reviews
+- list inline review comments on pull requests
+- create pull request reviews including comment/approve/request changes
+- list changed files in pull requests, including patch hunks when GitHub provides them
+- list commits included in pull requests
+- list commit comments for specific commit SHAs
+- summarize pull request merge readiness without merging
 
 What it does not do yet:
-- create or edit issues
 - create or merge pull requests
 - read GitHub Actions runs
 - read code contents through the connector

@@ -150,6 +150,14 @@ def test_catalog_includes_first_class_github_tools_when_mcp_manager_is_present()
     assert "github_get_repository" in names
     assert "github_list_issues" in names
     assert "github_list_pull_requests" in names
+    assert "github_create_issue" in names
+    assert "github_create_issue_comment" in names
+    assert "github_list_pull_reviews" in names
+    assert "github_create_pull_review" in names
+    assert "github_list_pull_files" in names
+    assert "github_list_pull_commits" in names
+    assert "github_list_commit_comments" in names
+    assert "github_get_pull_merge_readiness" in names
 
 
 def test_gmail_connector_tool_proxies_and_parses_json_payload() -> None:
@@ -530,3 +538,81 @@ def test_github_connector_tool_proxies_and_parses_json_payload() -> None:
     payload = asyncio.run(tools["github_list_repositories"].handler({"per_page": 1}, {}))
 
     assert payload["repositories"][0]["full_name"] == "octo/demo"
+
+
+def test_github_create_pull_review_tool_proxies_and_parses_json_payload() -> None:
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Result:
+        def __init__(self, text: str) -> None:
+            self.content = [_Text(text)]
+
+    class _Manager:
+        async def call_tool(self, server_id, tool_name, args, allow_name_fallback=False):
+            assert server_id == "github-core"
+            assert tool_name == "create_pull_review"
+            assert args == {
+                "owner": "octo",
+                "repo": "demo",
+                "pull_number": 7,
+                "body": "Looks good overall",
+                "event": "COMMENT",
+            }
+            assert allow_name_fallback is True
+            return _Result('{"id":55,"state":"COMMENTED","body":"Looks good overall"}')
+
+    tools = {tool.name: tool for tool in get_github_connector_tools(_Manager())}
+    payload = asyncio.run(
+        tools["github_create_pull_review"].handler(
+            {
+                "owner": "octo",
+                "repo": "demo",
+                "pull_number": 7,
+                "body": "Looks good overall",
+                "event": "COMMENT",
+            },
+            {},
+        )
+    )
+
+    assert payload["id"] == 55
+    assert payload["state"] == "COMMENTED"
+
+
+def test_github_list_pull_files_tool_proxies_and_parses_json_payload() -> None:
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Result:
+        def __init__(self, text: str) -> None:
+            self.content = [_Text(text)]
+
+    class _Manager:
+        async def call_tool(self, server_id, tool_name, args, allow_name_fallback=False):
+            assert server_id == "github-core"
+            assert tool_name == "list_pull_files"
+            assert args == {
+                "owner": "octo",
+                "repo": "demo",
+                "pull_number": 9,
+            }
+            assert allow_name_fallback is True
+            return _Result('{"files":[{"filename":"src/app.py","patch":"@@ -1 +1 @@"}]}')
+
+    tools = {tool.name: tool for tool in get_github_connector_tools(_Manager())}
+    payload = asyncio.run(
+        tools["github_list_pull_files"].handler(
+            {
+                "owner": "octo",
+                "repo": "demo",
+                "pull_number": 9,
+            },
+            {},
+        )
+    )
+
+    assert payload["files"][0]["filename"] == "src/app.py"
+    assert payload["files"][0]["patch"] == "@@ -1 +1 @@"
