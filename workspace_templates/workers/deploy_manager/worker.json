@@ -17,5 +17,7 @@
     "service_read"
   ],
   "max_thinking_steps": 14,
-  "default_timeout_seconds": 600
+  "default_timeout_seconds": 600,
+  "can_spawn_children": false,
+  "allowed_child_templates": []
 }

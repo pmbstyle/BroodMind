@@ -76,6 +76,7 @@ Default templates live under `workspace_templates/workers/` in the repository:
 - `test_runner`
 - `release_notes_writer`
 - `self_controller`
+- `research_coordinator`
 
 Note: Octopal discovers active templates from `workspace/workers/`.  
 Copy desired defaults into `workspace/workers/<worker_id>/worker.json` to activate them.

@@ -215,6 +215,7 @@ Common default templates synced from the repository include:
 - `deploy_manager`
 - `ops_sre`
 - `release_notes_writer`
+- `research_coordinator`
 - `security_auditor`
 - `self_controller`
 - `test_runner`

@@ -6,5 +6,7 @@
   "available_tools": ["web_search"],
   "required_permissions": ["network"],
   "max_thinking_steps": 8,
-  "default_timeout_seconds": 180
+  "default_timeout_seconds": 180,
+  "can_spawn_children": false,
+  "allowed_child_templates": []
 }
