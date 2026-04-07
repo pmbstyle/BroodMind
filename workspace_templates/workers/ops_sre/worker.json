@@ -16,5 +16,7 @@
     "filesystem_read"
   ],
   "max_thinking_steps": 12,
-  "default_timeout_seconds": 420
+  "default_timeout_seconds": 420,
+  "can_spawn_children": false,
+  "allowed_child_templates": []
 }

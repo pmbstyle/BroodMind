@@ -15,5 +15,7 @@
     "filesystem_write"
   ],
   "max_thinking_steps": 10,
-  "default_timeout_seconds": 300
+  "default_timeout_seconds": 300,
+  "can_spawn_children": false,
+  "allowed_child_templates": []
 }

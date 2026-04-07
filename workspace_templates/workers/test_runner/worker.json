@@ -7,12 +7,15 @@
     "test_run",
     "coverage_report",
     "artifact_collect",
-    "fs_read"
+    "fs_read",
+    "fs_list"
   ],
   "required_permissions": [
     "exec",
     "filesystem_read"
   ],
   "max_thinking_steps": 10,
-  "default_timeout_seconds": 480
+  "default_timeout_seconds": 480,
+  "can_spawn_children": false,
+  "allowed_child_templates": []
 }

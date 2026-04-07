@@ -13,5 +13,7 @@
     "db_admin"
   ],
   "max_thinking_steps": 10,
-  "default_timeout_seconds": 360
+  "default_timeout_seconds": 360,
+  "can_spawn_children": false,
+  "allowed_child_templates": []
 }
