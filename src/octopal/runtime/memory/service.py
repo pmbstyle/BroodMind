@@ -16,6 +16,27 @@ _ASSERTION_RE = re.compile(
     r"^\s*(?P<subject>.+?)\s+is\s+(?P<neg>not\s+)?(?P<predicate>.+?)\s*[.!?]?\s*$",
     re.IGNORECASE,
 )
+_DECISION_PATTERNS = (
+    re.compile(r"\b(decided|choose|chose|picked|settled on|went with|switch(?:ed)? to|migrat(?:e|ed) to)\b", re.IGNORECASE),
+    re.compile(r"\b(instead of|rather than|trade-?off|the reason is|the reason was|because)\b", re.IGNORECASE),
+)
+_PREFERENCE_PATTERNS = (
+    re.compile(r"\b(i prefer|we prefer|prefer to|always use|never use|please always|please never)\b", re.IGNORECASE),
+    re.compile(r"\b(i like|i don't like|i dont like|we always|we never)\b", re.IGNORECASE),
+)
+_MILESTONE_PATTERNS = (
+    re.compile(r"\b(it works|it worked|got it working|fixed|solved|resolved|figured it out)\b", re.IGNORECASE),
+    re.compile(r"\b(implemented|shipped|deployed|launched|breakthrough|released)\b", re.IGNORECASE),
+)
+_PROBLEM_PATTERNS = (
+    re.compile(r"\b(bug|error|crash|broken|issue|problem|failed|failing|stuck)\b", re.IGNORECASE),
+    re.compile(r"\b(doesn't work|doesnt work|not working|won't work|wont work|root cause|workaround)\b", re.IGNORECASE),
+    re.compile(r"\b(not healthy|unhealthy|degraded|down|outage)\b", re.IGNORECASE),
+)
+_EMOTIONAL_PATTERNS = (
+    re.compile(r"\b(worried|afraid|proud|happy|sad|sorry|angry|grateful|excited)\b", re.IGNORECASE),
+    re.compile(r"\b(frustrated|confused|love|hate|i feel|i need|i wish)\b", re.IGNORECASE),
+)
 
 
 @dataclass
@@ -50,6 +71,7 @@ class MemoryService:
         merged_metadata = dict(metadata or {})
         merged_metadata.setdefault("owner_id", self.owner_id)
         merged_metadata.setdefault("confidence", _default_confidence(role))
+        _merge_enrichment_metadata(merged_metadata, trimmed)
 
         chat_id = _coerce_chat_id(merged_metadata.get("chat_id"))
         owner_id = str(merged_metadata.get("owner_id", self.owner_id))
@@ -207,6 +229,51 @@ def _default_confidence(role: str) -> float:
         "tool": 0.9,
     }
     return by_role.get((role or "").lower(), 0.6)
+
+
+def _merge_enrichment_metadata(metadata: dict[str, Any], content: str) -> None:
+    facets = set(_coerce_str_list(metadata.get("memory_facets")))
+    facets.update(_infer_memory_facets(content))
+    if metadata.get("fact_candidate") is False:
+        facets.discard("fact_candidate")
+    if facets:
+        metadata["memory_facets"] = sorted(facets)
+
+    assertion = _extract_assertion(content)
+    if assertion is None:
+        return
+
+    metadata.setdefault("fact_candidate", True)
+    metadata.setdefault("fact_subject_hint", assertion.subject)
+    metadata.setdefault("fact_value_hint", assertion.predicate)
+    metadata.setdefault("fact_negated", assertion.negated)
+
+
+def _infer_memory_facets(content: str) -> set[str]:
+    facets: set[str] = set()
+    for facet, patterns in (
+        ("decision", _DECISION_PATTERNS),
+        ("preference", _PREFERENCE_PATTERNS),
+        ("milestone", _MILESTONE_PATTERNS),
+        ("problem", _PROBLEM_PATTERNS),
+        ("emotional", _EMOTIONAL_PATTERNS),
+    ):
+        if any(pattern.search(content) for pattern in patterns):
+            facets.add(facet)
+    if _extract_assertion(content) is not None:
+        facets.add("fact_candidate")
+    return facets
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            result.append(text)
+    return result
 
 
 def _coerce_confidence(value: Any, default: float) -> float:

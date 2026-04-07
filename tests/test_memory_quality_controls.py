@@ -94,3 +94,68 @@ def test_memory_context_uses_confidence_weighting() -> None:
     context = asyncio.run(scenario())
     assert len(context) == 1
     assert "High confidence old fact" in context[0]
+
+
+def test_memory_adds_typed_enrichment_metadata() -> None:
+    store = _StoreStub()
+    service = MemoryService(store=store, embeddings=None, owner_id="default")
+
+    async def scenario() -> None:
+        await service.add_message(
+            "assistant",
+            "We decided to switch to uv because pip was too slow.",
+            {"chat_id": 11},
+        )
+
+    asyncio.run(scenario())
+    assert len(store.entries) == 1
+    metadata = store.entries[0].metadata
+    facets = metadata.get("memory_facets") or []
+    assert "decision" in facets
+    assert "fact_candidate" not in facets
+
+
+def test_memory_adds_problem_emotional_and_fact_hints() -> None:
+    store = _StoreStub()
+    service = MemoryService(store=store, embeddings=None, owner_id="default")
+
+    async def scenario() -> None:
+        await service.add_message(
+            "assistant",
+            "Service is not healthy and I'm worried about the deploy.",
+            {"chat_id": 12},
+        )
+
+    asyncio.run(scenario())
+    metadata = store.entries[-1].metadata
+    facets = metadata.get("memory_facets") or []
+    assert "problem" in facets
+    assert "emotional" in facets
+    assert "fact_candidate" in facets
+    assert metadata.get("fact_candidate") is True
+    assert metadata.get("fact_subject_hint") == "service"
+    assert metadata.get("fact_value_hint") == "healthy and i'm worried about the deploy"
+    assert metadata.get("fact_negated") is True
+
+
+def test_memory_preserves_explicit_enrichment_overrides() -> None:
+    store = _StoreStub()
+    service = MemoryService(store=store, embeddings=None, owner_id="default")
+
+    async def scenario() -> None:
+        await service.add_message(
+            "assistant",
+            "Service is healthy.",
+            {
+                "chat_id": 13,
+                "memory_facets": ["custom_marker"],
+                "fact_candidate": False,
+            },
+        )
+
+    asyncio.run(scenario())
+    metadata = store.entries[-1].metadata
+    facets = metadata.get("memory_facets") or []
+    assert "custom_marker" in facets
+    assert "fact_candidate" not in facets
+    assert metadata.get("fact_candidate") is False
