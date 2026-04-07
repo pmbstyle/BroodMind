@@ -13,6 +13,9 @@ type GlobalFiltersBarProps = {
   onChange: (next: DashboardFilters) => void;
 };
 
+const fieldClassName =
+  "w-full rounded-2xl border border-white/8 bg-[var(--field-bg)] px-3 py-2.5 text-sm text-[var(--text-strong)] outline-none transition placeholder:text-[var(--text-dim)] focus:border-white/18 focus:bg-white/[0.08]";
+
 export function GlobalFiltersBar({ filters, onChange }: GlobalFiltersBarProps) {
   const [draftToken, setDraftToken] = useState<string>(filters.token);
 
@@ -24,59 +27,88 @@ export function GlobalFiltersBar({ filters, onChange }: GlobalFiltersBarProps) {
     onChange({ ...filters, windowMinutes: Number(event.target.value) as DashboardFilters["windowMinutes"] });
   };
 
-  const onTokenChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setDraftToken(event.target.value);
-  };
-
   return (
     <section
-      className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/60"
+      className="rounded-[28px] border border-white/6 bg-[var(--surface-panel)] px-4 py-4 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
       aria-label="Global filters"
     >
-      <div className="grid gap-3 md:grid-cols-[minmax(220px,320px)_1fr]">
-        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+      <div className="grid gap-3 xl:grid-cols-[140px_180px_180px_minmax(260px,1fr)_auto]">
+        <label className="grid gap-1.5 text-[11px] uppercase tracking-[0.18em] text-[var(--text-dim)]">
           Window
-          <select
-            value={filters.windowMinutes}
-            onChange={onSelectWindow}
-            className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-          >
-          <option value={15}>15m</option>
-          <option value={60}>1h</option>
-          <option value={240}>4h</option>
-          <option value={1440}>24h</option>
+          <select value={filters.windowMinutes} onChange={onSelectWindow} className={fieldClassName}>
+            <option value={15}>15m</option>
+            <option value={60}>1h</option>
+            <option value={240}>4h</option>
+            <option value={1440}>24h</option>
           </select>
         </label>
 
-        <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-400">
-          Dashboard token
-          <div className="flex gap-2">
-            <input
-              value={draftToken}
-              onChange={onTokenChange}
-              type="password"
-              placeholder="optional"
-              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-            />
-            <button
-              type="button"
-              className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/25"
-              onClick={() => onChange({ ...filters, token: draftToken.trim() })}
-            >
-              Apply
-            </button>
-            <button
-              type="button"
-              className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-700"
-              onClick={() => {
-                setDraftToken("");
-                onChange({ ...filters, token: "" });
-              }}
-            >
-              Clear
-            </button>
-          </div>
+        <label className="grid gap-1.5 text-[11px] uppercase tracking-[0.18em] text-[var(--text-dim)]">
+          Service
+          <select
+            value={filters.service}
+            onChange={(event) =>
+              onChange({ ...filters, service: event.target.value as DashboardFilters["service"] })
+            }
+            className={fieldClassName}
+          >
+            <option value="all">All services</option>
+            <option value="gateway">Gateway</option>
+            <option value="octo">Octo</option>
+            <option value="telegram">Telegram</option>
+            <option value="exec_run">Exec run</option>
+            <option value="mcp">MCP</option>
+            <option value="workers">Workers</option>
+          </select>
         </label>
+
+        <label className="grid gap-1.5 text-[11px] uppercase tracking-[0.18em] text-[var(--text-dim)]">
+          Environment
+          <select
+            value={filters.environment}
+            onChange={(event) =>
+              onChange({ ...filters, environment: event.target.value as DashboardFilters["environment"] })
+            }
+            className={fieldClassName}
+          >
+            <option value="all">All environments</option>
+            <option value="local">Local</option>
+            <option value="dev">Dev</option>
+            <option value="staging">Staging</option>
+            <option value="prod">Prod</option>
+          </select>
+        </label>
+
+        <label className="grid gap-1.5 text-[11px] uppercase tracking-[0.18em] text-[var(--text-dim)]">
+          Dashboard token
+          <input
+            value={draftToken}
+            onChange={(event) => setDraftToken(event.target.value)}
+            type="password"
+            placeholder="Optional access token"
+            className={fieldClassName}
+          />
+        </label>
+
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            className="rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-strong)] transition hover:bg-white/[0.1]"
+            onClick={() => onChange({ ...filters, token: draftToken.trim() })}
+          >
+            Apply
+          </button>
+          <button
+            type="button"
+            className="rounded-2xl border border-white/8 bg-transparent px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)] transition hover:border-white/14 hover:text-[var(--text-strong)]"
+            onClick={() => {
+              setDraftToken("");
+              onChange({ ...filters, token: "" });
+            }}
+          >
+            Clear
+          </button>
+        </div>
       </div>
     </section>
   );

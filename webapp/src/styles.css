@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -7,23 +7,69 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --app-bg: #0b1017;
+    --sidebar-bg: #0f141c;
+    --surface-top: #111821;
+    --surface-panel: rgba(18, 25, 35, 0.88);
+    --surface-panel-strong: rgba(15, 21, 31, 0.94);
+    --field-bg: rgba(255, 255, 255, 0.04);
+    --nav-active: rgba(255, 255, 255, 0.06);
+    --border-soft: rgba(255, 255, 255, 0.07);
+    --text-strong: #edf2f7;
+    --text-muted: #9aa5b5;
+    --text-dim: #647184;
   }
 
   * {
     @apply border-slate-800;
+    box-sizing: border-box;
+  }
+
+  html {
+    background: var(--app-bg);
   }
 
   body {
-    @apply m-0 bg-slate-950 text-slate-100;
-    font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
-    background-image:
-      radial-gradient(circle at 8% 12%, rgba(34, 211, 238, 0.08), transparent 36%),
-      radial-gradient(circle at 88% 8%, rgba(56, 189, 248, 0.07), transparent 34%),
-      linear-gradient(160deg, #020617 0%, #0b1120 45%, #020617 100%);
+    @apply m-0 text-slate-100 antialiased;
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(120, 142, 168, 0.14), transparent 28%),
+      radial-gradient(circle at 80% 10%, rgba(84, 102, 126, 0.12), transparent 22%),
+      linear-gradient(180deg, #0f141c 0%, #0b1017 48%, #0a0f16 100%);
     min-height: 100vh;
   }
 
   #app {
     min-height: 100vh;
+  }
+
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+
+  ::selection {
+    background: rgba(148, 163, 184, 0.28);
+    color: white;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.22);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.34);
   }
 }

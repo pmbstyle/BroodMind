@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import octopalLogo from "../assets/octopal-logo.png";
 import { GlobalFiltersBar } from "./GlobalFiltersBar";
 import type { DashboardFilters } from "./GlobalFiltersBar";
 
@@ -19,17 +20,47 @@ export type AppShellOutletContext = {
   setFilters: (next: DashboardFilters) => void;
 };
 
-const navItems = [
-  { to: "/", label: "Control" },
-  { to: "/overview", label: "Overview" },
-  { to: "/workers", label: "Workers" },
-  { to: "/octo", label: "Octo" },
-  { to: "/incidents", label: "Incidents" },
-  { to: "/system", label: "System" },
-  { to: "/actions", label: "Actions" },
+type NavItem = {
+  to: string;
+  label: string;
+  description: string;
+};
+
+const navGroups: { title: string; items: NavItem[] }[] = [
+  {
+    title: "Operations",
+    items: [
+      { to: "/", label: "Control", description: "Live operating surface" },
+      { to: "/overview", label: "Overview", description: "Health, KPIs, incidents" },
+      { to: "/octo", label: "Octo", description: "Runtime state and coordination" },
+      { to: "/incidents", label: "Incidents", description: "Open signals and pressure" },
+    ],
+  },
+  {
+    title: "Workspace",
+    items: [
+      { to: "/workers", label: "Workers", description: "Templates and worker setup" },
+      { to: "/system", label: "System", description: "Host, queues, and stability" },
+      { to: "/actions", label: "Actions", description: "Operator actions and controls" },
+    ],
+  },
 ];
 
+const pageMeta = new Map<string, { title: string; description: string }>(
+  navGroups.flatMap((group) => group.items.map((item) => [item.to, { title: item.label, description: item.description }])),
+);
+
+function getPageMeta(pathname: string): { title: string; description: string } {
+  if (pathname === "/") {
+    return pageMeta.get("/") ?? { title: "Control", description: "Live operating surface" };
+  }
+
+  const match = Array.from(pageMeta.entries()).find(([to]) => to !== "/" && pathname.startsWith(to));
+  return match?.[1] ?? { title: "Dashboard", description: "Operator workspace" };
+}
+
 export function AppShell() {
+  const location = useLocation();
   const [filters, setFilters] = useState<DashboardFilters>(() => {
     const raw = localStorage.getItem(filtersStorageKey);
     const token = sessionStorage.getItem(tokenStorageKey) ?? "";
@@ -71,44 +102,94 @@ export function AppShell() {
     }
   }, [filters]);
 
+  const currentPage = getPageMeta(location.pathname);
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8 md:py-10">
-        <header className="mb-6">
-          <p className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">Octopal</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-50 md:text-4xl">
-            Operations Control Center
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-400">
-            Live view for octo activity, worker pool, queue pressure and system health.
-          </p>
-        </header>
-        <GlobalFiltersBar filters={filters} onChange={setFilters} />
-        <nav className="mt-4 flex flex-wrap gap-2">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                [
-                  "rounded-full border px-3 py-1.5 text-xs uppercase tracking-[0.18em] transition",
-                  isActive
-                    ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-200"
-                    : "border-slate-800 bg-slate-900/70 text-slate-400 hover:border-slate-700 hover:text-slate-200",
-                ].join(" ")
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <main className="mt-5">
-          <Outlet context={{ filters, setFilters }} />
-        </main>
-        <footer className="mt-8 border-t border-slate-800 pt-4 text-xs text-slate-500">
-          Updates every 4 seconds. Streamlined for operator-first monitoring.
-        </footer>
+    <div className="min-h-screen bg-[var(--app-bg)] text-[var(--text-strong)]">
+      <div className="grid min-h-screen lg:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="border-b border-[var(--border-soft)] bg-[var(--sidebar-bg)] lg:border-b-0 lg:border-r">
+          <div className="flex h-full flex-col px-4 py-4 lg:px-5 lg:py-6">
+            <div className="flex items-center gap-3 border-b border-[var(--border-soft)] pb-4">
+              <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+                <img src={octopalLogo} alt="Octopal" className="h-8 w-8 object-contain" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)]">Octopal</p>
+                <h1 className="truncate text-lg font-semibold text-white">Agent Control</h1>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-6">
+              {navGroups.map((group) => (
+                <section key={group.title}>
+                  <p className="mb-2 px-2 text-[11px] uppercase tracking-[0.22em] text-[var(--text-dim)]">
+                    {group.title}
+                  </p>
+                  <nav className="space-y-1.5">
+                    {group.items.map((item) => (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        end={item.to === "/"}
+                        className={({ isActive }) =>
+                          [
+                            "group block rounded-2xl px-3 py-3 transition",
+                            isActive
+                              ? "bg-[var(--nav-active)] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
+                              : "text-[var(--text-muted)] hover:bg-white/[0.03] hover:text-[var(--text-strong)]",
+                          ].join(" ")
+                        }
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-medium">{item.label}</span>
+                          <span className="h-2 w-2 rounded-full bg-current opacity-25 transition group-hover:opacity-40" />
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--text-dim)]">{item.description}</p>
+                      </NavLink>
+                    ))}
+                  </nav>
+                </section>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-3xl border border-white/6 bg-white/[0.03] p-4">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-dim)]">Live mode</p>
+              <p className="mt-2 text-sm text-[var(--text-strong)]">Data refreshes continuously across the dashboard.</p>
+              <div className="mt-3 flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                Poll every 15s plus stream updates when available
+              </div>
+            </div>
+
+            <div className="mt-auto hidden border-t border-[var(--border-soft)] pt-4 text-xs text-[var(--text-dim)] lg:block">
+              Built for operator-first monitoring.
+            </div>
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          <header className="border-b border-[var(--border-soft)] bg-[var(--surface-top)]/92 backdrop-blur">
+            <div className="px-4 py-5 md:px-6 lg:px-8">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-dim)]">Operations Dashboard</p>
+                  <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-white">{currentPage.title}</h2>
+                  <p className="mt-2 max-w-3xl text-sm text-[var(--text-muted)]">{currentPage.description}</p>
+                </div>
+                <div className="rounded-full border border-white/8 bg-white/[0.04] px-4 py-2 text-sm text-[var(--text-muted)]">
+                  {filters.environment === "all" ? "All environments" : filters.environment}
+                </div>
+              </div>
+              <div className="mt-5">
+                <GlobalFiltersBar filters={filters} onChange={setFilters} />
+              </div>
+            </div>
+          </header>
+
+          <main className="px-4 py-5 md:px-6 lg:px-8 lg:py-8">
+            <Outlet context={{ filters, setFilters }} />
+          </main>
+        </div>
       </div>
     </div>
   );
