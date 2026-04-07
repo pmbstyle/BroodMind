@@ -114,14 +114,6 @@ function shortWorkerId(value?: string | null): string {
   return value.includes("-") ? value.split("-")[0] : value.slice(0, 8);
 }
 
-function shortText(value: string, limit = 140): string {
-  const trimmed = value.trim();
-  if (trimmed.length <= limit) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, limit - 1)}…`;
-}
-
 function hierarchyLabel(worker: WorkerRow): { text: string; isChild: boolean; depth: number } {
   const depth = Math.max(0, Number(worker.spawn_depth ?? 0));
   if (worker.parent_worker_id) {
@@ -638,7 +630,16 @@ export function ControlCenterPage() {
           ) : (
             <ScrollArea className="max-h-[42rem]">
               <div className="rounded-[22px] border border-white/6 bg-[var(--surface-panel-strong)]">
-                <Table className="min-w-[1080px]">
+                <Table className="min-w-[1120px] table-fixed">
+                  <colgroup>
+                    <col className="w-[112px]" />
+                    <col className="w-[132px]" />
+                    <col className="w-[148px]" />
+                    <col className="w-[210px]" />
+                    <col className="w-[36%]" />
+                    <col className="w-[28%]" />
+                    <col className="w-[180px]" />
+                  </colgroup>
                   <TableHeader>
                     <TableRow className="border-white/6 hover:bg-transparent">
                       <TableHead>ID</TableHead>
@@ -684,12 +685,14 @@ export function ControlCenterPage() {
                               {String(worker.status ?? "unknown")}
                             </span>
                           </TableCell>
-                          <TableCell className="text-[var(--text-strong)]">{worker.template_name ?? worker.template_id ?? "n/a"}</TableCell>
-                          <TableCell className="max-w-[360px] text-[var(--text-muted)]" title={worker.task ?? ""}>
-                            <div className="line-clamp-2">{String(worker.task ?? "") || "n/a"}</div>
+                          <TableCell className="text-[var(--text-strong)]" title={worker.template_name ?? worker.template_id ?? ""}>
+                            <div className="truncate">{worker.template_name ?? worker.template_id ?? "n/a"}</div>
                           </TableCell>
-                          <TableCell title={preview} className="max-w-[260px]">
-                            <div className={`text-sm ${tone(worker.status)}`}>{shortText(preview, 96)}</div>
+                          <TableCell className="whitespace-normal text-[var(--text-muted)]" title={worker.task ?? ""}>
+                            <div className="line-clamp-2 break-words">{String(worker.task ?? "") || "n/a"}</div>
+                          </TableCell>
+                          <TableCell title={preview} className="whitespace-normal">
+                            <div className={`line-clamp-2 break-words text-sm ${tone(worker.status)}`}>{preview}</div>
                           </TableCell>
                           <TableCell className="text-[var(--text-dim)]">{formatLocalDateTime(worker.updated_at)}</TableCell>
                         </tr>,
@@ -707,7 +710,7 @@ export function ControlCenterPage() {
                                 {worker.summary ? (
                                   <div className="space-y-1">
                                     <div className="text-xs uppercase tracking-[0.2em] text-cyan-300">Summary</div>
-                                    <div className="rounded-lg border border-white/6 bg-cyan-500/10 p-3 text-sm text-white">
+                                    <div className="rounded-lg border border-white/6 bg-cyan-500/10 p-3 text-sm text-white whitespace-pre-wrap break-words">
                                       {worker.summary}
                                     </div>
                                   </div>
@@ -716,7 +719,7 @@ export function ControlCenterPage() {
                                 {worker.error ? (
                                   <div className="space-y-1">
                                     <div className="text-xs uppercase tracking-[0.2em] text-rose-300">Error</div>
-                                    <div className="rounded-lg border border-rose-400/15 bg-rose-500/10 p-3 text-sm text-rose-100">
+                                    <div className="rounded-lg border border-rose-400/15 bg-rose-500/10 p-3 text-sm text-rose-100 whitespace-pre-wrap break-words">
                                       {worker.error}
                                     </div>
                                   </div>
@@ -739,7 +742,7 @@ export function ControlCenterPage() {
                                         Used tools {usedTools.length}
                                       </span>
                                       {usedTools.length > 0 ? (
-                                        <span className="text-[var(--text-muted)]">{usedTools.join(", ")}</span>
+                                        <span className="break-words text-[var(--text-muted)]">{usedTools.join(", ")}</span>
                                       ) : (
                                         <span className="text-[var(--text-dim)]">No tools reported</span>
                                       )}
@@ -762,7 +765,7 @@ export function ControlCenterPage() {
                                           </span>
                                         </div>
                                         <div className="text-[var(--text-muted)]">Model: {templateConfig.model || "default"}</div>
-                                        <div className="text-[var(--text-muted)]">
+                                        <div className="break-words text-[var(--text-muted)]">
                                           Allowed tools: {allowedTools.length > 0 ? allowedTools.join(", ") : "not declared"}
                                         </div>
                                       </div>
