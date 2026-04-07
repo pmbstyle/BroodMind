@@ -38,6 +38,10 @@ class CanonService:
                 path.write_text(f"# {filename.replace('.md', '').title()}\n\n", encoding="utf-8")
         self._ensure_event_log_bootstrap()
         if self.facts is not None:
+            try:
+                self.facts.prune_unsupported_canon_facts()
+            except Exception:
+                logger.exception("Failed to prune unsupported canon facts on startup")
             for filename in self.list_files():
                 try:
                     self.facts.sync_verified_facts_from_canon(filename, self.read_canon(filename))

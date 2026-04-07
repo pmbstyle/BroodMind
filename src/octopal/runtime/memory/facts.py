@@ -18,6 +18,17 @@ _ASSERTION_RE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9_]{3,}")
+_SUPPORTED_CANON_FACT_FILES = {"facts.md", "decisions.md", "failures.md"}
+_LOW_SIGNAL_SUBJECTS = {
+    "this",
+    "that",
+    "it",
+    "they",
+    "these",
+    "those",
+    "here",
+    "there",
+}
 
 
 @dataclass
@@ -105,6 +116,22 @@ class FactsService:
 
         return {"active": len(parsed), "superseded": superseded}
 
+    def prune_unsupported_canon_facts(self) -> int:
+        active = self.store.list_memory_facts(
+            self.owner_id,
+            limit=500,
+            status="active",
+            source_kind="canon",
+        )
+        now = utc_now()
+        pruned = 0
+        for record in active:
+            if (record.source_ref or "") in _SUPPORTED_CANON_FACT_FILES:
+                continue
+            self.store.invalidate_memory_fact(record.id, now, status="superseded")
+            pruned += 1
+        return pruned
+
     def get_relevant_facts(
         self,
         query: str,
@@ -150,6 +177,8 @@ class FactsService:
         return [_format_fact(record) for _, record in scored[:limit]]
 
     def _parse_canon_facts(self, filename: str, content: str) -> list[MemoryFactRecord]:
+        if filename not in _SUPPORTED_CANON_FACT_FILES:
+            return []
         lines = [line.strip() for line in content.splitlines()]
         now = utc_now()
         records: list[MemoryFactRecord] = []
@@ -159,6 +188,8 @@ class FactsService:
                 continue
             assertion = _extract_assertion(cleaned)
             if assertion is None:
+                continue
+            if not _should_accept_verified_assertion(cleaned, assertion):
                 continue
             facets = set(_clean_facets(infer_memory_facets(cleaned)))
             facets.discard("fact_candidate")
@@ -237,6 +268,7 @@ def _clean_canon_line(value: str) -> str:
         return ""
     line = re.sub(r"^[-*]\s+", "", line)
     line = re.sub(r"^\d+[.)]\s+", "", line)
+    line = line.replace("**", "").replace("__", "").replace("`", "")
     return line.strip()
 
 
@@ -259,3 +291,37 @@ def _clean_facets(value: object) -> list[str]:
 
 def _tokenize(value: str) -> set[str]:
     return {match.group(0) for match in _TOKEN_RE.finditer((value or "").lower())}
+
+
+def _should_accept_verified_assertion(
+    original_line: str,
+    assertion: dict[str, str | bool],
+) -> bool:
+    line = _normalize_component(original_line)
+    subject = str(assertion["subject"])
+    predicate = str(assertion["value_text"])
+
+    if "?" in line:
+        return False
+    if "open question" in line:
+        return False
+    if re.search(r"[.!?]\s+\S", line):
+        return False
+    if len(line) > 160:
+        return False
+
+    subject_tokens = _split_words(subject)
+    predicate_tokens = _split_words(predicate)
+    if not subject_tokens or not predicate_tokens:
+        return False
+    if len(subject_tokens) > 8 or len(predicate_tokens) > 16:
+        return False
+    if subject in _LOW_SIGNAL_SUBJECTS:
+        return False
+    if '"' in subject or "'" in subject:
+        return False
+    return '"' not in predicate
+
+
+def _split_words(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9_]+", (value or "").lower())
