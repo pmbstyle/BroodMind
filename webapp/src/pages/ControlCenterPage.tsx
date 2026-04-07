@@ -14,7 +14,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Table,
   TableBody,
@@ -628,8 +627,8 @@ export function ControlCenterPage() {
               No recent workers in the current filter window.
             </div>
           ) : (
-            <ScrollArea className="max-h-[42rem]">
-              <div className="rounded-[22px] border border-white/6 bg-[var(--surface-panel-strong)]">
+            <div className="max-h-[42rem] overflow-auto rounded-[22px] border border-white/6 bg-[var(--surface-panel-strong)]">
+              <div className="min-w-max">
                 <Table className="min-w-[1120px] table-fixed">
                   <colgroup>
                     <col className="w-[112px]" />
@@ -783,7 +782,7 @@ export function ControlCenterPage() {
                   </TableBody>
                 </Table>
               </div>
-            </ScrollArea>
+            </div>
           )}
         </CardContent>
       </Card>
