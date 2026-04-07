@@ -83,11 +83,26 @@ def test_bootstrap_worker_templates_align_with_current_runtime_expectations(tmp_
 
     templates = {template.id: template for template in discover_worker_templates(workspace)}
 
+    assert "file_editor" in templates
+    assert templates["file_editor"].available_tools == ["fs_read", "fs_list", "fs_write", "fs_move"]
+
+    assert "repo_researcher" in templates
+    assert templates["repo_researcher"].required_permissions == ["filesystem_read"]
+
+    assert "bug_investigator" in templates
+    assert "test_run" in templates["bug_investigator"].available_tools
+
+    assert "implementation_coordinator" in templates
+    assert templates["implementation_coordinator"].can_spawn_children is True
+    assert "coder" in templates["implementation_coordinator"].allowed_child_templates
+    assert "test_runner" in templates["implementation_coordinator"].allowed_child_templates
+
     assert "research_coordinator" in templates
     assert templates["research_coordinator"].can_spawn_children is True
     assert "start_child_worker" in templates["research_coordinator"].available_tools
     assert "start_workers_parallel" in templates["research_coordinator"].available_tools
     assert "web_researcher" in templates["research_coordinator"].allowed_child_templates
+    assert "repo_researcher" in templates["research_coordinator"].allowed_child_templates
 
     assert "fetch_plan_tool" in templates["web_fetcher"].available_tools
     assert "markdown_new_fetch" in templates["web_fetcher"].available_tools

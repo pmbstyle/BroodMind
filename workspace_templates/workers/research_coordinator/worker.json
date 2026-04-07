@@ -23,6 +23,8 @@
     "web_search_answer",
     "web_search_ranked",
     "analyst",
-    "writer"
+    "writer",
+    "repo_researcher",
+    "file_editor"
   ]
 }
