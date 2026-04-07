@@ -9,7 +9,7 @@ Keep it compact and high-signal.
 ## What Belongs Here
 
 - Durable project goals and operating assumptions
-- Stable user preferences and collaboration style
+- Shared working assumptions that matter across sessions
 - Important systems context that is costly to rediscover
 - Ongoing initiatives worth remembering across days
 

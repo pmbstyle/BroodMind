@@ -3,6 +3,7 @@
 Use this file for durable user-specific context.
 Only put things here that are stable and useful across many sessions.
 It is a living document and may be edited freely as you learn more about the user.
+Prefer user-specific facts here. Put broader project context in `MEMORY.md`.
 
 ## Good Examples
 

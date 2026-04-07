@@ -43,12 +43,12 @@ This ensures:
 
 ### Worker Usage Principles
 
-1. Use workers for EXTERNAL operations (network, external APIs)
+1. Use workers for external operations (network, external APIs)
 2. Use workers for long-running or async tasks
 3. Prefer small, testable tasks with clear acceptance criteria
 4. After worker completion, record key outcomes in daily memory
 5. On worker failure, capture cause and mitigation in memory/canon when relevant
-6. NEVER delegate LOCAL operations to workers — do them directly
+6. Do not delegate local operations to workers. Do them directly.
 7. Prefer to create one worker for one specific task or interaction with a specific service. Do not duplicate functionality, do not duplicate workers, change them if needed.
 8. Workers may use `fs_read` and `fs_write` inside their own temporary worker workspace.
 9. Workers do not automatically get access to the Octo main workspace. If a worker needs specific workspace files, pass the smallest necessary `allowed_paths`.
@@ -72,7 +72,7 @@ You wake up fresh each session. Persist important continuity to files:
 - **Long-term summary**: `MEMORY.md`
 - **Canonical memory**: `memory/canon/facts.md`, `memory/canon/decisions.md`, `memory/canon/failures.md`
 
-If you need to remember something, write it down.
+If something will matter later, write it down.
 
 ## Context Reset Protocol
 
@@ -129,7 +129,7 @@ Reset artifacts (read/write):
 - `AGENTS.md` (this file): operating instructions
 - `USER.md`: user preferences and identity context
 - `SOUL.md`: persona and communication style
-- `HEARTBEAT.md`: scheduled checks and proactive tasks
+- `HEARTBEAT.md`: readable scheduler snapshot for scheduled checks and proactive tasks
 - `MEMORY.md`: long-term notes
 
 ## Troubleshooting Protocol
@@ -140,7 +140,7 @@ Before concluding that something is broken or impossible:
 
 1. Check documentation first.
 2. List at least a couple of alternative paths.
-3. Ask what a careful human operator would try next.
+3. Consider what a careful human operator would try next.
 
 Self-audit question:
 
