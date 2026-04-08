@@ -37,6 +37,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import {
+  Activity,
+  Clock3,
+  Compass,
+  Search,
+  type LucideIcon,
+} from "lucide-react";
 
 type OverviewPayload = components["schemas"]["DashboardOverviewV2"];
 type WorkersPayload = components["schemas"]["DashboardWorkersV2"];
@@ -98,6 +105,14 @@ type OctoStep = {
   timestamp?: string;
 };
 
+type ScheduledTaskMeta = {
+  kind: string;
+  label: string;
+  detail: string;
+  badgeClass: string;
+  icon: LucideIcon;
+};
+
 function asNumber(value: unknown): number {
   const n = Number(value);
   if (Number.isFinite(n)) {
@@ -127,6 +142,79 @@ function hierarchyLabel(worker: WorkerRow): { text: string; isChild: boolean; de
     isChild: false,
     depth,
   };
+}
+
+function prettifyScheduledKind(kind: string): string {
+  return kind
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function getScheduledTaskMeta(kind: string): ScheduledTaskMeta {
+  const normalized = kind.trim().toLowerCase();
+  if (normalized.includes("explore")) {
+    return {
+      kind,
+      label: prettifyScheduledKind(kind),
+      detail: "Exploration",
+      badgeClass: "border-cyan-400/30 bg-cyan-500/12 text-cyan-200",
+      icon: Compass,
+    };
+  }
+  if (normalized.includes("research") || normalized.includes("paper")) {
+    return {
+      kind,
+      label: prettifyScheduledKind(kind),
+      detail: "Research",
+      badgeClass: "border-emerald-400/30 bg-emerald-500/12 text-emerald-200",
+      icon: Search,
+    };
+  }
+  if (normalized.includes("activity")) {
+    return {
+      kind,
+      label: prettifyScheduledKind(kind),
+      detail: "Activity",
+      badgeClass: "border-amber-300/30 bg-amber-400/12 text-amber-200",
+      icon: Activity,
+    };
+  }
+  return {
+    kind,
+    label: prettifyScheduledKind(kind),
+    detail: "Scheduled",
+    badgeClass: "border-fuchsia-300/30 bg-fuchsia-400/12 text-fuchsia-200",
+    icon: Clock3,
+  };
+}
+
+function parseScheduledTask(task?: string | null): { meta: ScheduledTaskMeta | null; body: string } {
+  const raw = String(task ?? "").trim();
+  if (!raw) {
+    return { meta: null, body: "" };
+  }
+
+  const namedMatch = raw.match(/^\[scheduled:\s*([^\]]+)\]\s*(.*)$/i);
+  if (namedMatch) {
+    const [, kind, remainder] = namedMatch;
+    return {
+      meta: getScheduledTaskMeta(kind),
+      body: remainder.trim(),
+    };
+  }
+
+  const genericMatch = raw.match(/^\[scheduled\]\s*(.*)$/i);
+  if (genericMatch) {
+    const [, remainder] = genericMatch;
+    return {
+      meta: getScheduledTaskMeta("scheduled"),
+      body: remainder.trim(),
+    };
+  }
+
+  return { meta: null, body: raw };
 }
 
 function statusPill(status?: string): string {
@@ -656,6 +744,7 @@ export function ControlCenterPage() {
                       const workerId = worker.id ?? "";
                       const isExpanded = expandedWorkerId === workerId;
                       const hierarchy = hierarchyLabel(worker);
+                      const scheduledTask = parseScheduledTask(worker.task);
                       const preview = worker.result_preview?.trim() || worker.summary?.trim() || worker.error?.trim() || "No result yet";
                       const templateConfig = worker.template_config ?? null;
                       const allowedTools = templateConfig?.available_tools ?? [];
@@ -688,7 +777,20 @@ export function ControlCenterPage() {
                             <div className="truncate">{worker.template_name ?? worker.template_id ?? "n/a"}</div>
                           </TableCell>
                           <TableCell className="whitespace-normal text-[var(--text-muted)]" title={worker.task ?? ""}>
-                            <div className="line-clamp-2 break-words">{String(worker.task ?? "") || "n/a"}</div>
+                            <div className="space-y-1">
+                              {scheduledTask.meta ? (
+                                <div>
+                                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${scheduledTask.meta.badgeClass}`}>
+                                    <scheduledTask.meta.icon className="h-3.5 w-3.5" />
+                                    {scheduledTask.meta.detail}
+                                    <span className="text-white/70">{scheduledTask.meta.label}</span>
+                                  </span>
+                                </div>
+                              ) : null}
+                              <div className={`break-words ${scheduledTask.meta ? "line-clamp-3 text-[var(--text-strong)]" : "line-clamp-2"}`}>
+                                {scheduledTask.body || "n/a"}
+                              </div>
+                            </div>
                           </TableCell>
                           <TableCell title={preview} className="whitespace-normal">
                             <div className={`line-clamp-2 break-words text-sm ${tone(worker.status)}`}>{preview}</div>
