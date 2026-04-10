@@ -1,18 +1,50 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import mimetypes
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import structlog
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 
-from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.octo.core import Octo, OctoReply
-from octopal.utils import get_tailscale_ips
+from octopal.runtime.octo.delivery import resolve_user_delivery
+from octopal.utils import get_tailscale_ips, should_suppress_user_delivery
 
 logger = structlog.get_logger(__name__)
+
+
+def _build_ws_file_payload(file_path: str, caption: str | None = None) -> dict[str, Any]:
+    path = Path(file_path).resolve()
+    data = path.read_bytes()
+    mime_type, _ = mimetypes.guess_type(str(path))
+    return {
+        "name": path.name,
+        "path": str(path),
+        "mime_type": mime_type or "application/octet-stream",
+        "size_bytes": len(data),
+        "encoding": "base64",
+        "data": base64.b64encode(data).decode("ascii"),
+        "caption": caption or None,
+    }
+
+
+def _serialize_worker_snapshot(rows: list[Any]) -> list[dict[str, Any]]:
+    snapshot: list[dict[str, Any]] = []
+    for row in rows:
+        if hasattr(row, "model_dump"):
+            try:
+                snapshot.append(row.model_dump(mode="json"))
+            except TypeError:
+                snapshot.append(row.model_dump())
+            continue
+        if isinstance(row, dict):
+            snapshot.append(dict(row))
+    return snapshot
 
 
 def _resolve_ws_chat_id(settings: Any) -> int:
@@ -117,6 +149,13 @@ def register_ws_routes(app: FastAPI) -> None:
         async def _ws_typing(chat_id: int, active: bool) -> None:
             await socket.send_json({"type": "typing", "active": active})
 
+        async def _ws_send_file(chat_id: int, file_path: str, caption: str | None = None) -> None:
+            payload = _build_ws_file_payload(file_path, caption=caption)
+            await socket.send_json({"type": "file", **payload})
+
+        async def _ws_worker_event(chat_id: int, event: str, payload: dict[str, Any]) -> None:
+            await socket.send_json({"type": "worker_event", "event": event, "payload": payload})
+
         # A newer WS client takes over the interactive channel from any older session.
         async with app.state.ws_session_lock:
             previous_session: _ActiveWsSession | None = getattr(app.state, "active_ws_session", None)
@@ -154,8 +193,10 @@ def register_ws_routes(app: FastAPI) -> None:
             claimed = octo.set_output_channel(
                 True,
                 send=_ws_send,
+                send_file=_ws_send_file,
                 progress=_ws_progress,
                 typing=_ws_typing,
+                worker_event=_ws_worker_event,
                 owner_id=connection_id,
                 force=True,
             )
@@ -166,6 +207,18 @@ def register_ws_routes(app: FastAPI) -> None:
             await socket.send_json({"type": "error", "message": "Another WebSocket session is currently active."})
             await socket.close(code=status.WS_1013_TRY_AGAIN_LATER)
             return
+
+        try:
+            active_workers = await asyncio.to_thread(octo.store.get_active_workers)
+        except Exception:
+            logger.debug("Failed to load active workers snapshot for WebSocket session", exc_info=True)
+            active_workers = []
+        await socket.send_json(
+            {
+                "type": "workers_snapshot",
+                "workers": _serialize_worker_snapshot(active_workers),
+            }
+        )
 
         approvals = WsApprovalManager(send=lambda payload: socket.send_json(payload))
         tasks: set[asyncio.Task] = set()

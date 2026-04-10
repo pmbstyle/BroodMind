@@ -23,8 +23,8 @@ from octopal.channels.telegram.approvals import ApprovalManager
 from octopal.infrastructure.config.settings import Settings
 from octopal.infrastructure.logging import correlation_id_var
 from octopal.runtime.metrics import update_component_gauges
-from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.octo.core import Octo, OctoReply
+from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.pending_turns import PendingTurnAggregator
 from octopal.runtime.state import update_last_message
 from octopal.utils import (
@@ -59,6 +59,8 @@ _TELEGRAM_PARSE_MODE: str | None = None
 _PENDING_TURNS: PendingTurnAggregator | None = None
 _RECENT_INBOUND_MESSAGE_IDS: dict[tuple[int, int], float] = {}
 _RECENT_INBOUND_PAYLOADS: dict[tuple[int, int | str, str], float] = {}
+_TELEGRAM_IMAGE_DOCUMENT_MIME_PREFIXES = ("image/",)
+_TELEGRAM_IMAGE_DOCUMENT_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 
 
 def _publish_runtime_metrics() -> None:
@@ -113,15 +115,84 @@ def _prune_recent_inbound_payloads(now: float | None = None) -> None:
         _RECENT_INBOUND_PAYLOADS.pop(key, None)
 
 
-def _build_inbound_message_fingerprint(text: str, photo_ids: list[str] | None = None) -> str:
+def _build_inbound_message_fingerprint(
+    text: str,
+    photo_ids: list[str] | None = None,
+    attachment_ids: list[str] | None = None,
+) -> str:
     normalized_text = re.sub(r"\s+", " ", (text or "").strip()).casefold()
     normalized_photos = [photo_id.strip() for photo_id in (photo_ids or []) if photo_id and photo_id.strip()]
-    return f"text={normalized_text}|photos={'|'.join(normalized_photos)}"
+    normalized_attachments = [
+        attachment_id.strip() for attachment_id in (attachment_ids or []) if attachment_id and attachment_id.strip()
+    ]
+    return (
+        f"text={normalized_text}|photos={'|'.join(normalized_photos)}|"
+        f"attachments={'|'.join(normalized_attachments)}"
+    )
+
+
+def _telegram_attachment_suffix(file_name: str | None, mime_type: str | None, fallback: str) -> str:
+    suffix = Path(file_name or "").suffix.lower()
+    if suffix:
+        return suffix
+    guessed = mimetypes.guess_extension(str(mime_type or "").split(";", 1)[0].strip().lower())
+    if guessed:
+        return guessed
+    return fallback
+
+
+def _is_telegram_image_attachment(file_name: str | None, mime_type: str | None) -> bool:
+    normalized_mime = str(mime_type or "").strip().lower()
+    if any(normalized_mime.startswith(prefix) for prefix in _TELEGRAM_IMAGE_DOCUMENT_MIME_PREFIXES):
+        return True
+    return Path(file_name or "").suffix.lower() in _TELEGRAM_IMAGE_DOCUMENT_SUFFIXES
+
+
+def _persist_telegram_media_payload(
+    *,
+    workspace_dir: Path,
+    binary: bytes,
+    source: str,
+    file_name: str | None = None,
+    mime_type: str | None = None,
+    default_suffix: str = ".bin",
+) -> str:
+    media_dir = workspace_dir / "tmp" / source
+    media_dir.mkdir(parents=True, exist_ok=True)
+    suffix = _telegram_attachment_suffix(file_name, mime_type, default_suffix)
+    safe_stem = Path(file_name or "").stem.strip() or source.rstrip("s")
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", safe_stem).strip("._") or source.rstrip("s")
+    file_path = (media_dir / f"{safe_stem}_{uuid.uuid4()}{suffix}").resolve()
+    file_path.write_bytes(binary)
+    return str(file_path)
+
+
+def _build_telegram_media_artifacts(
+    *,
+    binary: bytes,
+    file_name: str | None,
+    mime_type: str | None,
+    workspace_dir: Path,
+    source: str,
+    default_suffix: str,
+) -> tuple[list[str], list[str]]:
+    saved_path = _persist_telegram_media_payload(
+        workspace_dir=workspace_dir,
+        binary=binary,
+        source=source,
+        file_name=file_name,
+        mime_type=mime_type,
+        default_suffix=default_suffix,
+    )
+    if _is_telegram_image_attachment(file_name, mime_type):
+        normalized_mime = str(mime_type or "").strip().lower() or "image/jpeg"
+        return [f"data:{normalized_mime};base64,{base64.b64encode(binary).decode('utf-8')}"], [saved_path]
+    return [], [saved_path]
 
 
 def _is_duplicate_inbound_payload(chat_id: int, sender_id: int | None, fingerprint: str) -> bool:
     normalized = (fingerprint or "").strip()
-    if not normalized or normalized == "text=|photos=":
+    if not normalized or normalized == "text=|photos=|attachments=":
         return False
     now = time.monotonic()
     _prune_recent_inbound_payloads(now)
@@ -168,6 +239,9 @@ def register_handlers(
     ) -> None:
         logger.info("Worker progress event", chat_id=chat_id, state=state, text=text)
 
+    async def _internal_worker_event_send(chat_id: int, event: str, payload: dict[str, Any]) -> None:
+        logger.info("Worker event", chat_id=chat_id, event=event, payload=payload)
+
     async def _internal_typing_control(chat_id: int, active: bool) -> None:
         async with _TYPING_LOCK:
             if active:
@@ -194,12 +268,14 @@ def register_handlers(
     octo.internal_send = _internal_send
     octo.internal_send_file = _internal_send_file
     octo.internal_progress_send = _internal_progress_send
+    octo.internal_worker_event_send = _internal_worker_event_send
     octo.internal_typing_control = _internal_typing_control
 
     # Re-initialize the Octo's default (Telegram) output hooks if needed
     octo._tg_send = _internal_send
     octo._tg_send_file = _internal_send_file
     octo._tg_progress = _internal_progress_send
+    octo._tg_worker_event = _internal_worker_event_send
     octo._tg_typing = _internal_typing_control
 
     import importlib.metadata
@@ -313,7 +389,12 @@ def register_handlers(
             return
         text = message.text or message.caption or ""
         photo_ids = [str(getattr(photo, "file_unique_id", "") or "").strip() for photo in (message.photo or [])]
-        inbound_fingerprint = _build_inbound_message_fingerprint(text, photo_ids)
+        attachment_ids = [
+            str(getattr(getattr(message, field, None), "file_unique_id", "") or "").strip()
+            for field in ("document", "video", "audio", "voice", "animation")
+            if getattr(getattr(message, field, None), "file_unique_id", None)
+        ]
+        inbound_fingerprint = _build_inbound_message_fingerprint(text, photo_ids, attachment_ids)
         if _is_duplicate_inbound_payload(
             message.chat.id,
             getattr(message.from_user, "id", None),
@@ -357,7 +438,36 @@ def register_handlers(
                 logger.exception("Failed to process image from Telegram")
                 # Continue processing even if image fails, just treat as text-only (or empty)
 
-        if not text and not images:
+        attachment_specs = [
+            ("document", ".bin", "telegram_files"),
+            ("video", ".mp4", "telegram_files"),
+            ("audio", ".mp3", "telegram_files"),
+            ("voice", ".ogg", "telegram_files"),
+            ("animation", ".gif", "telegram_files"),
+        ]
+        workspace_dir = Path(os.getenv("OCTOPAL_WORKSPACE_DIR", "workspace")).resolve()
+        for attr_name, default_suffix, source in attachment_specs:
+            attachment = getattr(message, attr_name, None)
+            if not attachment:
+                continue
+            try:
+                with io.BytesIO() as buffer:
+                    await bot.download(attachment, destination=buffer)
+                    payload = buffer.getvalue()
+                media_images, media_paths = _build_telegram_media_artifacts(
+                    binary=payload,
+                    file_name=getattr(attachment, "file_name", None),
+                    mime_type=getattr(attachment, "mime_type", None),
+                    workspace_dir=workspace_dir,
+                    source=source,
+                    default_suffix=default_suffix,
+                )
+                images.extend(media_images)
+                saved_file_paths.extend(media_paths)
+            except Exception:
+                logger.exception("Failed to process Telegram attachment", attachment_type=attr_name)
+
+        if not text and not images and not saved_file_paths:
             return
 
         logger.debug("Incoming message", chat_id=message.chat.id, has_images=bool(images))

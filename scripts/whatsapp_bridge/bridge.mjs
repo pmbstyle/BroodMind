@@ -149,7 +149,7 @@ function extractText(message) {
   );
 }
 
-async function extractImagePayload(item) {
+async function extractMediaPayload(item) {
   if (!item?.message || !sock || typeof downloadMediaMessage !== "function") {
     return null;
   }
@@ -157,7 +157,8 @@ async function extractImagePayload(item) {
     typeof getContentType === "function"
       ? getContentType(item.message)
       : (item.message.imageMessage ? "imageMessage" : "");
-  if (contentType !== "imageMessage") {
+  const mediaMessage = item.message?.[contentType] || null;
+  if (!mediaMessage || !["imageMessage", "videoMessage", "documentMessage", "audioMessage"].includes(contentType)) {
     return null;
   }
   try {
@@ -173,13 +174,31 @@ async function extractImagePayload(item) {
     if (!buffer || !buffer.length) {
       return null;
     }
-    const mimeType = item.message?.imageMessage?.mimetype || "image/jpeg";
+    const mimeType = mediaMessage?.mimetype || "application/octet-stream";
+    const mediaKind =
+      contentType === "imageMessage"
+        ? "image"
+        : contentType === "videoMessage"
+          ? "video"
+          : contentType === "audioMessage"
+            ? "audio"
+            : "document";
+    const fileName = mediaMessage?.fileName || "";
+    const dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
     return {
-      imageMimeType: mimeType,
-      imageDataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+      mediaKind,
+      mediaMimeType: mimeType,
+      mediaFileName: fileName,
+      mediaDataUrl: dataUrl,
+      ...(mediaKind === "image"
+        ? {
+            imageMimeType: mimeType,
+            imageDataUrl: dataUrl,
+          }
+        : {}),
     };
   } catch (error) {
-    console.error("failed to download inbound whatsapp image", error);
+    console.error("failed to download inbound whatsapp media", error);
     return null;
   }
 }
@@ -251,9 +270,9 @@ async function bootstrapSocket() {
       const actualSender = senderFromJid(senderJid);
       const conversation = sender;
       const text = extractText(item.message).trim();
-      const imagePayload = await extractImagePayload(item);
+      const mediaPayload = await extractMediaPayload(item);
       const selfChat = Boolean(fromMe && selfNumber && conversation && selfNumber === conversation);
-      if (!actualSender || !conversation || (!text && !imagePayload)) continue;
+      if (!actualSender || !conversation || (!text && !mediaPayload)) continue;
       await postInbound({
         sender: actualSender,
         conversation,
@@ -263,7 +282,7 @@ async function bootstrapSocket() {
         remoteJid,
         text,
         messageId,
-        ...imagePayload,
+        ...mediaPayload,
       });
     }
   });

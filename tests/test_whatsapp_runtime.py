@@ -213,6 +213,44 @@ def test_whatsapp_runtime_accepts_image_only_payload_and_saves_path(monkeypatch,
     asyncio.run(scenario())
 
 
+def test_whatsapp_runtime_accepts_document_only_payload_and_saves_path(monkeypatch, tmp_path) -> None:
+    fake_octo = _FakeOcto()
+    monkeypatch.setattr(whatsapp_runtime_module, "build_octo", lambda settings: fake_octo)
+    monkeypatch.setattr(whatsapp_runtime_module, "WhatsAppBridgeController", _FakeBridgeController)
+    monkeypatch.setattr(whatsapp_runtime_module, "update_component_gauges", lambda *args, **kwargs: None)
+    monkeypatch.setattr(whatsapp_runtime_module, "update_last_message", lambda *args, **kwargs: None)
+
+    settings = _make_settings(mode="personal", allowed_numbers="+15551234567")
+    settings.workspace_dir = tmp_path
+    runtime = WhatsAppRuntime(settings)
+    runtime.attach_octo_output()
+
+    async def scenario() -> None:
+        result = await runtime.handle_inbound(
+            {
+                "sender": "+15551234567",
+                "conversation": "+15551234567",
+                "self": "+15551234567",
+                "fromMe": True,
+                "selfChat": True,
+                "text": "",
+                "mediaKind": "document",
+                "mediaMimeType": "application/pdf",
+                "mediaFileName": "report.pdf",
+                "mediaDataUrl": "data:application/pdf;base64,SGVsbG8=",
+            }
+        )
+        assert result["accepted"] is True
+        handled = fake_octo.handled[-1]
+        assert handled["kwargs"]["images"] == []
+        saved_paths = handled["kwargs"]["saved_file_paths"]
+        assert len(saved_paths) == 1
+        assert saved_paths[0].endswith(".pdf")
+        assert Path(saved_paths[0]).is_file()
+
+    asyncio.run(scenario())
+
+
 def test_whatsapp_runtime_aggregates_messages_within_grace_window(monkeypatch) -> None:
     fake_octo = _FakeOcto()
     monkeypatch.setattr(whatsapp_runtime_module, "build_octo", lambda settings: fake_octo)

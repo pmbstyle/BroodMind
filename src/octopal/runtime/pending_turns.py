@@ -108,7 +108,7 @@ class PendingTurnAggregator:
             return
 
         text = pending.merged_text()
-        if not text and not pending.images:
+        if not text and not pending.images and not pending.saved_file_paths:
             logger.debug("Skipping empty pending turn flush", chat_id=chat_id)
             return
 

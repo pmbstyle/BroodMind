@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import mimetypes
 import re
 import uuid
 from pathlib import Path
@@ -18,8 +19,8 @@ from octopal.channels.whatsapp.ids import (
 from octopal.infrastructure.config.settings import Settings
 from octopal.runtime.app import build_octo
 from octopal.runtime.metrics import update_component_gauges
-from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.octo.core import Octo
+from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.pending_turns import PendingTurnAggregator
 from octopal.runtime.state import update_last_message
 from octopal.utils import (
@@ -29,6 +30,8 @@ from octopal.utils import (
 )
 
 logger = structlog.get_logger(__name__)
+
+_WHATSAPP_IMAGE_MIME_PREFIXES = ("image/",)
 
 
 class WhatsAppRuntime:
@@ -92,16 +95,21 @@ class WhatsAppRuntime:
             # if we have the message ID.
             logger.info("WhatsApp progress event", chat_id=chat_id, state=state, text=text)
 
+        async def _internal_worker_event_send(chat_id: int, event: str, payload: dict[str, Any]) -> None:
+            logger.info("WhatsApp worker event", chat_id=chat_id, event=event, payload=payload)
+
         async def _internal_typing_control(chat_id: int, active: bool) -> None:
             logger.debug("WhatsApp typing indicator not implemented", chat_id=chat_id, active=active)
 
         self.octo.internal_send = _internal_send
         self.octo.internal_send_file = _internal_send_file
         self.octo.internal_progress_send = _internal_progress_send
+        self.octo.internal_worker_event_send = _internal_worker_event_send
         self.octo.internal_typing_control = _internal_typing_control
         self.octo._tg_send = _internal_send
         self.octo._tg_send_file = _internal_send_file
         self.octo._tg_progress = _internal_progress_send
+        self.octo._tg_worker_event = _internal_worker_event_send
         self.octo._tg_typing = _internal_typing_control
 
     async def start(self) -> Octo:
@@ -133,8 +141,8 @@ class WhatsAppRuntime:
         from_me = bool(payload.get("fromMe"))
         self_chat = bool(payload.get("selfChat"))
         text = str(payload.get("text", "") or "").strip()
-        images, saved_file_paths = self._extract_images(payload)
-        if not sender or (not text and not images):
+        images, saved_file_paths = self._extract_media(payload)
+        if not sender or (not text and not images and not saved_file_paths):
             return {"accepted": False, "reason": "missing_sender_or_content"}
         if from_me and not self._is_personal_mode():
             logger.debug("Ignoring WhatsApp fromMe message outside personal mode", sender=sender, conversation=conversation)
@@ -190,42 +198,46 @@ class WhatsAppRuntime:
     def _is_personal_mode(self) -> bool:
         return str(getattr(self.settings, "whatsapp_mode", "separate") or "separate").strip().lower() == "personal"
 
-    def _extract_images(self, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
-        image_data_url = str(payload.get("imageDataUrl", "") or "").strip()
-        if not image_data_url:
+    def _extract_media(self, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+        media_data_url = str(payload.get("mediaDataUrl", "") or "").strip()
+        if not media_data_url:
+            media_data_url = str(payload.get("imageDataUrl", "") or "").strip()
+        if not media_data_url:
             return [], []
 
-        mime_type = str(payload.get("imageMimeType", "") or "").strip() or "image/jpeg"
+        mime_type = (
+            str(payload.get("mediaMimeType", "") or "").strip()
+            or str(payload.get("imageMimeType", "") or "").strip()
+            or "application/octet-stream"
+        )
+        file_name = str(payload.get("mediaFileName", "") or "").strip() or None
+        media_kind = str(payload.get("mediaKind", "") or "").strip().lower()
         try:
-            _, b64_payload = image_data_url.split(",", 1)
+            _, b64_payload = media_data_url.split(",", 1)
         except ValueError:
             return [], []
 
         try:
             binary = base64.b64decode(b64_payload)
         except Exception:
-            logger.warning("Failed to decode inbound WhatsApp image payload")
+            logger.warning("Failed to decode inbound WhatsApp media payload")
             return [], []
 
-        workspace_root = Path(self.settings.workspace_dir).resolve()
-        image_dir = workspace_root / "tmp" / "whatsapp_images"
-        image_dir.mkdir(parents=True, exist_ok=True)
-
-        suffix = ".jpg"
-        lowered_mime = mime_type.lower()
-        if "png" in lowered_mime:
-            suffix = ".png"
-        elif "webp" in lowered_mime:
-            suffix = ".webp"
-
-        file_path = (image_dir / f"img_{uuid.uuid4()}{suffix}").resolve()
         try:
-            file_path.write_bytes(binary)
+            saved_path = _persist_whatsapp_media_payload(
+                workspace_root=Path(self.settings.workspace_dir).resolve(),
+                binary=binary,
+                mime_type=mime_type,
+                file_name=file_name,
+                media_kind=media_kind,
+            )
         except Exception:
-            logger.exception("Failed to persist inbound WhatsApp image", path=str(file_path))
+            logger.exception("Failed to persist inbound WhatsApp media")
             return [], []
 
-        return [image_data_url], [str(file_path)]
+        is_image = media_kind == "image" or mime_type.lower().startswith(_WHATSAPP_IMAGE_MIME_PREFIXES)
+        images = [media_data_url] if is_image else []
+        return images, [saved_path]
 
     async def _flush_pending_turn(
         self,
@@ -290,6 +302,30 @@ class WhatsAppRuntime:
             decision = resolve_user_delivery(final_text)
             if decision.user_visible:
                 await self.octo.internal_send(chat_id, decision.text)
+
+
+def _persist_whatsapp_media_payload(
+    *,
+    workspace_root: Path,
+    binary: bytes,
+    mime_type: str | None,
+    file_name: str | None,
+    media_kind: str | None,
+) -> str:
+    normalized_kind = str(media_kind or "").strip().lower() or "file"
+    media_dir = workspace_root / "tmp" / "whatsapp_media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+
+    suffix = Path(file_name or "").suffix.lower()
+    if not suffix:
+        guessed = mimetypes.guess_extension(str(mime_type or "").split(";", 1)[0].strip().lower())
+        suffix = guessed or ".bin"
+
+    safe_stem = Path(file_name or "").stem.strip() or normalized_kind
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", safe_stem).strip("._") or normalized_kind
+    file_path = (media_dir / f"{safe_stem}_{uuid.uuid4()}{suffix}").resolve()
+    file_path.write_bytes(binary)
+    return str(file_path)
 
 
 def _chunk_text(text: str, limit: int) -> list[str]:

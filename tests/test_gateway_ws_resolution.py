@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from pathlib import Path
 from types import SimpleNamespace
 
-from octopal.gateway.ws import _resolve_ws_chat_id, register_ws_routes
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from octopal.gateway.ws import _build_ws_file_payload, _resolve_ws_chat_id, register_ws_routes
 
 
 def test_resolve_ws_chat_id_returns_positive_when_no_allowlist() -> None:
@@ -40,11 +42,25 @@ def test_new_websocket_connection_takes_over_previous_session() -> None:
     app.state.octo = DummyOcto()
     register_ws_routes(app)
 
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws") as ws_one:
-            with client.websocket_connect("/ws") as ws_two:
-                payload = ws_one.receive_json()
-                assert payload["type"] == "warning"
-                assert "took over" in payload["message"]
-                ws_two.send_json({"type": "ping"})
-                assert ws_two.receive_json() == {"type": "pong"}
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws_one:
+        assert ws_one.receive_json() == {"type": "workers_snapshot", "workers": []}
+        with client.websocket_connect("/ws") as ws_two:
+            assert ws_two.receive_json() == {"type": "workers_snapshot", "workers": []}
+            payload = ws_one.receive_json()
+            assert payload["type"] == "warning"
+            assert "took over" in payload["message"]
+            ws_two.send_json({"type": "ping"})
+            assert ws_two.receive_json() == {"type": "pong"}
+
+
+def test_build_ws_file_payload_includes_base64_metadata(tmp_path: Path) -> None:
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("hello ws", encoding="utf-8")
+
+    payload = _build_ws_file_payload(str(file_path), caption="Attached")
+
+    assert payload["name"] == "report.txt"
+    assert payload["mime_type"] == "text/plain"
+    assert payload["encoding"] == "base64"
+    assert payload["caption"] == "Attached"
+    assert payload["path"] == str(file_path.resolve())
