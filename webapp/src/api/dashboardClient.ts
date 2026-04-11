@@ -93,6 +93,7 @@ export type DashboardEditableConfig = {
 
 export type DashboardConfigResponse = {
   config: DashboardEditableConfig;
+  providers: DashboardProviderOption[];
   worker_launcher: {
     configured: string;
     effective: string;
@@ -106,6 +107,7 @@ export type DashboardConfigResponse = {
 export type DashboardConfigSaveResponse = {
   status: string;
   config: DashboardEditableConfig;
+  providers: DashboardProviderOption[];
   worker_launcher: {
     configured: string;
     effective: string;
@@ -113,6 +115,23 @@ export type DashboardConfigSaveResponse = {
     reason: string;
     docker_image: string;
   };
+};
+
+export type DashboardProviderOption = {
+  id: string;
+  label: string;
+  description: string;
+  default_model: string;
+  model_prefix: string | null;
+  default_api_base: string | null;
+  requires_api_key: boolean;
+  supports_custom_base_url: boolean;
+  supports_custom_model: boolean;
+  supports_model_prefix_override: boolean;
+  always_prefix_model: boolean;
+  api_key_label: string;
+  model_label: string;
+  base_url_label: string;
 };
 
 export type WorkerTemplate = {

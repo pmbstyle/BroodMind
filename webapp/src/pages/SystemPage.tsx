@@ -7,6 +7,7 @@ import {
   updateDashboardConfig,
   type DashboardConfigResponse,
   type DashboardEditableConfig,
+  type DashboardProviderOption,
 } from "../api/dashboardClient";
 import type { components } from "../api/types";
 import type { AppShellOutletContext } from "../ui/AppShell";
@@ -199,6 +200,31 @@ function toPayload(form: FormState): DashboardEditableConfig {
     debug_prompts: form.debug_prompts,
     heartbeat_interval_seconds: Number(form.heartbeat_interval_seconds || 0),
     user_message_grace_seconds: Number(form.user_message_grace_seconds || 0),
+  };
+}
+
+function applyProviderDefaults(
+  current: FormState,
+  provider: DashboardProviderOption,
+  scope: "main" | "worker",
+): FormState {
+  if (scope === "main") {
+    return {
+      ...current,
+      llm_provider_id: provider.id,
+      llm_model: provider.default_model ?? "",
+      llm_api_base: provider.default_api_base ?? "",
+      llm_model_prefix: provider.model_prefix ?? "",
+      llm_api_key: "",
+    };
+  }
+  return {
+    ...current,
+    worker_llm_provider_id: provider.id,
+    worker_llm_model: provider.default_model ?? "",
+    worker_llm_api_base: provider.default_api_base ?? "",
+    worker_llm_model_prefix: provider.model_prefix ?? "",
+    worker_llm_api_key: "",
   };
 }
 
@@ -399,6 +425,15 @@ export function SystemPage() {
   }, [filters.token]);
 
   const initialForm = useMemo(() => (configData ? buildForm(configData.config) : null), [configData]);
+  const providerOptions = configData?.providers ?? [];
+  const providerOptionsForSelect = useMemo(
+    () => providerOptions.map((provider) => ({ value: provider.id, label: provider.label })),
+    [providerOptions],
+  );
+  const providerMap = useMemo(
+    () => new Map(providerOptions.map((provider) => [provider.id, provider])),
+    [providerOptions],
+  );
   const isDirty = Boolean(form && initialForm && JSON.stringify(form) !== JSON.stringify(initialForm));
   const selectedChannel = form?.user_channel ?? "telegram";
   const showTelegram = selectedChannel === "telegram";
@@ -406,6 +441,8 @@ export function SystemPage() {
   const useDockerLauncher = (form?.workers_launcher ?? "docker") === "docker";
   const useSeparateWorkerInference = Boolean(form?.worker_llm_enabled);
   const useSeparateWhatsAppBridge = (form?.whatsapp_mode ?? "separate") === "separate";
+  const mainProvider = form ? providerMap.get(form.llm_provider_id) ?? null : null;
+  const workerProvider = form ? providerMap.get(form.worker_llm_provider_id) ?? null : null;
 
   if (loading) {
     return <section className={panel}><h2 className="text-2xl font-semibold text-white">System</h2><p className="mt-2 text-sm text-[var(--text-muted)]">Loading system diagnostics...</p></section>;
@@ -423,6 +460,17 @@ export function SystemPage() {
   const launcher = configData?.worker_launcher ?? { configured: "n/a", effective: "n/a", available: false, reason: "No data", docker_image: "n/a" };
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => (current ? { ...current, [key]: value } : current));
 
+  function setProvider(scope: "main" | "worker", providerId: string): void {
+    const provider = providerMap.get(providerId);
+    if (!provider) {
+      return;
+    }
+    setForm((current) => {
+      if (!current) return current;
+      return applyProviderDefaults(current, provider, scope);
+    });
+  }
+
   async function save(): Promise<void> {
     if (!form) return;
     setSaving(true);
@@ -430,7 +478,12 @@ export function SystemPage() {
     setConfigError("");
     try {
       const payload = await updateDashboardConfig(toPayload(form), filters.token || undefined);
-      setConfigData((current) => ({ config: payload.config, worker_launcher: payload.worker_launcher, notes: current?.notes ?? [] }));
+      setConfigData((current) => ({
+        config: payload.config,
+        providers: payload.providers,
+        worker_launcher: payload.worker_launcher,
+        notes: current?.notes ?? [],
+      }));
       setForm(buildForm(payload.config));
       setNotice("Config saved to config.json.");
     } catch (err: unknown) {
@@ -624,16 +677,48 @@ export function SystemPage() {
               <div className="grid items-start gap-5 xl:grid-cols-2">
                 <div className="rounded-[22px] border border-white/6 bg-black/20 p-4">
                   <h4 className="text-base font-semibold text-white">Main app model</h4>
+                  {mainProvider ? (
+                    <div className="mt-3 rounded-[18px] border border-white/6 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-muted)]">
+                      <div className="font-medium text-white">{mainProvider.label}</div>
+                      <div className="mt-1">{mainProvider.description}</div>
+                    </div>
+                  ) : null}
                   <FieldsGrid className="xl:grid-cols-2">
-                    <L label="AI provider" hint="The AI service this app should use for model calls."><FormInput value={form.llm_provider_id} onChange={(e) => set("llm_provider_id", e.target.value)} /></L>
-                    <L label="Model name"><FormInput value={form.llm_model} onChange={(e) => set("llm_model", e.target.value)} /></L>
-                    <L label="Custom API URL" hint="Only needed if your AI provider uses a custom endpoint."><FormInput value={form.llm_api_base} onChange={(e) => set("llm_api_base", e.target.value)} /></L>
-                    <L label="Model prefix" hint="Optional text added before model names when your AI provider expects it."><FormInput value={form.llm_model_prefix} onChange={(e) => set("llm_model_prefix", e.target.value)} /></L>
+                    <L label="AI provider" hint="Choose which AI service powers the main app.">
+                      <FormSelect
+                        value={form.llm_provider_id}
+                        onValueChange={(value) => setProvider("main", value)}
+                        options={providerOptionsForSelect}
+                        placeholder="Choose a provider"
+                      />
+                    </L>
+                    {mainProvider?.supports_custom_model !== false ? (
+                      <L label={mainProvider?.model_label ?? "Model name"} hint={`Recommended default: ${mainProvider?.default_model ?? "n/a"}`}>
+                        <FormInput value={form.llm_model} onChange={(e) => set("llm_model", e.target.value)} />
+                      </L>
+                    ) : null}
+                    {mainProvider?.supports_custom_base_url ? (
+                      <L label={mainProvider?.base_url_label ?? "Custom API URL"} hint="Shown only for providers that allow a custom endpoint.">
+                        <FormInput value={form.llm_api_base} onChange={(e) => set("llm_api_base", e.target.value)} />
+                      </L>
+                    ) : null}
+                    {mainProvider?.supports_model_prefix_override ? (
+                      <L label="Model prefix" hint="Use this only when the provider expects a custom LiteLLM prefix.">
+                        <FormInput value={form.llm_model_prefix} onChange={(e) => set("llm_model_prefix", e.target.value)} />
+                      </L>
+                    ) : null}
                   </FieldsGrid>
+                  {mainProvider?.always_prefix_model ? (
+                    <div className="mt-3 rounded-[18px] border border-white/6 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-muted)]">
+                      This provider automatically uses the <span className="font-medium text-white">{mainProvider.model_prefix}</span> model prefix.
+                    </div>
+                  ) : null}
                   <div className="mt-4">
                     <Disclosure title="Main model access" description="Credentials for the main AI model profile.">
                       <FieldsGrid className="xl:grid-cols-2">
-                        <L label="API key"><FormInput type="password" value={form.llm_api_key} onChange={(e) => set("llm_api_key", e.target.value)} placeholder="Leave blank to keep current key" /></L>
+                        <L label={mainProvider?.api_key_label ?? "API key"} hint={mainProvider?.requires_api_key === false ? "Optional for this provider." : "Required for this provider."}>
+                          <FormInput type="password" value={form.llm_api_key} onChange={(e) => set("llm_api_key", e.target.value)} placeholder={mainProvider?.requires_api_key === false ? "Optional" : "Leave blank to keep current key"} />
+                        </L>
                       </FieldsGrid>
                     </Disclosure>
                   </div>
@@ -645,12 +730,44 @@ export function SystemPage() {
                     <ToggleField label="Use a separate model for workers" checked={form.worker_llm_enabled} onChange={(checked) => set("worker_llm_enabled", checked)} hint="Turn this off if worker tasks should use the same model settings as the main app." />
                   </div>
                   {useSeparateWorkerInference ? (
-                    <FieldsGrid className="mt-4 xl:grid-cols-2">
-                      <L label="AI provider"><FormInput value={form.worker_llm_provider_id} onChange={(e) => set("worker_llm_provider_id", e.target.value)} /></L>
-                      <L label="Model name"><FormInput value={form.worker_llm_model} onChange={(e) => set("worker_llm_model", e.target.value)} /></L>
-                      <L label="Custom API URL"><FormInput value={form.worker_llm_api_base} onChange={(e) => set("worker_llm_api_base", e.target.value)} /></L>
-                      <L label="Model prefix"><FormInput value={form.worker_llm_model_prefix} onChange={(e) => set("worker_llm_model_prefix", e.target.value)} /></L>
-                    </FieldsGrid>
+                    <>
+                      {workerProvider ? (
+                        <div className="mt-3 rounded-[18px] border border-white/6 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-muted)]">
+                          <div className="font-medium text-white">{workerProvider.label}</div>
+                          <div className="mt-1">{workerProvider.description}</div>
+                        </div>
+                      ) : null}
+                      <FieldsGrid className="mt-4 xl:grid-cols-2">
+                        <L label="AI provider" hint="Workers can use a different provider from the main app when needed.">
+                          <FormSelect
+                            value={form.worker_llm_provider_id}
+                            onValueChange={(value) => setProvider("worker", value)}
+                            options={providerOptionsForSelect}
+                            placeholder="Choose a provider"
+                          />
+                        </L>
+                        {workerProvider?.supports_custom_model !== false ? (
+                          <L label={workerProvider?.model_label ?? "Model name"} hint={`Recommended default: ${workerProvider?.default_model ?? "n/a"}`}>
+                            <FormInput value={form.worker_llm_model} onChange={(e) => set("worker_llm_model", e.target.value)} />
+                          </L>
+                        ) : null}
+                        {workerProvider?.supports_custom_base_url ? (
+                          <L label={workerProvider?.base_url_label ?? "Custom API URL"}>
+                            <FormInput value={form.worker_llm_api_base} onChange={(e) => set("worker_llm_api_base", e.target.value)} />
+                          </L>
+                        ) : null}
+                        {workerProvider?.supports_model_prefix_override ? (
+                          <L label="Model prefix" hint="Use this only when the provider expects a custom LiteLLM prefix.">
+                            <FormInput value={form.worker_llm_model_prefix} onChange={(e) => set("worker_llm_model_prefix", e.target.value)} />
+                          </L>
+                        ) : null}
+                      </FieldsGrid>
+                      {workerProvider?.always_prefix_model ? (
+                        <div className="mt-3 rounded-[18px] border border-white/6 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-muted)]">
+                          This provider automatically uses the <span className="font-medium text-white">{workerProvider.model_prefix}</span> model prefix.
+                        </div>
+                      ) : null}
+                    </>
                   ) : (
                     <div className="mt-4 rounded-[18px] border border-white/6 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-muted)]">
                       Workers will reuse the main app model settings.
@@ -660,7 +777,9 @@ export function SystemPage() {
                     <div className="mt-4">
                       <Disclosure title="Worker model access" description="Credentials used only when workers have their own model profile.">
                         <FieldsGrid className="xl:grid-cols-2">
-                          <L label="API key"><FormInput type="password" value={form.worker_llm_api_key} onChange={(e) => set("worker_llm_api_key", e.target.value)} placeholder="Leave blank to keep current key" /></L>
+                          <L label={workerProvider?.api_key_label ?? "API key"} hint={workerProvider?.requires_api_key === false ? "Optional for this provider." : "Required for this provider."}>
+                            <FormInput type="password" value={form.worker_llm_api_key} onChange={(e) => set("worker_llm_api_key", e.target.value)} placeholder={workerProvider?.requires_api_key === false ? "Optional" : "Leave blank to keep current key"} />
+                          </L>
                         </FieldsGrid>
                       </Disclosure>
                     </div>
