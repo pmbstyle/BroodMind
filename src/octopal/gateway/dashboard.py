@@ -6,7 +6,7 @@ import math
 import os
 import shutil
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,6 +30,7 @@ from octopal.infrastructure.config.models import (
     WorkerRuntimeConfig,
 )
 from octopal.infrastructure.config.settings import Settings, _sync_settings_from_config, load_config, save_config
+from octopal.infrastructure.providers.catalog import list_provider_catalog
 from octopal.infrastructure.store.models import AuditEvent, WorkerRecord, WorkerTemplateRecord
 from octopal.infrastructure.store.sqlite import SQLiteStore
 from octopal.runtime.metrics import read_metrics_snapshot
@@ -130,6 +131,29 @@ class DashboardConfigPayload(BaseModel):
     user_message_grace_seconds: float = 5.0
 
 
+class DashboardProviderOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    description: str
+    default_model: str
+    model_prefix: str | None = None
+    default_api_base: str | None = None
+    requires_api_key: bool = True
+    supports_custom_base_url: bool = True
+    supports_custom_model: bool = True
+    supports_model_prefix_override: bool = False
+    always_prefix_model: bool = False
+    api_key_label: str = "API key"
+    model_label: str = "Model"
+    base_url_label: str = "Base URL"
+
+
+def _dashboard_provider_options_payload() -> list[dict[str, Any]]:
+    return [DashboardProviderOption(**asdict(entry)).model_dump(mode="json") for entry in list_provider_catalog()]
+
+
 def register_dashboard_routes(app: FastAPI) -> None:
     @app.get("/dashboard", response_class=HTMLResponse)
     async def dashboard_page():
@@ -223,6 +247,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         launcher_status = get_worker_launcher_status(settings)
         return {
             "config": config.model_dump(mode="json"),
+            "providers": _dashboard_provider_options_payload(),
             "worker_launcher": {
                 "configured": launcher_status.configured_launcher,
                 "effective": launcher_status.effective_launcher,
@@ -269,6 +294,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         return {
             "status": "saved",
             "config": _sanitize_dashboard_config_payload(_dashboard_editable_config_payload(settings)).model_dump(mode="json"),
+            "providers": _dashboard_provider_options_payload(),
             "worker_launcher": {
                 "configured": launcher_status.configured_launcher,
                 "effective": launcher_status.effective_launcher,
@@ -2379,9 +2405,12 @@ def _merge_dashboard_secret_fields(
     merged = payload.model_copy(deep=True)
     if not merged.telegram.bot_token.strip():
         merged.telegram.bot_token = existing.telegram.bot_token
-    if not (merged.llm.api_key or "").strip():
+    if merged.llm.provider_id == existing.llm.provider_id and not (merged.llm.api_key or "").strip():
         merged.llm.api_key = existing.llm.api_key
-    if not (merged.worker_llm_default.api_key or "").strip():
+    if (
+        merged.worker_llm_default.provider_id == existing.worker_llm_default.provider_id
+        and not (merged.worker_llm_default.api_key or "").strip()
+    ):
         merged.worker_llm_default.api_key = existing.worker_llm_default.api_key
     if not merged.gateway.dashboard_token.strip():
         merged.gateway.dashboard_token = existing.gateway.dashboard_token

@@ -10,8 +10,6 @@ type WorkersResponse =
   paths["/api/dashboard/v2/workers"]["get"]["responses"]["200"]["content"]["application/json"];
 type SystemResponse =
   paths["/api/dashboard/v2/system"]["get"]["responses"]["200"]["content"]["application/json"];
-type ActionsResponse =
-  paths["/api/dashboard/v2/actions"]["get"]["responses"]["200"]["content"]["application/json"];
 
 export type DashboardEditableConfig = {
   user_channel: string;
@@ -95,6 +93,7 @@ export type DashboardEditableConfig = {
 
 export type DashboardConfigResponse = {
   config: DashboardEditableConfig;
+  providers: DashboardProviderOption[];
   worker_launcher: {
     configured: string;
     effective: string;
@@ -108,6 +107,7 @@ export type DashboardConfigResponse = {
 export type DashboardConfigSaveResponse = {
   status: string;
   config: DashboardEditableConfig;
+  providers: DashboardProviderOption[];
   worker_launcher: {
     configured: string;
     effective: string;
@@ -115,6 +115,23 @@ export type DashboardConfigSaveResponse = {
     reason: string;
     docker_image: string;
   };
+};
+
+export type DashboardProviderOption = {
+  id: string;
+  label: string;
+  description: string;
+  default_model: string;
+  model_prefix: string | null;
+  default_api_base: string | null;
+  requires_api_key: boolean;
+  supports_custom_base_url: boolean;
+  supports_custom_model: boolean;
+  supports_model_prefix_override: boolean;
+  always_prefix_model: boolean;
+  api_key_label: string;
+  model_label: string;
+  base_url_label: string;
 };
 
 export type WorkerTemplate = {
@@ -131,13 +148,6 @@ export type WorkerTemplate = {
   allowed_child_templates: string[];
   created_at?: string;
   updated_at?: string;
-};
-
-type ActionRequest = {
-  action: "restart_worker" | "retry_failed" | "clear_control_queue";
-  worker_id?: string;
-  confirm?: boolean;
-  reason?: string;
 };
 
 export type DashboardQueryParams = {
@@ -204,10 +214,6 @@ export async function fetchSystem(params: DashboardQueryParams): Promise<SystemR
   return fetchJson<SystemResponse>(withQuery("/api/dashboard/v2/system", params), params.token);
 }
 
-export async function fetchActions(params: DashboardQueryParams): Promise<ActionsResponse> {
-  return fetchJson<ActionsResponse>(withQuery("/api/dashboard/v2/actions", params), params.token);
-}
-
 export async function fetchDashboardConfig(token?: string): Promise<DashboardConfigResponse> {
   return fetchJson<DashboardConfigResponse>("/api/dashboard/config", token);
 }
@@ -217,10 +223,6 @@ export async function updateDashboardConfig(
   token?: string,
 ): Promise<DashboardConfigSaveResponse> {
   return mutateJson<DashboardConfigSaveResponse>("/api/dashboard/config", "PUT", token, payload);
-}
-
-export async function runDashboardAction(payload: ActionRequest, token?: string): Promise<Record<string, unknown>> {
-  return mutateJson<Record<string, unknown>>("/api/dashboard/actions", "POST", token, payload);
 }
 
 export async function fetchWorkerTemplates(token?: string): Promise<WorkerTemplate[]> {

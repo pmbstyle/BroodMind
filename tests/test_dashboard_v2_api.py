@@ -241,6 +241,7 @@ def test_dashboard_config_can_be_read_and_updated(tmp_path, monkeypatch: pytest.
     payload = response.json()
     assert payload["config"]["gateway"]["port"] == 8000
     assert payload["config"]["workers"]["launcher"] == "docker"
+    assert any(item["id"] == "openai" for item in payload["providers"])
 
     updated = payload["config"]
     updated["user_channel"] = "whatsapp"
@@ -310,6 +311,7 @@ def test_dashboard_config_redacts_and_preserves_secrets(tmp_path, monkeypatch: p
     assert payload["whatsapp"]["callback_token"] == ""
     assert payload["search"]["brave_api_key"] is None
     assert payload["search"]["firecrawl_api_key"] is None
+    assert any(item["id"] == "openrouter" for item in response.json()["providers"])
 
     payload["gateway"]["port"] = 9001
     save_response = client.put("/api/dashboard/config", json=payload)
@@ -324,3 +326,12 @@ def test_dashboard_config_redacts_and_preserves_secrets(tmp_path, monkeypatch: p
     assert persisted["search"]["brave_api_key"] == "brave-secret"
     assert persisted["search"]["firecrawl_api_key"] == "fire-secret"
     assert persisted["gateway"]["port"] == 9001
+
+    payload["llm"]["provider_id"] = "openai"
+    payload["worker_llm_default"]["provider_id"] = "openai"
+    provider_changed_response = client.put("/api/dashboard/config", json=payload, headers={"x-octopal-token": "dash-secret"})
+    assert provider_changed_response.status_code == 200
+
+    changed = json.loads(config_path.read_text(encoding="utf-8"))
+    assert changed["llm"]["api_key"] is None
+    assert changed["worker_llm_default"]["api_key"] is None
