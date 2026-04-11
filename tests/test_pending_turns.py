@@ -67,3 +67,39 @@ def test_pending_turn_aggregator_restarts_timer() -> None:
         await aggregator.stop()
 
     asyncio.run(scenario())
+
+
+def test_pending_turn_aggregator_flushes_file_only_payloads() -> None:
+    flushed: list[dict] = []
+
+    async def _flush(chat_id: int, text: str, images: list[str], saved_file_paths: list[str], metadata: dict) -> None:
+        flushed.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "images": images,
+                "saved_file_paths": saved_file_paths,
+                "metadata": metadata,
+            }
+        )
+
+    async def scenario() -> None:
+        aggregator = PendingTurnAggregator(grace_seconds=0.0, flush_callback=_flush)
+        await aggregator.submit(
+            chat_id=12,
+            text="",
+            saved_file_paths=["C:/tmp/report.pdf"],
+            metadata={"source": "test"},
+        )
+        assert flushed == [
+            {
+                "chat_id": 12,
+                "text": "",
+                "images": [],
+                "saved_file_paths": ["C:/tmp/report.pdf"],
+                "metadata": {"source": "test"},
+            }
+        ]
+        await aggregator.stop()
+
+    asyncio.run(scenario())

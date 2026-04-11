@@ -79,3 +79,35 @@ def test_send_file_safe_uses_audio_for_audio_files(tmp_path: Path) -> None:
     asyncio.run(handlers._send_file_safe(bot, 9, str(audio_path), caption="Listen"))
 
     assert bot.calls == [("audio", 9, str(audio_path), "Listen")]
+
+
+def test_build_telegram_media_artifacts_keeps_document_paths_without_images(tmp_path: Path) -> None:
+    images, saved_paths = handlers._build_telegram_media_artifacts(
+        binary=b"hello",
+        file_name="notes.pdf",
+        mime_type="application/pdf",
+        workspace_dir=tmp_path,
+        source="telegram_files",
+        default_suffix=".pdf",
+    )
+
+    assert images == []
+    assert len(saved_paths) == 1
+    assert saved_paths[0].endswith(".pdf")
+    assert Path(saved_paths[0]).is_file()
+
+
+def test_build_telegram_media_artifacts_converts_image_documents_to_images(tmp_path: Path) -> None:
+    images, saved_paths = handlers._build_telegram_media_artifacts(
+        binary=b"fakepng",
+        file_name="diagram.png",
+        mime_type="image/png",
+        workspace_dir=tmp_path,
+        source="telegram_files",
+        default_suffix=".png",
+    )
+
+    assert len(images) == 1
+    assert images[0].startswith("data:image/png;base64,")
+    assert len(saved_paths) == 1
+    assert saved_paths[0].endswith(".png")

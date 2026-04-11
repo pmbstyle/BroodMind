@@ -38,6 +38,37 @@ def test_build_octo_prompt_includes_saved_image_paths_in_user_text() -> None:
     asyncio.run(scenario())
 
 
+def test_build_octo_prompt_includes_saved_file_paths_without_images() -> None:
+    class DummyMemory:
+        async def get_context(self, user_text: str, exclude_chat_id: int | None = None):
+            return []
+
+        async def get_recent_history(self, chat_id: int, limit: int = 20):
+            return []
+
+    class DummyCanon:
+        def get_tier1_context(self):
+            return ""
+
+    async def scenario() -> None:
+        messages = await build_octo_prompt(
+            store=object(),
+            memory=DummyMemory(),
+            canon=DummyCanon(),
+            user_text="please inspect this file",
+            chat_id=123,
+            bootstrap_context="",
+            images=[],
+            saved_file_paths=["/tmp/uploads/report.pdf"],
+        )
+        user_message = messages[-1]
+        assert isinstance(user_message.content, str)
+        assert "/tmp/uploads/report.pdf" in user_message.content
+        assert "Files received and saved locally" in user_message.content
+
+    asyncio.run(scenario())
+
+
 def test_build_octo_prompt_includes_worker_first_guardrails() -> None:
     class DummyMemory:
         async def get_context(self, user_text: str, exclude_chat_id: int | None = None):

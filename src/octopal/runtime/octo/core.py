@@ -719,6 +719,7 @@ class Octo:
     internal_send: callable | None = None
     internal_send_file: callable | None = None
     internal_progress_send: callable | None = None
+    internal_worker_event_send: callable | None = None
     internal_typing_control: callable | None = None
     _cleanup_task: asyncio.Task | None = None
     _metrics_task: asyncio.Task | None = None
@@ -730,6 +731,7 @@ class Octo:
     _tg_send: callable | None = None
     _tg_send_file: callable | None = None
     _tg_progress: callable | None = None
+    _tg_worker_event: callable | None = None
     _tg_typing: callable | None = None
     _spawn_limits: dict[str, int] | None = None
     _worker_children: dict[str, set[str]] | None = None
@@ -834,6 +836,7 @@ class Octo:
         self._tg_send = self.internal_send
         self._tg_send_file = self.internal_send_file
         self._tg_progress = self.internal_progress_send
+        self._tg_worker_event = self.internal_worker_event_send
         self._tg_typing = self.internal_typing_control
 
     def _reserve_recent_task(
@@ -878,6 +881,7 @@ class Octo:
         send: callable | None = None,
         send_file: callable | None = None,
         progress: callable | None = None,
+        worker_event: callable | None = None,
         typing: callable | None = None,
         owner_id: str | None = None,
         force: bool = False,
@@ -919,6 +923,7 @@ class Octo:
             self.internal_send = send
             self.internal_send_file = send_file
             self.internal_progress_send = progress
+            self.internal_worker_event_send = worker_event
             self.internal_typing_control = typing
             self._ws_owner = owner_id or "ws-default"
             logger.info("Octo switched to WebSocket output channel")
@@ -926,6 +931,7 @@ class Octo:
             self.internal_send = self._tg_send
             self.internal_send_file = self._tg_send_file
             self.internal_progress_send = self._tg_progress
+            self.internal_worker_event_send = self._tg_worker_event
             self.internal_typing_control = self._tg_typing
             self._ws_owner = None
             logger.info("Octo switched to Telegram output channel")
@@ -2014,6 +2020,19 @@ class Octo:
                     "spawn_depth": effective_spawn_depth,
                 },
             )
+            await self._emit_worker_event(
+                chat_id,
+                "worker_queued",
+                {
+                    "run_id": run_id,
+                    "worker_template_id": worker_id,
+                    "task": task,
+                    "lineage_id": effective_lineage_id,
+                    "parent_worker_id": parent_worker_id,
+                    "spawn_depth": effective_spawn_depth,
+                    "timeout_seconds": resolved_timeout_seconds,
+                },
+            )
             task_request = TaskRequest(
                 worker_id=worker_id,
                 task=task,
@@ -2045,6 +2064,15 @@ class Octo:
                         "running",
                         f"Worker {run_id} is running.",
                         {"worker_id": run_id, "worker_template_id": worker_id},
+                    )
+                    await self._emit_worker_event(
+                        chat_id,
+                        "worker_running",
+                        {
+                            "run_id": run_id,
+                            "worker_template_id": worker_id,
+                            "task": task,
+                        },
                     )
                     result = await self.runtime.run_task(task_request, approval_requester=requester)
                     worker_record = await asyncio.to_thread(self.store.get_worker, run_id)
@@ -2084,6 +2112,17 @@ class Octo:
                             "worker_status": worker_status,
                         },
                     )
+                    await self._emit_worker_event(
+                        chat_id,
+                        "worker_finished" if not failed else "worker_failed",
+                        {
+                            "run_id": run_id,
+                            "worker_template_id": worker_id,
+                            "worker_status": worker_status,
+                            "result_summary": getattr(result, "summary", None),
+                            "worker": _serialize_worker_record(worker_record),
+                        },
+                    )
                 except Exception as exc:
                     failed = True
                     result = WorkerResult(summary=f"Worker error: {exc}", output={"error": str(exc)})
@@ -2092,6 +2131,15 @@ class Octo:
                         "failed",
                         f"Worker {run_id} failed: {exc}",
                         {"worker_id": run_id, "worker_template_id": worker_id},
+                    )
+                    await self._emit_worker_event(
+                        chat_id,
+                        "worker_failed",
+                        {
+                            "run_id": run_id,
+                            "worker_template_id": worker_id,
+                            "error": str(exc),
+                        },
                     )
                 finally:
                     self._release_recent_task(
@@ -2127,6 +2175,19 @@ class Octo:
                     "lineage_id": effective_lineage_id,
                     "parent_worker_id": parent_worker_id,
                     "spawn_depth": effective_spawn_depth,
+                },
+            )
+            await self._emit_worker_event(
+                chat_id,
+                "worker_started",
+                {
+                    "run_id": run_id,
+                    "worker_template_id": worker_id,
+                    "task": task,
+                    "lineage_id": effective_lineage_id,
+                    "parent_worker_id": parent_worker_id,
+                    "spawn_depth": effective_spawn_depth,
+                    "timeout_seconds": resolved_timeout_seconds,
                 },
             )
             return {
@@ -2237,6 +2298,20 @@ class Octo:
         except Exception:
             logger.debug("Progress emit failed", exc_info=True)
 
+    async def _emit_worker_event(
+        self,
+        chat_id: int,
+        event: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        sender = self.internal_worker_event_send
+        if not sender:
+            return
+        try:
+            await sender(chat_id, event, payload or {})
+        except Exception:
+            logger.debug("Worker event emit failed", exc_info=True)
+
 
 def _normalize_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
@@ -2251,6 +2326,19 @@ def _normalize_string_list(value: Any) -> list[str]:
         if text:
             normalized.append(text)
     return normalized[:20]
+
+
+def _serialize_worker_record(worker_record: Any) -> dict[str, Any] | None:
+    if worker_record is None:
+        return None
+    if hasattr(worker_record, "model_dump"):
+        try:
+            return worker_record.model_dump(mode="json")
+        except TypeError:
+            return worker_record.model_dump()
+    if isinstance(worker_record, dict):
+        return dict(worker_record)
+    return None
 
 
 def _is_active_worker_status(status: Any) -> bool:

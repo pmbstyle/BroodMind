@@ -461,6 +461,21 @@ async def build_octo_prompt(
             content_blocks.append({"type": "image_url", "image_url": {"url": img, "detail": "auto"}})
         messages.append(Message(role="user", content=content_blocks))
     else:
-        messages.append(Message(role="user", content=user_text))
+        normalized_paths = [str(path).strip() for path in (saved_file_paths or []) if str(path).strip()]
+        if normalized_paths:
+            text_segments: list[str] = []
+            if user_text.strip():
+                text_segments.append(user_text.strip())
+            else:
+                text_segments.append("User uploaded file(s).")
+            path_lines = "\n".join(f"- {path}" for path in normalized_paths)
+            text_segments.append(
+                "Files received and saved locally for tool-based inspection.\n"
+                f"{path_lines}\n"
+                "If you need filesystem tools, use these exact absolute paths."
+            )
+            messages.append(Message(role="user", content="\n\n".join(text_segments)))
+        else:
+            messages.append(Message(role="user", content=user_text))
 
     return messages
