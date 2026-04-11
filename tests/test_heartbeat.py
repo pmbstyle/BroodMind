@@ -326,6 +326,31 @@ def test_merge_worker_followup_texts_deduplicates_and_joins_updates():
     ) == "Подготовила короткий итог.\n\nСохранила отчёт в `research/report.md`."
 
 
+def test_merge_worker_followup_texts_drops_shorter_overlapping_summary():
+    assert _merge_worker_followup_texts(
+        [
+            (
+                "Окей, оба исследования вернулись. Рассказываю!\n\n"
+                "Kapoor & Narayanan показали, что consistency у моделей плавает, "
+                "а Moltbook после покупки Meta заметно затих."
+            ),
+            (
+                "Окей, покопалась. Вот что нашла.\n\n"
+                "Kapoor & Narayanan показали, что consistency у моделей плавает, "
+                "а Moltbook после покупки Meta заметно затих. "
+                "Главный вывод: reliability растёт медленнее accuracy, "
+                "а по Moltbook массовой миграции пока не видно."
+            ),
+        ]
+    ) == (
+        "Окей, покопалась. Вот что нашла.\n\n"
+        "Kapoor & Narayanan показали, что consistency у моделей плавает, "
+        "а Moltbook после покупки Meta заметно затих. "
+        "Главный вывод: reliability растёт медленнее accuracy, "
+        "а по Moltbook массовой миграции пока не видно."
+    )
+
+
 @pytest.mark.asyncio
 async def test_batched_worker_followups_send_single_combined_message(monkeypatch):
     monkeypatch.setattr(octo_core, "_WORKER_FOLLOWUP_BATCH_WINDOW_SECONDS", 1.0)
@@ -605,6 +630,49 @@ async def test_background_delivery_suppresses_unwrapped_internal_heartbeat_text(
     assert reply.delivery_mode == DeliveryMode.SILENT
     assert reply.immediate == "HEARTBEAT_OK"
     assert not any(role == "assistant" for role, _text, _metadata in memory_messages)
+
+
+@pytest.mark.asyncio
+async def test_recent_visible_delivery_suppresses_following_heartbeat_send(monkeypatch):
+    memory_messages = []
+
+    class DummyMemory:
+        async def add_message(self, role, text, metadata):
+            memory_messages.append((role, text, metadata))
+
+    async def _route_or_reply(*args, **kwargs):
+        return "<user_visible>Свежий heartbeat-апдейт.</user_visible>"
+
+    async def _bootstrap_context(*args, **kwargs):
+        return SimpleNamespace(content="", hash="", files=[])
+
+    monkeypatch.setattr(octo_core, "route_or_reply", _route_or_reply)
+    monkeypatch.setattr(octo_core, "build_bootstrap_context_prompt", _bootstrap_context)
+    monkeypatch.setattr(octo_core, "_HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS", 300)
+
+    octo = Octo(
+        approvals=None,
+        memory=DummyMemory(),
+        canon=None,
+        provider=None,
+        store=None,
+        policy=None,
+        runtime=None,
+    )
+    octo.note_user_visible_delivery(123, "Уже отправила итог воркеров.")
+
+    reply = await octo.handle_message(
+        "heartbeat task",
+        123,
+        persist_to_memory=False,
+        track_progress=False,
+        include_wakeup=False,
+        background_delivery=True,
+    )
+
+    assert reply.delivery_mode == DeliveryMode.IMMEDIATE
+    assert reply.immediate == "Свежий heartbeat-апдейт."
+    assert octo.should_suppress_heartbeat_delivery(123, reply.immediate) is True
 
 
 @pytest.mark.asyncio

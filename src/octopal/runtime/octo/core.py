@@ -184,6 +184,11 @@ _PENDING_CONVERSATIONAL_CLOSURE_TTL_SECONDS = _env_int(
     3600,
     minimum=60,
 )
+_HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS = _env_int(
+    "OCTOPAL_HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS",
+    300,
+    minimum=0,
+)
 _RECENT_WORKER_TASK_TTL_SECONDS = float(
     _env_int(
         "OCTOPAL_RECENT_WORKER_TASK_TTL_SECONDS",
@@ -412,13 +417,66 @@ def _merge_worker_followup_texts(texts: list[str]) -> str:
         fingerprint = text.casefold()
         if fingerprint in seen:
             continue
+        replacement_index: int | None = None
+        should_skip = False
+        for idx, existing in enumerate(merged):
+            overlap = _worker_followup_overlap(existing, text)
+            if overlap == "existing_contains_new":
+                should_skip = True
+                break
+            if overlap == "new_contains_existing":
+                replacement_index = idx
+                break
+        if should_skip:
+            continue
         seen.add(fingerprint)
-        merged.append(text)
+        if replacement_index is not None:
+            prior = merged[replacement_index]
+            seen.discard(prior.casefold())
+            merged[replacement_index] = text
+        else:
+            merged.append(text)
     if not merged:
         return ""
     if len(merged) == 1:
         return merged[0]
     return "\n\n".join(merged)
+
+
+def _worker_followup_overlap(existing: str, candidate: str) -> str | None:
+    existing_norm = _normalize_compact(existing)
+    candidate_norm = _normalize_compact(candidate)
+    if not existing_norm or not candidate_norm:
+        return None
+    if existing_norm == candidate_norm:
+        return "existing_contains_new"
+    if existing_norm in candidate_norm:
+        return "new_contains_existing"
+    if candidate_norm in existing_norm:
+        return "existing_contains_new"
+
+    existing_words = set(_worker_followup_keywords(existing_norm))
+    candidate_words = set(_worker_followup_keywords(candidate_norm))
+    if len(existing_words) < 12 or len(candidate_words) < 12:
+        return None
+
+    shared = existing_words.intersection(candidate_words)
+    if not shared:
+        return None
+
+    containment = len(shared) / float(min(len(existing_words), len(candidate_words)))
+    if containment < 0.72:
+        return None
+
+    if len(candidate_norm) >= int(len(existing_norm) * 1.2):
+        return "new_contains_existing"
+    if len(existing_norm) >= int(len(candidate_norm) * 1.2):
+        return "existing_contains_new"
+    return None
+
+
+def _worker_followup_keywords(value: str) -> list[str]:
+    return re.findall(r"\w+", value, flags=re.UNICODE)
 
 
 async def _send_worker_followup(
@@ -435,6 +493,7 @@ async def _send_worker_followup(
         return
     if octo.internal_send:
         await octo.internal_send(chat_id, decision.text)
+        octo.note_user_visible_delivery(chat_id, decision.text)
         octo.clear_pending_conversational_closure(correlation_id)
         logger.info(
             "Internal worker follow-up sent",
@@ -747,6 +806,7 @@ class Octo:
     _pending_wakeup_by_chat: dict[int, str] | None = None
     _context_health_by_chat: dict[int, dict[str, Any]] | None = None
     _last_reply_norm_by_chat: dict[int, str] | None = None
+    _last_user_visible_delivery_at_by_chat: dict[int, Any] | None = None
     _pending_conversational_closure_by_correlation: dict[str, Any] | None = None
     _suppressed_followups_by_correlation: dict[str, Any] | None = None
     _no_progress_turns_by_chat: dict[int, int] | None = None
@@ -787,6 +847,8 @@ class Octo:
             self._context_health_by_chat = {}
         if self._last_reply_norm_by_chat is None:
             self._last_reply_norm_by_chat = {}
+        if self._last_user_visible_delivery_at_by_chat is None:
+            self._last_user_visible_delivery_at_by_chat = {}
         if self._pending_conversational_closure_by_correlation is None:
             self._pending_conversational_closure_by_correlation = {}
         if self._suppressed_followups_by_correlation is None:
@@ -1401,6 +1463,26 @@ class Octo:
         pending = self._pending_wakeup_by_chat or {}
         pending.pop(chat_id, None)
 
+    def note_user_visible_delivery(self, chat_id: int, text: str) -> None:
+        normalized = _normalize_compact(text)
+        if normalized:
+            self._last_reply_norm_by_chat[chat_id] = normalized
+        self._last_user_visible_delivery_at_by_chat[chat_id] = utc_now()
+
+    def should_suppress_heartbeat_delivery(self, chat_id: int, text: str) -> bool:
+        if _HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS <= 0:
+            return False
+        delivered_at = (self._last_user_visible_delivery_at_by_chat or {}).get(chat_id)
+        if delivered_at is None:
+            return False
+        try:
+            elapsed = (utc_now() - delivered_at).total_seconds()
+        except Exception:
+            return False
+        if elapsed < 0:
+            return False
+        return elapsed < _HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS
+
     def get_context_thresholds(self) -> dict[str, dict[str, float | int]]:
         return {
             "watch": dict(_WATCH_THRESHOLDS),
@@ -1888,6 +1970,8 @@ class Octo:
                     delivery.text,
                     {"chat_id": chat_id, "background_delivery": True, "heartbeat": not track_progress},
                 )
+            if delivery.user_visible and track_progress:
+                self.note_user_visible_delivery(chat_id, delivery.text)
             return OctoReply(
                 immediate=delivery.text,
                 followup=None,
