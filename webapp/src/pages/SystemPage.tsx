@@ -203,7 +203,13 @@ function toPayload(form: FormState): DashboardEditableConfig {
 }
 
 function L({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
-  return <label className="grid gap-1.5 text-sm text-[var(--text-strong)]"><span className="text-[11px] uppercase tracking-[0.18em] text-white/92">{label}</span>{children}{hint ? <span className="text-xs text-[var(--text-dim)]">{hint}</span> : null}</label>;
+  return (
+    <label className="grid min-h-[112px] grid-rows-[auto_auto_1fr] gap-1.5 text-sm text-[var(--text-strong)]">
+      <span className="text-[11px] uppercase tracking-[0.18em] text-white/92">{label}</span>
+      {children}
+      <span className="text-xs leading-5 text-[var(--text-dim)]">{hint ?? ""}</span>
+    </label>
+  );
 }
 
 function H({ title, text }: { title: string; text: string }) {
@@ -296,6 +302,16 @@ function SummaryPill({ label, value }: { label: string; value: string }) {
       <span className="ml-2 text-[var(--text-strong)]">{value}</span>
     </div>
   );
+}
+
+function FieldsGrid({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <div className={`grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-4 ${className}`.trim()}>{children}</div>;
 }
 
 function Disclosure({
@@ -513,7 +529,7 @@ export function SystemPage() {
             </div>
 
             <SectionCard title="App basics" description="General app behavior, dashboard access, and how the web interface is served.">
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <FieldsGrid>
                 <L label="Primary chat app" hint="Choose where the app should talk to people by default."><FormSelect value={form.user_channel} onValueChange={(value) => set("user_channel", value)} options={[{ value: "telegram", label: "Telegram" }, { value: "whatsapp", label: "WhatsApp" }]} /></L>
                 <L label="Log detail level" hint="More detail helps with troubleshooting, less detail keeps logs cleaner."><FormSelect value={form.log_level} onValueChange={(value) => set("log_level", value)} options={[{ value: "DEBUG", label: "Debug" }, { value: "INFO", label: "Info" }, { value: "WARNING", label: "Warning" }, { value: "ERROR", label: "Error" }]} /></L>
                 <L label="Heartbeat interval (seconds)" hint="How often the app checks in with its background loop."><FormInput value={form.heartbeat_interval_seconds} onChange={(e) => set("heartbeat_interval_seconds", e.target.value)} /></L>
@@ -522,7 +538,7 @@ export function SystemPage() {
                 <L label="Server port"><FormInput value={form.gateway_port} onChange={(e) => set("gateway_port", e.target.value)} /></L>
                 <L label="Tailscale addresses" hint="Comma-separated addresses that should point to this app through Tailscale."><FormInput value={form.gateway_tailscale_ips} onChange={(e) => set("gateway_tailscale_ips", e.target.value)} /></L>
                 {form.gateway_webapp_enabled ? <L label="Web app build folder" hint="Only needed when the built-in web interface is turned on."><FormInput value={form.gateway_webapp_dist_dir} onChange={(e) => set("gateway_webapp_dist_dir", e.target.value)} /></L> : null}
-              </div>
+              </FieldsGrid>
               <div className="mt-4 grid gap-3 lg:grid-cols-3">
                 <ToggleField label="Show detailed AI debug info" checked={form.debug_prompts} onChange={(checked) => set("debug_prompts", checked)} />
                 <ToggleField label="Auto-publish through Tailscale" checked={form.gateway_tailscale_auto_serve} onChange={(checked) => set("gateway_tailscale_auto_serve", checked)} />
@@ -530,9 +546,9 @@ export function SystemPage() {
               </div>
               <div className="mt-4">
                 <Disclosure title="Access secrets" description="Sensitive values used to protect access.">
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <FieldsGrid className="xl:grid-cols-2">
                     <L label="Dashboard access token"><FormInput type="password" value={form.gateway_dashboard_token} onChange={(e) => set("gateway_dashboard_token", e.target.value)} placeholder="Leave blank to keep current token" /></L>
-                  </div>
+                  </FieldsGrid>
                 </Disclosure>
               </div>
             </SectionCard>
@@ -541,25 +557,35 @@ export function SystemPage() {
               {showTelegram ? (
                 <div className="space-y-4">
                   <div className="grid gap-4 lg:grid-cols-2">
-                    <L label="Message formatting mode" hint="Controls how bold text, links, and other formatting work in Telegram."><FormInput value={form.telegram_parse_mode} onChange={(e) => set("telegram_parse_mode", e.target.value)} /></L>
+                    <L label="Message formatting mode" hint="Controls how bold text, links, and other formatting work in Telegram.">
+                      <FormSelect
+                        value={form.telegram_parse_mode}
+                        onValueChange={(value) => set("telegram_parse_mode", value)}
+                        options={[
+                          { value: "MarkdownV2", label: "MarkdownV2" },
+                          { value: "Markdown", label: "Markdown" },
+                          { value: "HTML", label: "HTML" },
+                        ]}
+                      />
+                    </L>
                   </div>
                   <Disclosure title="Telegram access" description="Credentials for connecting the app to Telegram.">
-                    <div className="grid gap-4 lg:grid-cols-2">
+                    <FieldsGrid className="xl:grid-cols-2">
                       <L label="Bot token"><FormInput type="password" value={form.telegram_bot_token} onChange={(e) => set("telegram_bot_token", e.target.value)} placeholder="Leave blank to keep current token" /></L>
-                    </div>
+                    </FieldsGrid>
                   </Disclosure>
                   <L label="Allowed chat IDs" hint="Only these Telegram chats will be allowed. Enter one per line or comma-separated."><FormTextarea value={form.telegram_allowed_chat_ids} onChange={(e) => set("telegram_allowed_chat_ids", e.target.value)} rows={5} /></L>
                 </div>
               ) : null}
               {showWhatsApp ? (
                 <div className="space-y-4">
-                  <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+                  <FieldsGrid>
                     <L label="Connection mode" hint="Use separate bridge if WhatsApp runs as its own helper service."><FormSelect value={form.whatsapp_mode} onValueChange={(value) => set("whatsapp_mode", value)} options={[{ value: "separate", label: "Separate bridge" }, { value: "embedded", label: "Embedded" }]} /></L>
                     <L label="Login data folder" hint="Where WhatsApp session data is stored on disk."><FormInput value={form.whatsapp_auth_dir} onChange={(e) => set("whatsapp_auth_dir", e.target.value)} /></L>
                     <L label="Node command" hint="Command used to run the WhatsApp bridge process."><FormInput value={form.whatsapp_node_command} onChange={(e) => set("whatsapp_node_command", e.target.value)} /></L>
-                  </div>
+                  </FieldsGrid>
                   {useSeparateWhatsAppBridge ? (
-                    <div className="grid gap-4 lg:grid-cols-3">
+                    <div className="grid items-start gap-4 lg:grid-cols-3">
                       <L label="Bridge host"><FormInput value={form.whatsapp_bridge_host} onChange={(e) => set("whatsapp_bridge_host", e.target.value)} /></L>
                       <L label="Bridge port"><FormInput value={form.whatsapp_bridge_port} onChange={(e) => set("whatsapp_bridge_port", e.target.value)} /></L>
                     </div>
@@ -575,14 +601,14 @@ export function SystemPage() {
             </SectionCard>
 
             <SectionCard title="Worker setup" description="How helper workers are launched and how much parallel work they are allowed to create.">
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <FieldsGrid>
                 <L label="How workers run" hint="Docker reveals container image and folder settings."><FormSelect value={form.workers_launcher} onValueChange={(value) => set("workers_launcher", value)} options={[{ value: "docker", label: "Docker" }, { value: "same_env", label: "Same app environment" }]} /></L>
                 <L label="Max worker depth" hint="Limits how many generations of workers can create more workers."><FormInput value={form.workers_max_spawn_depth} onChange={(e) => set("workers_max_spawn_depth", e.target.value)} /></L>
                 <L label="Max total child workers" hint="Total number of helper workers one worker can create over time."><FormInput value={form.workers_max_children_total} onChange={(e) => set("workers_max_children_total", e.target.value)} /></L>
                 <L label="Max concurrent child workers" hint="How many helper workers can run at the same time."><FormInput value={form.workers_max_children_concurrent} onChange={(e) => set("workers_max_children_concurrent", e.target.value)} /></L>
-              </div>
+              </FieldsGrid>
               {useDockerLauncher ? (
-                <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <div className="mt-4 grid items-start gap-4 lg:grid-cols-3">
                   <L label="Docker image"><FormInput value={form.workers_docker_image} onChange={(e) => set("workers_docker_image", e.target.value)} /></L>
                   <L label="Worker folder inside Docker" hint="Where the app workspace is mounted inside the container."><FormInput value={form.workers_docker_workspace} onChange={(e) => set("workers_docker_workspace", e.target.value)} /></L>
                   <L label="Worker folder on this machine" hint="The local folder that will be mounted into Docker."><FormInput value={form.workers_docker_host_workspace} onChange={(e) => set("workers_docker_host_workspace", e.target.value)} /></L>
@@ -595,20 +621,20 @@ export function SystemPage() {
             </SectionCard>
 
             <SectionCard title="AI model settings" description="Choose the main model profile, optionally give workers their own profile, and adjust advanced request behavior only when needed.">
-              <div className="grid gap-5 xl:grid-cols-2">
+              <div className="grid items-start gap-5 xl:grid-cols-2">
                 <div className="rounded-[22px] border border-white/6 bg-black/20 p-4">
                   <h4 className="text-base font-semibold text-white">Main app model</h4>
-                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <FieldsGrid className="xl:grid-cols-2">
                     <L label="AI provider" hint="The AI service this app should use for model calls."><FormInput value={form.llm_provider_id} onChange={(e) => set("llm_provider_id", e.target.value)} /></L>
                     <L label="Model name"><FormInput value={form.llm_model} onChange={(e) => set("llm_model", e.target.value)} /></L>
                     <L label="Custom API URL" hint="Only needed if your AI provider uses a custom endpoint."><FormInput value={form.llm_api_base} onChange={(e) => set("llm_api_base", e.target.value)} /></L>
                     <L label="Model prefix" hint="Optional text added before model names when your AI provider expects it."><FormInput value={form.llm_model_prefix} onChange={(e) => set("llm_model_prefix", e.target.value)} /></L>
-                  </div>
+                  </FieldsGrid>
                   <div className="mt-4">
                     <Disclosure title="Main model access" description="Credentials for the main AI model profile.">
-                      <div className="grid gap-4 lg:grid-cols-2">
+                      <FieldsGrid className="xl:grid-cols-2">
                         <L label="API key"><FormInput type="password" value={form.llm_api_key} onChange={(e) => set("llm_api_key", e.target.value)} placeholder="Leave blank to keep current key" /></L>
-                      </div>
+                      </FieldsGrid>
                     </Disclosure>
                   </div>
                 </div>
@@ -619,12 +645,12 @@ export function SystemPage() {
                     <ToggleField label="Use a separate model for workers" checked={form.worker_llm_enabled} onChange={(checked) => set("worker_llm_enabled", checked)} hint="Turn this off if worker tasks should use the same model settings as the main app." />
                   </div>
                   {useSeparateWorkerInference ? (
-                    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <FieldsGrid className="mt-4 xl:grid-cols-2">
                       <L label="AI provider"><FormInput value={form.worker_llm_provider_id} onChange={(e) => set("worker_llm_provider_id", e.target.value)} /></L>
                       <L label="Model name"><FormInput value={form.worker_llm_model} onChange={(e) => set("worker_llm_model", e.target.value)} /></L>
                       <L label="Custom API URL"><FormInput value={form.worker_llm_api_base} onChange={(e) => set("worker_llm_api_base", e.target.value)} /></L>
                       <L label="Model prefix"><FormInput value={form.worker_llm_model_prefix} onChange={(e) => set("worker_llm_model_prefix", e.target.value)} /></L>
-                    </div>
+                    </FieldsGrid>
                   ) : (
                     <div className="mt-4 rounded-[18px] border border-white/6 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-muted)]">
                       Workers will reuse the main app model settings.
@@ -633,9 +659,9 @@ export function SystemPage() {
                   {useSeparateWorkerInference ? (
                     <div className="mt-4">
                       <Disclosure title="Worker model access" description="Credentials used only when workers have their own model profile.">
-                        <div className="grid gap-4 lg:grid-cols-2">
+                        <FieldsGrid className="xl:grid-cols-2">
                           <L label="API key"><FormInput type="password" value={form.worker_llm_api_key} onChange={(e) => set("worker_llm_api_key", e.target.value)} placeholder="Leave blank to keep current key" /></L>
-                        </div>
+                        </FieldsGrid>
                       </Disclosure>
                     </div>
                   ) : null}
@@ -643,14 +669,14 @@ export function SystemPage() {
               </div>
               <div className="mt-5">
                 <Disclosure title="Advanced model request settings" description="Retry, fallback and request behavior for AI calls." defaultOpen>
-                  <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+                  <FieldsGrid>
                     <L label="Retries"><FormInput value={form.litellm_num_retries} onChange={(e) => set("litellm_num_retries", e.target.value)} /></L>
                     <L label="Request timeout"><FormInput value={form.litellm_timeout} onChange={(e) => set("litellm_timeout", e.target.value)} /></L>
                     <L label="Max parallel requests" hint="Too high can trigger a wave of rate-limit errors."><FormInput value={form.litellm_max_concurrency} onChange={(e) => set("litellm_max_concurrency", e.target.value)} /></L>
                     <L label="Rate-limit retries"><FormInput value={form.litellm_rate_limit_max_retries} onChange={(e) => set("litellm_rate_limit_max_retries", e.target.value)} /></L>
                     <L label="Base retry delay (seconds)"><FormInput value={form.litellm_rate_limit_base_delay_seconds} onChange={(e) => set("litellm_rate_limit_base_delay_seconds", e.target.value)} /></L>
                     <L label="Max retry delay (seconds)"><FormInput value={form.litellm_rate_limit_max_delay_seconds} onChange={(e) => set("litellm_rate_limit_max_delay_seconds", e.target.value)} /></L>
-                  </div>
+                  </FieldsGrid>
                   <div className="mt-4">
                     <L label="Fallback settings (JSON)" hint="Advanced override. Keep this valid and compact so failover stays predictable."><FormTextarea value={form.litellm_fallbacks} onChange={(e) => set("litellm_fallbacks", e.target.value)} rows={3} /></L>
                   </div>
@@ -663,7 +689,7 @@ export function SystemPage() {
             </SectionCard>
 
             <SectionCard title="Storage and memory" description="Where the app keeps its files, and how much past context it should pull into replies.">
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <FieldsGrid>
                 <L label="App data folder"><FormInput value={form.state_dir} onChange={(e) => set("state_dir", e.target.value)} /></L>
                 <L label="Workspace folder"><FormInput value={form.workspace_dir} onChange={(e) => set("workspace_dir", e.target.value)} /></L>
                 <L label="Memory results to keep" hint="Higher values give the AI more past context, but also make prompts larger."><FormInput value={form.memory_top_k} onChange={(e) => set("memory_top_k", e.target.value)} /></L>
@@ -671,15 +697,15 @@ export function SystemPage() {
                 <L label="Minimum memory match score" hint="Higher values make the app pick only closer matches from memory."><FormInput value={form.memory_min_score} onChange={(e) => set("memory_min_score", e.target.value)} /></L>
                 <L label="Max memory text length" hint="Upper limit for how much saved context can be sent to the AI at once."><FormInput value={form.memory_max_chars} onChange={(e) => set("memory_max_chars", e.target.value)} /></L>
                 <L label="Memory owner ID" hint="Useful when memory should stay tied to one app identity or owner."><FormInput value={form.memory_owner_id} onChange={(e) => set("memory_owner_id", e.target.value)} /></L>
-              </div>
+              </FieldsGrid>
             </SectionCard>
 
             <SectionCard title="Web search services" description="Optional providers the app can use when it needs to search or fetch web content.">
               <Disclosure title="Service access keys" description="API keys for connected web search and crawling tools.">
-                <div className="grid gap-4 lg:grid-cols-2">
+                <FieldsGrid className="xl:grid-cols-2">
                   <L label="Brave API key"><FormInput type="password" value={form.search_brave_api_key} onChange={(e) => set("search_brave_api_key", e.target.value)} placeholder="Leave blank to keep current key" /></L>
                   <L label="Firecrawl API key"><FormInput type="password" value={form.search_firecrawl_api_key} onChange={(e) => set("search_firecrawl_api_key", e.target.value)} placeholder="Leave blank to keep current key" /></L>
-                </div>
+                </FieldsGrid>
               </Disclosure>
             </SectionCard>
 
