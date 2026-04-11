@@ -869,6 +869,59 @@ async def test_worker_followup_created_during_active_turn_is_dropped_even_with_f
     assert octo_core._WORKER_FOLLOWUP_BATCHES == {}
 
 
+@pytest.mark.asyncio
+async def test_final_user_reply_drops_active_turn_worker_followup_even_with_pending_internal_results(monkeypatch):
+    monkeypatch.setattr(octo_core, "_WORKER_FOLLOWUP_BATCH_WINDOW_SECONDS", 0.01)
+    octo_core._WORKER_FOLLOWUP_BATCHES.clear()
+
+    sent_messages = []
+
+    class DummyMemory:
+        async def add_message(self, role, text, metadata):
+            return None
+
+    async def _send(chat_id, text):
+        sent_messages.append((chat_id, text))
+
+    async def _route_or_reply(*args, **kwargs):
+        await asyncio.sleep(0.02)
+        return "Оба поиска готовы."
+
+    async def _bootstrap_context(*args, **kwargs):
+        return SimpleNamespace(content="", hash="", files=[])
+
+    monkeypatch.setattr(octo_core, "route_or_reply", _route_or_reply)
+    monkeypatch.setattr(octo_core, "build_bootstrap_context_prompt", _bootstrap_context)
+
+    octo = Octo(
+        approvals=None,
+        memory=DummyMemory(),
+        canon=None,
+        provider=None,
+        store=None,
+        policy=None,
+        runtime=None,
+        internal_send=_send,
+    )
+    correlation_id = "turn-test"
+    octo.mark_internal_result_pending(correlation_id)
+
+    token = octo_core.correlation_id_var.set(correlation_id)
+    try:
+        task = asyncio.create_task(octo.handle_message("test", 123))
+        await asyncio.sleep(0.005)
+        await octo_core._enqueue_batched_worker_followup(octo, 123, correlation_id, "Фоновый итог.")
+        reply = await task
+    finally:
+        octo_core.correlation_id_var.reset(token)
+    await asyncio.sleep(0.03)
+
+    assert reply.immediate == "Оба поиска готовы."
+    assert sent_messages == []
+    assert octo_core._WORKER_FOLLOWUP_BATCHES == {}
+    assert octo.should_suppress_turn_followups(correlation_id) is True
+
+
 def test_octo_does_not_have_web_fetch():
     from octopal.runtime.octo.router import _get_octo_tools
     class DummyOcto:

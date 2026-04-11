@@ -1890,6 +1890,7 @@ class Octo:
         correlation_token = None
         correlation_id = correlation_id_var.get()
         wants_followup = False
+        finalized_visible_reply = False
         if not correlation_id:
             correlation_id = f"turn-{uuid4()}"
             correlation_token = correlation_id_var.set(correlation_id)
@@ -1993,6 +1994,13 @@ class Octo:
                 )
             if delivery.user_visible and track_progress:
                 self.note_user_visible_delivery(chat_id, delivery.text)
+                if not delivery.followup_required:
+                    finalized_visible_reply = True
+                    self.suppress_turn_followups(correlation_id)
+                    logger.info(
+                        "Suppressing worker follow-ups after final in-turn reply",
+                        chat_id=chat_id,
+                    )
             return OctoReply(
                 immediate=delivery.text,
                 followup=None,
@@ -2002,13 +2010,24 @@ class Octo:
             )
         finally:
             self.mark_user_turn_inactive(correlation_id)
-            if track_progress:
+            if track_progress and not finalized_visible_reply:
                 self.clear_suppressed_turn_followups(correlation_id)
+            if finalized_visible_reply:
+                dropped = _discard_worker_followup_batch(
+                    chat_id,
+                    correlation_id,
+                    only_if_created_during_active_turn=True,
+                )
+                if dropped:
+                    logger.info(
+                        "Dropped worker follow-up after final in-turn reply",
+                        chat_id=chat_id,
+                    )
             pending_followup_work = (
                 self.has_active_workers_for_correlation(correlation_id)
                 or self.has_pending_internal_results_for_correlation(correlation_id)
             )
-            if wants_followup and pending_followup_work:
+            if wants_followup and pending_followup_work and not finalized_visible_reply:
                 _schedule_worker_followup_flush(self, chat_id, correlation_id)
             else:
                 _discard_worker_followup_batch(
