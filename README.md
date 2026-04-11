@@ -166,8 +166,7 @@ npm run build
 
 Then enable the dashboard bundle in `config.json` by setting `"gateway": { "webapp_enabled": true }` and start Octopal again.
 
-<img alt="Octopal dashboard" src="https://github.com/user-attachments/assets/0fcf993b-97c6-4f90-840a-63011f0d55f0" />
-
+<img alt="Octopal dashboard" src="https://github.com/user-attachments/assets/2ef52921-a563-41d3-a4c8-8f01faf8e93b" />
 
 ### 4. Manual setup
 
