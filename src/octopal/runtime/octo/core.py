@@ -422,9 +422,21 @@ def _merge_worker_followup_texts(texts: list[str]) -> str:
         for idx, existing in enumerate(merged):
             overlap = _worker_followup_overlap(existing, text)
             if overlap == "existing_contains_new":
+                logger.info(
+                    "Dropped overlapping worker follow-up",
+                    kept_len=len(existing),
+                    dropped_len=len(text),
+                    reason="existing_contains_new",
+                )
                 should_skip = True
                 break
             if overlap == "new_contains_existing":
+                logger.info(
+                    "Replacing overlapping worker follow-up",
+                    prior_len=len(existing),
+                    replacement_len=len(text),
+                    reason="new_contains_existing",
+                )
                 replacement_index = idx
                 break
         if should_skip:
@@ -1481,7 +1493,16 @@ class Octo:
             return False
         if elapsed < 0:
             return False
-        return elapsed < _HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS
+        suppress = elapsed < _HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS
+        if suppress:
+            logger.info(
+                "Suppressing heartbeat delivery after recent visible message",
+                chat_id=chat_id,
+                cooldown_seconds=_HEARTBEAT_USER_VISIBLE_COOLDOWN_SECONDS,
+                elapsed_seconds=round(elapsed, 2),
+                text_len=len(text or ""),
+            )
+        return suppress
 
     def get_context_thresholds(self) -> dict[str, dict[str, float | int]]:
         return {
