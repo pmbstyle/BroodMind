@@ -382,6 +382,15 @@ export function SystemPage() {
     };
   }, [filters.token]);
 
+  const initialForm = useMemo(() => (configData ? buildForm(configData.config) : null), [configData]);
+  const isDirty = Boolean(form && initialForm && JSON.stringify(form) !== JSON.stringify(initialForm));
+  const selectedChannel = form?.user_channel ?? "telegram";
+  const showTelegram = selectedChannel === "telegram";
+  const showWhatsApp = selectedChannel === "whatsapp";
+  const useDockerLauncher = (form?.workers_launcher ?? "docker") === "docker";
+  const useSeparateWorkerInference = Boolean(form?.worker_llm_enabled);
+  const useSeparateWhatsAppBridge = (form?.whatsapp_mode ?? "separate") === "separate";
+
   if (loading) {
     return <section className={panel}><h2 className="text-2xl font-semibold text-white">System</h2><p className="mt-2 text-sm text-[var(--text-muted)]">Loading system diagnostics...</p></section>;
   }
@@ -397,14 +406,6 @@ export function SystemPage() {
   const mcpServers = connectivity.mcp_servers ?? {};
   const launcher = configData?.worker_launcher ?? { configured: "n/a", effective: "n/a", available: false, reason: "No data", docker_image: "n/a" };
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => (current ? { ...current, [key]: value } : current));
-  const initialForm = useMemo(() => (configData ? buildForm(configData.config) : null), [configData]);
-  const isDirty = Boolean(form && initialForm && JSON.stringify(form) !== JSON.stringify(initialForm));
-  const selectedChannel = form?.user_channel ?? "telegram";
-  const showTelegram = selectedChannel === "telegram";
-  const showWhatsApp = selectedChannel === "whatsapp";
-  const useDockerLauncher = (form?.workers_launcher ?? "docker") === "docker";
-  const useSeparateWorkerInference = Boolean(form?.worker_llm_enabled);
-  const useSeparateWhatsAppBridge = (form?.whatsapp_mode ?? "separate") === "separate";
 
   async function save(): Promise<void> {
     if (!form) return;
