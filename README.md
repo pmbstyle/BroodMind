@@ -101,51 +101,15 @@ curl -fsSL https://octopal.ca/octopal.sh | bash
 irm https://octopal.ca/octopal.ps1 | iex
 ```
 
-### 1. Install from git
+### Optional: WhatsApp setup
 
-- Python 3.12+
-- `uv` (recommended)
-- Node 20+ for web ui 
-- One user channel:
-  Telegram bot token from [@BotFather](https://t.me/botfather), or
-  WhatsApp Web linking via QR
-- Bring your own LLM API key:
-  OpenRouter, OpenAI, Anthropic, Google Gemini, Mistral AI, Together AI, Groq, Z.ai, Custom OpenAI-compatible, Ollama
-- [Tailscale](https://tailscale.com/) (optional) if you want to access the dashboard remotely or connect via Websocket client
-
-Install `uv` if needed:
+After you configure your WhatsApp number in the config link Octopal as a new device
 
 ```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
+uv run octopal whatsapp link
 ```
 
-```powershell
-# Windows PowerShell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-### 2. Bootstrap script
-
-```bash
-git clone https://github.com/pmbstyle/Octopal.git
-cd Octopal
-```
-
-```bash
-# macOS/Linux
-chmod +x ./scripts/bootstrap.sh
-./scripts/bootstrap.sh
-```
-
-```powershell
-# Windows PowerShell
-./scripts/bootstrap.ps1
-```
-
-This is the main starting path. The bootstrap script installs dependencies, installs Playwright Chromium, and then launches `octopal configure`.
-
-### 3. Open the web dashboard
+### Open the web dashboard
 
 After bootstrap, start Octopal and then open the dashboard in your browser:
 
@@ -168,7 +132,7 @@ Then enable the dashboard bundle in `config.json` by setting `"gateway": { "weba
 
 <img alt="Octopal dashboard" src="https://github.com/user-attachments/assets/2ef52921-a563-41d3-a4c8-8f01faf8e93b" />
 
-### 4. Manual setup
+## ⚒️ Manual setup
 
 If you do not want the bootstrap script, use the manual path below.
 
@@ -193,7 +157,7 @@ pip install -e .
 Then run:
 
 ```bash
-octopal configure
+uv run octopal configure
 ```
 
 `configure` creates or updates `config.json` and bootstraps workspace files if missing.
@@ -208,7 +172,7 @@ octopal configure
 
 In practice: use the wizard and treat `.env.example` as a compatibility reference, not the main setup path.
 
-### 5. Start
+### Start
 
 ```bash
 # background mode
@@ -249,17 +213,13 @@ Then set in `config.json`:
 
 Restart Octopal after config changes.
 
+```bash
+uv run octopal restart
+```
+
 If Docker CLI and the Docker daemon are available but the configured worker image is missing, Octopal will try to build it automatically on startup. If Docker is unavailable or the automatic build fails, Octopal will temporarily fall back to `same_env` and surface the reason in `octopal status` and the dashboard.
 
 Workers keep their own scratch workspace by default. To share files from Octo's main workspace with a worker, pass explicit `allowed_paths`; if `allowed_paths` is omitted, the worker does not get broad workspace access.
-
-## Optional: WhatsApp setup
-
-After you configure your WhatsApp number in the config link Octopal as a new device
-
-```bash
-uv run octopal whatsapp link
-```
 
 
 ## ✨ Key Features
