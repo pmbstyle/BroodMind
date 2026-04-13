@@ -19,6 +19,8 @@ from octopal.channels.whatsapp.ids import (
 from octopal.infrastructure.config.settings import Settings
 from octopal.runtime.app import build_octo
 from octopal.runtime.metrics import update_component_gauges
+from octopal.runtime.metrics import read_metrics_snapshot
+from octopal.runtime.octo_status import build_octo_status
 from octopal.runtime.octo.core import Octo
 from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.pending_turns import PendingTurnAggregator
@@ -183,6 +185,8 @@ class WhatsAppRuntime:
     def status(self) -> dict[str, Any]:
         status = self.bridge.status()
         status["mapped_chats"] = len(self._number_by_chat_id)
+        metrics = read_metrics_snapshot(Path(self.settings.state_dir))
+        status["octo"] = build_octo_status((metrics or {}).get("octo", {}))
         return status
 
     def _publish_metrics(self, *, connected: bool | None = None, last_sender: str | None = None) -> None:

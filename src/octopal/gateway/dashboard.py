@@ -34,6 +34,7 @@ from octopal.infrastructure.providers.catalog import list_provider_catalog
 from octopal.infrastructure.store.models import AuditEvent, WorkerRecord, WorkerTemplateRecord
 from octopal.infrastructure.store.sqlite import SQLiteStore
 from octopal.runtime.metrics import read_metrics_snapshot
+from octopal.runtime.octo_status import build_octo_status
 from octopal.runtime.state import is_pid_running, read_status
 from octopal.runtime.workers.launcher_factory import (
     WorkerLauncherStatus,
@@ -1194,10 +1195,11 @@ def _build_snapshot(settings: Settings, store: SQLiteStore, last: int, filters: 
     root_running = sum(1 for w in running_nodes if not w.parent_worker_id)
     subworkers_running = sum(1 for w in running_nodes if bool(w.parent_worker_id))
 
-    followup_q = int(octo_metrics.get("followup_queues", 0) or 0)
-    internal_q = int(octo_metrics.get("internal_queues", 0) or 0)
-    thinking_count = int(octo_metrics.get("thinking_count", 0) or 0)
-    octo_state = "thinking" if thinking_count > 0 or (followup_q + internal_q) > 0 else "idle"
+    octo_status = build_octo_status(octo_metrics)
+    followup_q = int(octo_status["followup_queues"])
+    internal_q = int(octo_status["internal_queues"])
+    thinking_count = int(octo_status["thinking_count"])
+    octo_state = str(octo_status["state"])
 
     requests = _read_jsonl(settings.state_dir / "control_requests.jsonl")
     acks = _read_jsonl(settings.state_dir / "control_acks.jsonl")
@@ -1291,8 +1293,8 @@ def _build_snapshot(settings: Settings, store: SQLiteStore, last: int, filters: 
             "state": octo_state,
             "followup_queues": followup_q,
             "internal_queues": internal_q,
-            "followup_tasks": int(octo_metrics.get("followup_tasks", 0) or 0),
-            "internal_tasks": int(octo_metrics.get("internal_tasks", 0) or 0),
+            "followup_tasks": int(octo_status["followup_tasks"]),
+            "internal_tasks": int(octo_status["internal_tasks"]),
         },
         "connectivity": {"mcp_servers": mcp_servers if isinstance(mcp_servers, dict) else {}},
         "logs": recent_logs,
@@ -1435,27 +1437,17 @@ def _build_service_health(
         }
     )
 
-    followup_q = int(octo_metrics.get("followup_queues", 0) or 0)
-    internal_q = int(octo_metrics.get("internal_queues", 0) or 0)
-    thinking_count = int(octo_metrics.get("thinking_count", 0) or 0)
-    octo_queue_pressure = followup_q + internal_q
-    octo_status = "ok"
-    octo_reason = "idle"
-    if octo_queue_pressure >= 20:
-        octo_status = "critical"
-        octo_reason = f"queue pressure high ({octo_queue_pressure})"
-    elif octo_queue_pressure >= 8:
-        octo_status = "warning"
-        octo_reason = f"queue pressure rising ({octo_queue_pressure})"
-    elif thinking_count > 0:
-        octo_reason = "processing tasks"
+    octo_runtime_status = build_octo_status(octo_metrics)
+    followup_q = int(octo_runtime_status["followup_queues"])
+    internal_q = int(octo_runtime_status["internal_queues"])
+    thinking_count = int(octo_runtime_status["thinking_count"])
     out.append(
         {
             "id": "octo",
             "name": "Octo",
-            "status": octo_status,
-            "reason": octo_reason,
-            "updated_at": octo_metrics.get("updated_at"),
+            "status": str(octo_runtime_status["service_status"]),
+            "reason": str(octo_runtime_status["reason"]),
+            "updated_at": octo_runtime_status.get("updated_at"),
             "metrics": {
                 "followup_queues": followup_q,
                 "internal_queues": internal_q,
