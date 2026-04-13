@@ -12,15 +12,15 @@
    <a href="https://deepwiki.com/pmbstyle/Octopal"><img src="https://deepwiki.com/badge.svg"></a>
 </p>
 
-Octopal is a local AI runtime that executes autonomous agents in isolated environments.
+Octopal is a local AI agent runtime designed for safe, autonomous execution.
 
-It acts as a persistent operator that plans work, spawns specialized workers, and runs tasks on your behalf — without exposing your system to risk.
+It runs as a persistent operator that plans tasks, delegates work, and executes actions through isolated workers — keeping your system protected by design.
 
-The **Octo** is the long-running coordinator: it holds memory, plans work, chooses tools, and delegates execution.  
-**Workers** are short-lived specialists with bounded context, strict permissions, and isolated execution.
+At the core is the **Octo**: a long-running coordinator that holds memory, reasons about tasks, selects tools, and orchestrates execution.
 
-This architecture enforces a hard boundary between reasoning and execution:
-Octo never performs external actions directly — all side effects happen inside controlled worker environments.
+Instead of acting directly, Octo delegates all side effects to **Workers** — short-lived, sandboxed agents with limited context and strict permissions.
+
+This creates a hard separation between thinking and doing: the system that decides never touches the outside world, and the system that acts is fully controlled.
 
 ## Table of contents
 
