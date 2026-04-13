@@ -92,14 +92,19 @@ Octo:
 
 ### Install with one line
 
+macOS/Linux:
+
 ```bash
-# macOS/Linux
 curl -fsSL https://octopal.ca/octopal.sh | bash
 ```
+
+Windows:
+
 ```powershell
-# Windows PowerShell
 irm https://octopal.ca/octopal.ps1 | iex
 ```
+
+Complete configuration in CLI. You can always change the configuration using `uv run octopal configure` command.
 
 ### Optional: WhatsApp setup
 
@@ -167,7 +172,6 @@ uv run octopal configure
 `config.json` is the configuration file.
 
 - `uv run octopal configure` writes the structured config there.
-- Runtime loads `config.json` and maps it into legacy settings for older code paths.
 
 ### Start
 
