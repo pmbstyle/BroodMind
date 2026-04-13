@@ -64,6 +64,8 @@ def test_gateway_status_summarizes_runtime_and_channel_state(monkeypatch, tmp_pa
     assert payload["status"] == "ok"
     assert payload["running"] is True
     assert payload["gateway"]["active_channel"] == "telegram"
+    assert payload["octo"]["state"] == "thinking"
+    assert payload["octo"]["busy"] is True
     assert payload["octo"]["followup_queues"] == 2
     assert payload["channel"]["queue_depth"] == 4
     assert payload["exec"]["sessions_running"] == 1

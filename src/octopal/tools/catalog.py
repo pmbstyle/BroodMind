@@ -17,6 +17,7 @@ from octopal.runtime.memory.memchain import (
     memchain_verify,
 )
 from octopal.runtime.metrics import read_metrics_snapshot
+from octopal.runtime.octo_status import build_octo_status
 from octopal.runtime.state import is_pid_running, read_status
 from octopal.tools.browser.actions import (
     browser_click,
@@ -1715,6 +1716,8 @@ def _tool_gateway_status(args, ctx) -> str:
     connectivity_metrics = metrics.get("connectivity", {}) if isinstance(metrics, dict) else {}
     active_channel_metrics = whatsapp_metrics if active_channel == "whatsapp" else telegram_metrics
 
+    octo_status = build_octo_status(octo_metrics)
+
     services = [
         {
             "id": "gateway",
@@ -1724,9 +1727,9 @@ def _tool_gateway_status(args, ctx) -> str:
         },
         {
             "id": "octo",
-            "status": _gateway_octo_status(octo_metrics),
-            "reason": _gateway_octo_reason(octo_metrics),
-            "updated_at": octo_metrics.get("updated_at"),
+            "status": octo_status["service_status"],
+            "reason": octo_status["reason"],
+            "updated_at": octo_status["updated_at"],
         },
         {
             "id": active_channel,
@@ -1769,12 +1772,16 @@ def _tool_gateway_status(args, ctx) -> str:
                 "active_channel_label": active_channel_label,
             },
             "octo": {
-                "followup_queues": int(octo_metrics.get("followup_queues", 0) or 0),
-                "internal_queues": int(octo_metrics.get("internal_queues", 0) or 0),
-                "followup_tasks": int(octo_metrics.get("followup_tasks", 0) or 0),
-                "internal_tasks": int(octo_metrics.get("internal_tasks", 0) or 0),
-                "thinking_count": int(octo_metrics.get("thinking_count", 0) or 0),
-                "updated_at": octo_metrics.get("updated_at"),
+                "state": octo_status["state"],
+                "busy": octo_status["busy"],
+                "label": octo_status["label"],
+                "reason": octo_status["reason"],
+                "followup_queues": octo_status["followup_queues"],
+                "internal_queues": octo_status["internal_queues"],
+                "followup_tasks": octo_status["followup_tasks"],
+                "internal_tasks": octo_status["internal_tasks"],
+                "thinking_count": octo_status["thinking_count"],
+                "updated_at": octo_status["updated_at"],
             },
             "channel": {
                 "id": active_channel,
@@ -1854,24 +1861,6 @@ async def _tool_octo_context_health(args, ctx) -> str:
 
 def _workspace_dir() -> Path:
     return Path(os.getenv("OCTOPAL_WORKSPACE_DIR", "workspace")).resolve()
-
-
-def _gateway_octo_status(octo_metrics: dict[str, object]) -> str:
-    followup = int(octo_metrics.get("followup_queues", 0) or 0)
-    internal = int(octo_metrics.get("internal_queues", 0) or 0)
-    queue_pressure = followup + internal
-    if queue_pressure >= 10:
-        return "warning"
-    return "ok"
-
-
-def _gateway_octo_reason(octo_metrics: dict[str, object]) -> str:
-    followup = int(octo_metrics.get("followup_queues", 0) or 0)
-    internal = int(octo_metrics.get("internal_queues", 0) or 0)
-    queue_pressure = followup + internal
-    if queue_pressure <= 0:
-        return "queues clear"
-    return f"queue pressure {queue_pressure} (followup={followup}, internal={internal})"
 
 
 def _gateway_channel_status(channel_id: str, channel_metrics: dict[str, object]) -> str:

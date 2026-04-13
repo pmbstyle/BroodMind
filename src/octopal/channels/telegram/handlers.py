@@ -23,6 +23,8 @@ from octopal.channels.telegram.approvals import ApprovalManager
 from octopal.infrastructure.config.settings import Settings
 from octopal.infrastructure.logging import correlation_id_var
 from octopal.runtime.metrics import update_component_gauges
+from octopal.runtime.metrics import read_metrics_snapshot
+from octopal.runtime.octo_status import build_octo_status
 from octopal.runtime.octo.core import Octo, OctoReply
 from octopal.runtime.octo.delivery import resolve_user_delivery
 from octopal.runtime.pending_turns import PendingTurnAggregator
@@ -312,12 +314,20 @@ def register_handlers(
             await _reject_unauthorized_message(message)
             return
         active_workers = await asyncio.to_thread(octo.store.get_active_workers)
+        metrics = read_metrics_snapshot(settings.state_dir)
+        octo_status = build_octo_status((metrics or {}).get("octo", {}))
         status_text = (
             f"**System Status**\n"
-            f"Thinking: {'Yes' if octo._thinking_count > 0 else 'No'}\n"
+            f"Octo: {octo_status['label']}\n"
+            f"Reason: {octo_status['reason']}\n"
             f"Active Workers: {len(active_workers)}\n"
             f"Current Time: {utc_now().isoformat()}\n"
         )
+        if octo_status["busy"]:
+            status_text += (
+                f"Follow-up Queues: {octo_status['followup_queues']}\n"
+                f"Internal Queues: {octo_status['internal_queues']}\n"
+            )
         if active_workers:
             status_text += "\n**Running Workers:**\n"
             for w in active_workers:
