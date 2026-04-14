@@ -49,16 +49,16 @@ jobs:
           fi
 
           VERSION="$(python - <<'PY'
-from pathlib import Path
-import re
+          from pathlib import Path
+          import re
 
-text = Path("src/octopal/_version.py").read_text(encoding="utf-8")
-match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
-if not match:
-    raise SystemExit("Could not find __version__ in src/octopal/_version.py")
-print(match.group(1))
-PY
-)"
+          text = Path("src/octopal/_version.py").read_text(encoding="utf-8")
+          match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+          if not match:
+              raise SystemExit("Could not find __version__ in src/octopal/_version.py")
+          print(match.group(1))
+          PY
+          )"
 
           EXPECTED_VERSION="${TAG#v}"
           if [[ "${VERSION}" != "${EXPECTED_VERSION}" ]]; then
