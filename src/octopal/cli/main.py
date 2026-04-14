@@ -301,8 +301,26 @@ def _list_meaningful_worktree_changes(project_root: Path) -> list[str] | None:
         if stats.returncode != 0:
             return None
 
-        # `git diff --numstat` is empty for mode-only changes, so treat those as safe.
-        if stats.stdout.strip():
+        stats_lines = [line.strip() for line in stats.stdout.splitlines() if line.strip()]
+        if not stats_lines:
+            continue
+
+        is_meaningful = False
+        for line in stats_lines:
+            parts = line.split("\t")
+            if len(parts) < 3:
+                is_meaningful = True
+                break
+
+            added, deleted = parts[0].strip(), parts[1].strip()
+            if added == "0" and deleted == "0":
+                continue
+
+            # Binary/content changes often show `-` counters and should still block update.
+            is_meaningful = True
+            break
+
+        if is_meaningful:
             changes.append(path)
 
     return changes

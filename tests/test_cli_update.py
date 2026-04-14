@@ -62,10 +62,30 @@ def test_git_checkout_ready_allows_mode_only_changes(monkeypatch, tmp_path) -> N
         if command == ["git", "diff", "--name-only"]:
             return subprocess.CompletedProcess(command, 0, stdout="scripts/bootstrap.sh\n", stderr="")
         if command == ["git", "diff", "--numstat", "--", "scripts/bootstrap.sh"]:
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="0\t0\tscripts/bootstrap.sh\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
     monkeypatch.setattr("octopal.cli.main.shutil.which", lambda _name: "/usr/bin/git")
     monkeypatch.setattr("octopal.cli.main._run_capture", fake_run_capture)
 
     assert _git_checkout_ready_for_update(tmp_path) == (True, None)
+
+
+def test_git_checkout_ready_blocks_real_content_changes(monkeypatch, tmp_path) -> None:
+    (tmp_path / ".git").mkdir()
+
+    def fake_run_capture(command: list[str], *, cwd, timeout=10.0):
+        if command == ["git", "status", "--porcelain"]:
+            return subprocess.CompletedProcess(command, 0, stdout=" M scripts/bootstrap.sh\n", stderr="")
+        if command == ["git", "diff", "--name-only"]:
+            return subprocess.CompletedProcess(command, 0, stdout="scripts/bootstrap.sh\n", stderr="")
+        if command == ["git", "diff", "--numstat", "--", "scripts/bootstrap.sh"]:
+            return subprocess.CompletedProcess(command, 0, stdout="3\t1\tscripts/bootstrap.sh\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("octopal.cli.main.shutil.which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr("octopal.cli.main._run_capture", fake_run_capture)
+
+    ok, reason = _git_checkout_ready_for_update(tmp_path)
+    assert ok is False
+    assert "scripts/bootstrap.sh" in str(reason)
