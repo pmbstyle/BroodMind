@@ -286,6 +286,28 @@ def _run_capture(command: list[str], *, cwd: Path, timeout: float = 10.0) -> sub
     )
 
 
+def _list_meaningful_worktree_changes(project_root: Path) -> list[str] | None:
+    diff = _run_capture(["git", "diff", "--name-only"], cwd=project_root)
+    if diff.returncode != 0:
+        return None
+
+    changes: list[str] = []
+    for raw_path in diff.stdout.splitlines():
+        path = raw_path.strip()
+        if not path:
+            continue
+
+        stats = _run_capture(["git", "diff", "--numstat", "--", path], cwd=project_root)
+        if stats.returncode != 0:
+            return None
+
+        # `git diff --numstat` is empty for mode-only changes, so treat those as safe.
+        if stats.stdout.strip():
+            changes.append(path)
+
+    return changes
+
+
 def _git_checkout_ready_for_update(project_root: Path) -> tuple[bool, str | None]:
     if not (project_root / ".git").exists():
         return False, "This install is not a git checkout."
@@ -299,7 +321,14 @@ def _git_checkout_ready_for_update(project_root: Path) -> tuple[bool, str | None
         return False, f"Could not inspect git status: {detail}"
 
     if status.stdout.strip():
-        return False, "Working tree has local changes. Commit or stash them first."
+        meaningful_changes = _list_meaningful_worktree_changes(project_root)
+        if meaningful_changes is None:
+            return False, "Could not determine whether local changes are content changes or mode-only changes."
+        if meaningful_changes:
+            names = ", ".join(meaningful_changes[:3])
+            if len(meaningful_changes) > 3:
+                names += ", ..."
+            return False, f"Working tree has local content changes: {names}. Commit or stash them first."
 
     return True, None
 
