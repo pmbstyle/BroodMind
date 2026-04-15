@@ -13,6 +13,7 @@ def _template(
     worker_id: str,
     *,
     perms: list[str],
+    tools: list[str] | None = None,
     can_spawn: bool = False,
     allowed_children: list[str] | None = None,
 ) -> WorkerTemplateRecord:
@@ -22,7 +23,7 @@ def _template(
         name=worker_id.title(),
         description=worker_id,
         system_prompt=worker_id,
-        available_tools=[],
+        available_tools=tools or [],
         required_permissions=perms,
         model=None,
         max_thinking_steps=8,
@@ -206,3 +207,39 @@ def test_start_child_worker_preserves_missing_allowed_paths_and_forwards_explici
     asyncio.run(_scenario())
     assert octo.launches[0]["allowed_paths"] is None
     assert octo.launches[1]["allowed_paths"] == ["src/app.py"]
+
+
+def test_start_child_worker_rejects_tools_outside_child_template_allowlist() -> None:
+    templates = {
+        "parent": _template(
+            "parent",
+            perms=["network", "worker_manage"],
+            tools=["start_child_worker"],
+            can_spawn=True,
+            allowed_children=["child"],
+        ),
+        "child": _template("child", perms=["network"], tools=["web_search"]),
+    }
+
+    class _Octo:
+        def __init__(self) -> None:
+            self.store = _Store(templates)
+
+        async def _start_worker_async(self, **kwargs):
+            raise AssertionError("child launch should have been rejected")
+
+    async def _scenario() -> str:
+        return await _tool_start_child_worker(
+            {"worker_id": "child", "task": "fetch rss", "tools": ["web_search", "exec_run"]},
+            {
+                "octo": _Octo(),
+                "chat_id": 1,
+                "worker": _caller_worker(
+                    effective_permissions=["network", "worker_manage"],
+                ),
+            },
+        )
+
+    result = asyncio.run(_scenario())
+    assert "requested tools exceed template contract" in result
+    assert "exec_run" in result

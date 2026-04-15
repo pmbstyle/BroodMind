@@ -8,7 +8,11 @@ from octopal.infrastructure.config.models import LLMConfig, OctopalConfig
 from octopal.infrastructure.config.settings import Settings
 from octopal.infrastructure.store.models import WorkerTemplateRecord
 from octopal.runtime.workers.contracts import Capability, TaskRequest, WorkerResult
-from octopal.runtime.workers.runtime import WorkerRuntime
+from octopal.runtime.workers.runtime import (
+    WorkerRuntime,
+    _validate_worker_local_tool_call,
+    _validate_worker_mcp_tool_call,
+)
 from octopal.tools.registry import ToolSpec
 
 
@@ -67,7 +71,7 @@ def test_runtime_does_not_auto_inject_global_mcp_tools(tmp_path: Path) -> None:
         description="Test worker",
         system_prompt="Do work",
         available_tools=["fs_read"],
-        required_permissions=["network"],
+        required_permissions=["filesystem_read"],
         model=None,
         max_thinking_steps=3,
         default_timeout_seconds=30,
@@ -81,7 +85,7 @@ def test_runtime_does_not_auto_inject_global_mcp_tools(tmp_path: Path) -> None:
 
     class _Policy:
         def grant_capabilities(self, capabilities):
-            return [Capability(type="network", scope="worker")]
+            return [Capability(type="filesystem_read", scope="worker")]
 
     class _MCP:
         sessions = {"demo": object()}
@@ -130,7 +134,7 @@ def test_runtime_ensures_configured_mcp_before_launch(tmp_path: Path) -> None:
         description="Test worker",
         system_prompt="Do work",
         available_tools=["mcp_demo_read_data"],
-        required_permissions=["network"],
+        required_permissions=["mcp_exec"],
         model=None,
         max_thinking_steps=3,
         default_timeout_seconds=30,
@@ -144,7 +148,7 @@ def test_runtime_ensures_configured_mcp_before_launch(tmp_path: Path) -> None:
 
     class _Policy:
         def grant_capabilities(self, capabilities):
-            return [Capability(type="network", scope="worker")]
+            return [Capability(type="mcp_exec", scope="worker")]
 
     class _MCP:
         def __init__(self) -> None:
@@ -203,7 +207,7 @@ def test_runtime_includes_connector_alias_tools_for_workers(tmp_path: Path) -> N
         description="Test worker",
         system_prompt="Do work",
         available_tools=["github_list_repositories"],
-        required_permissions=["network"],
+        required_permissions=["mcp_exec"],
         model=None,
         max_thinking_steps=3,
         default_timeout_seconds=30,
@@ -217,7 +221,7 @@ def test_runtime_includes_connector_alias_tools_for_workers(tmp_path: Path) -> N
 
     class _Policy:
         def grant_capabilities(self, capabilities):
-            return [Capability(type="network", scope="worker")]
+            return [Capability(type="mcp_exec", scope="worker")]
 
     class _MCP:
         def __init__(self) -> None:
@@ -285,7 +289,7 @@ def test_runtime_launch_env_includes_workspace_dir(tmp_path: Path) -> None:
         description="Test worker",
         system_prompt="Do work",
         available_tools=["fs_read"],
-        required_permissions=["network"],
+        required_permissions=["filesystem_read"],
         model=None,
         max_thinking_steps=3,
         default_timeout_seconds=30,
@@ -311,7 +315,7 @@ def test_runtime_launch_env_includes_workspace_dir(tmp_path: Path) -> None:
 
     class _Policy:
         def grant_capabilities(self, capabilities):
-            return [Capability(type="network", scope="worker")]
+            return [Capability(type="filesystem_read", scope="worker")]
 
     captured: dict[str, object] = {}
 
@@ -492,7 +496,7 @@ def test_runtime_ignores_task_level_model_override(tmp_path: Path) -> None:
         description="Test worker",
         system_prompt="Do work",
         available_tools=["fs_read"],
-        required_permissions=["network"],
+        required_permissions=["filesystem_read"],
         model=None,
         max_thinking_steps=3,
         default_timeout_seconds=30,
@@ -506,7 +510,7 @@ def test_runtime_ignores_task_level_model_override(tmp_path: Path) -> None:
 
     class _Policy:
         def grant_capabilities(self, capabilities):
-            return [Capability(type="network", scope="worker")]
+            return [Capability(type="filesystem_read", scope="worker")]
 
     settings = Settings(
         config_obj=OctopalConfig(
@@ -536,3 +540,131 @@ def test_runtime_ignores_task_level_model_override(tmp_path: Path) -> None:
     spec = captured["spec"]
     assert spec.model is None
     assert spec.llm_config.model == "anthropic/claude-sonnet-4"
+
+
+def test_runtime_rejects_task_tool_override_that_widens_template(tmp_path: Path) -> None:
+    template = WorkerTemplateRecord(
+        id="worker",
+        name="Worker",
+        description="Test worker",
+        system_prompt="Do work",
+        available_tools=["fs_read"],
+        required_permissions=["network"],
+        model=None,
+        max_thinking_steps=3,
+        default_timeout_seconds=30,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    class _Store:
+        def get_worker_template(self, worker_id: str):
+            return template
+
+    class _Policy:
+        def grant_capabilities(self, capabilities):
+            return [Capability(type="network", scope="worker")]
+
+    runtime = WorkerRuntime(
+        store=_Store(),
+        policy=_Policy(),
+        workspace_dir=tmp_path,
+        launcher=object(),
+        settings=Settings(),
+    )
+
+    result = asyncio.run(
+        runtime.run_task(
+            TaskRequest(
+                worker_id="worker",
+                task="hello",
+                tools=["fs_read", "exec_run"],
+            )
+        )
+    )
+
+    assert result.status == "failed"
+    assert "requested tools exceed template contract" in result.summary
+
+
+def test_runtime_rejects_template_tools_with_missing_permissions(tmp_path: Path) -> None:
+    template = WorkerTemplateRecord(
+        id="worker",
+        name="Worker",
+        description="Test worker",
+        system_prompt="Do work",
+        available_tools=["fs_read"],
+        required_permissions=["network"],
+        model=None,
+        max_thinking_steps=3,
+        default_timeout_seconds=30,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    class _Store:
+        def get_worker_template(self, worker_id: str):
+            return template
+
+    class _Policy:
+        def grant_capabilities(self, capabilities):
+            return [Capability(type="network", scope="worker")]
+
+    runtime = WorkerRuntime(
+        store=_Store(),
+        policy=_Policy(),
+        workspace_dir=tmp_path,
+        launcher=object(),
+        settings=Settings(),
+    )
+
+    result = asyncio.run(runtime.run_task(TaskRequest(worker_id="worker", task="hello")))
+
+    assert result.status == "failed"
+    assert "requires permission 'filesystem_read'" in result.summary
+
+
+def test_runtime_local_bridge_guard_rejects_tool_outside_spec_permissions() -> None:
+    spec = type(
+        "_Spec",
+        (),
+        {
+            "available_tools": ["start_worker"],
+            "effective_permissions": ["network"],
+        },
+    )()
+
+    error = _validate_worker_local_tool_call(
+        spec=spec,
+        tool_name="start_worker",
+        permission="worker_manage",
+    )
+
+    assert error is not None
+    assert "requires permission 'worker_manage'" in error
+
+
+def test_runtime_mcp_bridge_guard_rejects_tool_not_in_spec() -> None:
+    spec = type(
+        "_Spec",
+        (),
+        {
+            "mcp_tools": [
+                {
+                    "name": "github_list_repositories",
+                    "server_id": "github-core",
+                    "permission": "mcp_exec",
+                }
+            ],
+            "effective_permissions": ["mcp_exec"],
+        },
+    )()
+
+    error = _validate_worker_mcp_tool_call(
+        spec=spec,
+        server_id="github-core",
+        tool_name="github_get_pull_request",
+    )
+
+    assert error is not None
+    assert "is not allowed by this worker spec" in error

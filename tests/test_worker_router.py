@@ -135,3 +135,89 @@ def test_start_worker_passes_null_model_to_runtime() -> None:
     assert result["worker_template_id"] == "coder"
     assert octo.captured is not None
     assert octo.captured["model"] is None
+
+
+def test_start_worker_rejects_tools_outside_template_allowlist() -> None:
+    templates = [
+        _template("coder", "Coder", "Handles code refactors and bugfixes", ["fs_read"], ["filesystem_read"]),
+    ]
+
+    class _Store:
+        def list_worker_templates(self):
+            return templates
+
+        def get_worker_template(self, worker_id: str):
+            for t in templates:
+                if t.id == worker_id:
+                    return t
+            return None
+
+    class _Octo:
+        def __init__(self) -> None:
+            self.store = _Store()
+
+        async def _start_worker_async(self, **kwargs):
+            raise AssertionError("worker launch should have been rejected")
+
+    async def _scenario() -> str:
+        return await _tool_start_worker(
+            {
+                "task": "Fix parser bug",
+                "worker_id": "coder",
+                "tools": ["fs_read", "exec_run"],
+            },
+            {"octo": _Octo(), "chat_id": 123},
+        )
+
+    result = asyncio.run(_scenario())
+    assert "requested tools exceed template contract" in result
+    assert "exec_run" in result
+
+
+def test_start_worker_allows_subset_tool_override() -> None:
+    templates = [
+        _template(
+            "coder",
+            "Coder",
+            "Handles code refactors and bugfixes",
+            ["fs_read", "fs_write"],
+            ["filesystem_read", "filesystem_write"],
+        ),
+    ]
+
+    class _Store:
+        def list_worker_templates(self):
+            return templates
+
+        def get_worker_template(self, worker_id: str):
+            for t in templates:
+                if t.id == worker_id:
+                    return t
+            return None
+
+    class _Octo:
+        def __init__(self) -> None:
+            self.store = _Store()
+            self.captured = None
+
+        async def _start_worker_async(self, **kwargs):
+            self.captured = kwargs
+            return {"status": "started", "worker_id": "run-2", "run_id": "run-2", **kwargs}
+
+    octo = _Octo()
+
+    async def _scenario() -> dict:
+        payload = await _tool_start_worker(
+            {
+                "task": "Read the parser file",
+                "worker_id": "coder",
+                "tools": ["fs_read"],
+            },
+            {"octo": octo, "chat_id": 123},
+        )
+        return json.loads(payload)
+
+    result = asyncio.run(_scenario())
+    assert result["status"] == "started"
+    assert octo.captured is not None
+    assert octo.captured["tools"] == ["fs_read"]

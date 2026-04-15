@@ -10,8 +10,8 @@ import contextlib
 import inspect
 import json
 import os
-import signal
 import re
+import signal
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -90,20 +90,37 @@ class WorkerRuntime:
         if not template:
             return WorkerResult(summary=f"Worker template not found: {task_request.worker_id}")
 
+        required_permissions = _normalize_permission_names(template.required_permissions)
+
         # Build capabilities from template permissions
-        capabilities = self._build_capabilities(template.required_permissions)
+        capabilities = self._build_capabilities(required_permissions)
 
         # Get granted capabilities from policy
         granted = self.policy.grant_capabilities(capabilities)
+        granted_permission_names = _capability_types(granted)
 
-        if not granted:
-            return WorkerResult(summary="Permission denied for worker task")
+        missing_permissions = sorted(set(required_permissions) - set(granted_permission_names))
+        if missing_permissions:
+            return WorkerResult(
+                status="failed",
+                summary=(
+                    "Permission denied for worker task: missing required permissions "
+                    f"({', '.join(missing_permissions)})"
+                ),
+                output={"error": "missing_required_permissions", "permissions": missing_permissions},
+            )
 
-        requested_tool_names = [
-            str(tool_name)
-            for tool_name in (task_request.tools or template.available_tools)
-            if str(tool_name) not in _WORKER_BLOCKED_TOOL_NAMES
-        ]
+        try:
+            requested_tool_names = _resolve_effective_worker_tools(
+                template_tools=template.available_tools,
+                requested_tools=task_request.tools,
+            )
+        except ValueError as exc:
+            return WorkerResult(
+                status="failed",
+                summary=f"Worker tool validation failed: {exc}",
+                output={"error": "invalid_worker_tool_override", "detail": str(exc)},
+            )
         has_requested_mcp_tools = any(str(tool_name).startswith("mcp_") for tool_name in requested_tool_names)
         if self.mcp_manager:
             try:
@@ -119,6 +136,19 @@ class WorkerRuntime:
         # Get all tools to find MCP tool definitions
         from octopal.tools.tools import get_tools
         all_tools = get_tools(mcp_manager=self.mcp_manager)
+        all_tools_by_name = {str(tool.name).strip().lower(): tool for tool in all_tools}
+
+        tool_validation_error = _validate_worker_tool_permissions(
+            tool_names=requested_tool_names,
+            allowed_permissions=granted_permission_names,
+            all_tools_by_name=all_tools_by_name,
+        )
+        if tool_validation_error:
+            return WorkerResult(
+                status="failed",
+                summary=f"Worker tool validation failed: {tool_validation_error}",
+                output={"error": "invalid_worker_tool_permissions", "detail": tool_validation_error},
+            )
 
         mcp_tools_data = []
         known_server_ids = list(self.mcp_manager.sessions.keys()) if self.mcp_manager else []
@@ -126,7 +156,7 @@ class WorkerRuntime:
         # 1. Add explicitly requested MCP-backed tools, including connector aliases.
         for tool_name in requested_tool_names:
             # Find the tool spec
-            spec_found = next((t for t in all_tools if t.name == tool_name), None)
+            spec_found = all_tools_by_name.get(str(tool_name).strip().lower())
             if spec_found is None:
                 continue
 
@@ -180,7 +210,7 @@ class WorkerRuntime:
             lineage_id=task_request.lineage_id,
             root_task_id=task_request.root_task_id,
             spawn_depth=task_request.spawn_depth,
-            effective_permissions=list(template.required_permissions),
+            effective_permissions=granted_permission_names,
             allowed_paths=task_request.allowed_paths,
         )
 
@@ -458,7 +488,6 @@ class WorkerRuntime:
             "OCTOPAL_WORKSPACE_DIR": str(self.workspace_dir.resolve()),
         }
 
-        config_obj = self.settings.config_obj
         for field_name in _WORKER_ENV_SETTING_FIELDS:
             value = getattr(self.settings, field_name, None)
             if value in (None, ""):
@@ -546,6 +575,17 @@ class WorkerRuntime:
                             {"type": "octo_tool_result", "ok": False, "error": f"Unknown octo tool: {tool_name}"},
                         )
                         return None
+                    local_tool_error = _validate_worker_local_tool_call(
+                        spec=spec,
+                        tool_name=tool_name,
+                        permission=str(getattr(spec_tool, "permission", "") or ""),
+                    )
+                    if local_tool_error is not None:
+                        await self._write_to_worker(
+                            process,
+                            {"type": "octo_tool_result", "ok": False, "error": local_tool_error},
+                        )
+                        return None
 
                     tool_ctx: dict[str, Any] = {
                         "octo": self.octo,
@@ -573,6 +613,14 @@ class WorkerRuntime:
                 server_id = payload.get("server_id")
                 tool_name = payload.get("tool_name")
                 args = payload.get("arguments", {})
+                mcp_tool_error = _validate_worker_mcp_tool_call(
+                    spec=spec,
+                    server_id=server_id,
+                    tool_name=tool_name,
+                )
+                if mcp_tool_error is not None:
+                    await self._write_to_worker(process, {"type": "error", "message": mcp_tool_error})
+                    return None
 
                 if not self.mcp_manager:
                     await self._write_to_worker(process, {"type": "error", "message": "MCP Manager not available in runtime."})
@@ -1198,3 +1246,134 @@ def _attempt_timeout_seconds(base_timeout: int, attempt: int, tools: list[str]) 
     if attempt > 1:
         timeout *= 1.2
     return min(timeout, 1800.0)
+
+
+def _normalize_name_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item).strip().lower()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def _normalize_permission_names(value: object) -> list[str]:
+    return _normalize_name_list(value)
+
+
+def _capability_types(capabilities: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for capability in capabilities:
+        cap_type = str(getattr(capability, "type", "")).strip().lower()
+        if not cap_type or cap_type in seen:
+            continue
+        seen.add(cap_type)
+        out.append(cap_type)
+    return out
+
+
+def _effective_template_tool_names(value: object) -> list[str]:
+    return [
+        tool_name
+        for tool_name in _normalize_name_list(value)
+        if tool_name not in _WORKER_BLOCKED_TOOL_NAMES
+    ]
+
+
+def _resolve_effective_worker_tools(
+    *,
+    template_tools: object,
+    requested_tools: object,
+) -> list[str]:
+    effective_template_tools = _effective_template_tool_names(template_tools)
+    if requested_tools is None:
+        return effective_template_tools
+
+    normalized_requested = [
+        tool_name
+        for tool_name in _normalize_name_list(requested_tools)
+        if tool_name not in _WORKER_BLOCKED_TOOL_NAMES
+    ]
+    allowed = set(effective_template_tools)
+    unexpected = sorted(tool_name for tool_name in normalized_requested if tool_name not in allowed)
+    if unexpected:
+        raise ValueError(
+            "requested tools exceed template contract "
+            f"({', '.join(unexpected)}); update the worker template instead"
+        )
+    return normalized_requested
+
+
+def _validate_worker_tool_permissions(
+    *,
+    tool_names: list[str],
+    allowed_permissions: list[str],
+    all_tools_by_name: dict[str, Any],
+) -> str | None:
+    allowed = set(_normalize_permission_names(allowed_permissions))
+    for tool_name in tool_names:
+        spec_tool = all_tools_by_name.get(str(tool_name).strip().lower())
+        if spec_tool is None:
+            return f"unknown worker tool '{tool_name}'"
+        permission = str(getattr(spec_tool, "permission", "") or "").strip().lower()
+        if permission and permission not in allowed:
+            return (
+                f"tool '{tool_name}' requires permission '{permission}' "
+                f"but worker only has {sorted(allowed)}"
+            )
+    return None
+
+
+def _validate_worker_local_tool_call(
+    *,
+    spec: WorkerSpec,
+    tool_name: object,
+    permission: str,
+) -> str | None:
+    normalized_tool_name = str(tool_name or "").strip().lower()
+    allowed_tools = set(_normalize_name_list(spec.available_tools))
+    if normalized_tool_name not in allowed_tools:
+        return f"Worker tool '{normalized_tool_name}' is not allowed by this worker spec."
+    normalized_permission = str(permission or "").strip().lower()
+    allowed_permissions = set(_normalize_permission_names(spec.effective_permissions))
+    if normalized_permission and normalized_permission not in allowed_permissions:
+        return (
+            f"Worker tool '{normalized_tool_name}' requires permission '{normalized_permission}' "
+            "which is not granted to this worker."
+        )
+    return None
+
+
+def _validate_worker_mcp_tool_call(
+    *,
+    spec: WorkerSpec,
+    server_id: object,
+    tool_name: object,
+) -> str | None:
+    requested_server = str(server_id or "").strip()
+    requested_tool_name = str(tool_name or "").strip().lower()
+    allowed_permissions = set(_normalize_permission_names(spec.effective_permissions))
+
+    for mcp_tool in spec.mcp_tools:
+        candidate_name = str(mcp_tool.get("name", "") or "").strip().lower()
+        candidate_server = str(mcp_tool.get("server_id", "") or "").strip()
+        if candidate_name != requested_tool_name or candidate_server != requested_server:
+            continue
+        permission = str(mcp_tool.get("permission", "") or "").strip().lower()
+        if permission and permission not in allowed_permissions:
+            return (
+                f"Worker MCP tool '{requested_tool_name}' requires permission '{permission}' "
+                "which is not granted to this worker."
+            )
+        return None
+
+    return (
+        f"Worker MCP tool '{requested_tool_name}' on server '{requested_server}' "
+        "is not allowed by this worker spec."
+    )

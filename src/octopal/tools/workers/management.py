@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 _WORKER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
 _MAX_PARALLEL_BATCH = 10
+_WORKER_BLOCKED_TOOL_NAMES = {"send_file_to_user"}
 _ALLOWED_PATHS_GUIDANCE = (
     "Workers always keep their own private scratch workspace. "
     "Use allowed_paths only when the worker needs files from Octo's main workspace, "
@@ -757,6 +758,14 @@ async def _start_worker_common(
     router_used = bool(resolution["router_used"])
     route_reason = str(resolution["router_reason"])
     route_score = float(resolution["router_score"]) if resolution["router_score"] is not None else None
+
+    tool_validation_error = _validate_requested_worker_tools(
+        requested_tools=tools,
+        template_tools=getattr(template, "available_tools", []),
+        error_prefix="start_child_worker error" if require_worker_context else "start_worker error",
+    )
+    if tool_validation_error:
+        return tool_validation_error
 
     child_ctx = _extract_child_context(caller_worker)
     if child_ctx is not None:
@@ -1578,6 +1587,46 @@ def _normalize_str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _normalize_tool_name_list(value: object) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for item in _normalize_str_list(value):
+        tool_name = item.lower()
+        if tool_name in seen:
+            continue
+        seen.add(tool_name)
+        normalized.append(tool_name)
+    return normalized
+
+
+def _effective_template_tool_names(value: object) -> list[str]:
+    return [
+        tool_name
+        for tool_name in _normalize_tool_name_list(value)
+        if tool_name not in _WORKER_BLOCKED_TOOL_NAMES
+    ]
+
+
+def _validate_requested_worker_tools(
+    *,
+    requested_tools: object,
+    template_tools: object,
+    error_prefix: str,
+) -> str | None:
+    if requested_tools is None:
+        return None
+
+    normalized_requested = _normalize_tool_name_list(requested_tools)
+    allowed_tools = set(_effective_template_tool_names(template_tools))
+    unexpected = sorted(tool_name for tool_name in normalized_requested if tool_name not in allowed_tools)
+    if unexpected:
+        return (
+            f"{error_prefix}: requested tools exceed template contract "
+            f"({', '.join(unexpected)}). Update the worker template instead."
+        )
+    return None
 
 
 def _tokenize(text: str) -> set[str]:
