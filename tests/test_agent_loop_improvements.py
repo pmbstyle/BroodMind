@@ -323,7 +323,7 @@ def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -
     warning = _detect_orchestration_stall(
         history,
         tool_name="synthesize_worker_results",
-        tool_result={"pending_count": 2},
+        tool_result={"pending_count": 2, "pending_results": [{"worker_id": "w1", "runtime_seconds": 25}]},
         progress_key="sig-1",
     )
     assert warning is not None
@@ -340,7 +340,7 @@ def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -
     critical = _detect_orchestration_stall(
         history,
         tool_name="synthesize_worker_results",
-        tool_result={"pending_count": 2},
+        tool_result={"pending_count": 2, "pending_results": [{"worker_id": "w1", "runtime_seconds": 25}]},
         progress_key="sig-1",
     )
     assert critical is not None
@@ -365,11 +365,44 @@ def test_detect_orchestration_stall_handles_json_string_tool_results() -> None:
     warning = _detect_orchestration_stall(
         history,
         tool_name="synthesize_worker_results",
-        tool_result='{"status":"pending","pending_count":2,"progress_signature":"sig-json"}',
+        tool_result='{"status":"pending","pending_count":2,"progress_signature":"sig-json","pending_results":[{"worker_id":"w1","runtime_seconds":25}]}',
         progress_key="sig-json",
     )
     assert warning is not None
     assert warning["level"] == "warning"
+
+
+def test_detect_orchestration_stall_ignores_freshly_spawned_pending_workers() -> None:
+    history = [
+        {
+            "tool_name": "synthesize_worker_results",
+            "args_hash": "same",
+            "result_hash": "r1",
+            "progress_key": "sig-fresh",
+        },
+        {
+            "tool_name": "synthesize_worker_results",
+            "args_hash": "same",
+            "result_hash": "r2",
+            "progress_key": "sig-fresh",
+        },
+        {
+            "tool_name": "synthesize_worker_results",
+            "args_hash": "same",
+            "result_hash": "r3",
+            "progress_key": "sig-fresh",
+        },
+    ]
+    state = _detect_orchestration_stall(
+        history,
+        tool_name="synthesize_worker_results",
+        tool_result={
+            "pending_count": 2,
+            "pending_results": [{"worker_id": "w1", "runtime_seconds": 6}],
+        },
+        progress_key="sig-fresh",
+    )
+    assert state is None
 
 
 def test_detect_tool_loop_warning_and_critical_thresholds() -> None:

@@ -43,6 +43,7 @@ _DEFAULT_MAX_STEP_CAP = 30
 _MAX_EMPTY_TURNS = 3
 _ORCHESTRATION_STALL_WARNING_THRESHOLD = 2
 _ORCHESTRATION_STALL_CRITICAL_THRESHOLD = 3
+_ORCHESTRATION_STALL_MIN_PENDING_RUNTIME_SECONDS = 20
 _TRANSIENT_ERROR_HINTS = (
     "timeout",
     "timed out",
@@ -164,6 +165,8 @@ def _detect_orchestration_stall(
     pending_count = int(structured.get("pending_count") or 0)
     if pending_count <= 0:
         return None
+    if not _pending_workers_old_enough_for_stall(structured):
+        return None
     streak = _tool_progress_streak(
         history,
         tool_name="synthesize_worker_results",
@@ -184,6 +187,22 @@ def _detect_orchestration_stall(
             "message": "synthesize_worker_results is being retried without worker progress.",
         }
     return None
+
+
+def _pending_workers_old_enough_for_stall(structured: dict[str, Any]) -> bool:
+    pending_results = structured.get("pending_results")
+    if not isinstance(pending_results, list) or not pending_results:
+        return False
+
+    max_runtime_seconds = 0
+    for item in pending_results:
+        if not isinstance(item, dict):
+            continue
+        runtime_seconds = item.get("runtime_seconds")
+        if isinstance(runtime_seconds, int | float):
+            max_runtime_seconds = max(max_runtime_seconds, int(runtime_seconds))
+
+    return max_runtime_seconds >= _ORCHESTRATION_STALL_MIN_PENDING_RUNTIME_SECONDS
 
 
 async def run_agent_worker(spec_path: str) -> None:
