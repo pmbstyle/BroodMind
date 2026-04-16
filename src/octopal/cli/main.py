@@ -35,8 +35,10 @@ from octopal.runtime.metrics import read_metrics_snapshot
 from octopal.runtime.state import (
     is_pid_running,
     list_octopal_runtime_pids,
+    mark_runtime_running,
     pid_command_line,
     read_status,
+    resolve_runtime_status_display,
     write_start_status,
 )
 from octopal.runtime.workers.launcher_factory import (
@@ -714,30 +716,31 @@ def start(
 
     _maybe_warn_about_newer_release(settings)
 
+    if foreground:
+        _init_logging(settings)
+        _schedule_webapp_build(settings)
+        _maybe_enable_tailscale_serve(settings)
+        write_start_status(settings)
+        launcher_status = ensure_worker_launcher_status(settings)
+        if launcher_status.configured_launcher == "docker" and launcher_status.effective_launcher != "docker":
+            console.print(
+                "[bold yellow]Docker workers are configured, but this run will use same_env.[/bold yellow]"
+            )
+            console.print(f"   [dim]Reason:[/dim] {launcher_status.reason}")
+
+        with console.status("[bold green]Initializing Octopal Octo...[/bold green]", spinner="dots"):
+            time.sleep(0.5)
+
+        # Use ASCII checkmark [V] instead of unicode checkmark to avoid encoding issues in background processes
+        console.print("[bold green][V] Octopal Octo started.[/bold green]")
+        console.print(f"   [dim]Logs directory:[/dim] [cyan]{settings.state_dir / 'logs'}[/cyan]")
+        console.print(f"   [dim]Gateway:[/dim] [cyan]http://{settings.gateway_host}:{settings.gateway_port}[/cyan]")
+        console.print("[dim]Press Ctrl+C to stop (if in foreground).[/dim]\n")
+
     if not foreground:
         print_banner()
         _start_background()
         return
-
-    _init_logging(settings)
-    _schedule_webapp_build(settings)
-    _maybe_enable_tailscale_serve(settings)
-    launcher_status = ensure_worker_launcher_status(settings)
-    if launcher_status.configured_launcher == "docker" and launcher_status.effective_launcher != "docker":
-        console.print(
-            "[bold yellow]Docker workers are configured, but this run will use same_env.[/bold yellow]"
-        )
-        console.print(f"   [dim]Reason:[/dim] {launcher_status.reason}")
-
-    with console.status("[bold green]Initializing Octopal Octo...[/bold green]", spinner="dots"):
-        write_start_status(settings)
-        time.sleep(0.5)
-
-    # Use ASCII checkmark [V] instead of unicode checkmark to avoid encoding issues in background processes
-    console.print("[bold green][V] Octopal Octo started.[/bold green]")
-    console.print(f"   [dim]Logs directory:[/dim] [cyan]{settings.state_dir / 'logs'}[/cyan]")
-    console.print(f"   [dim]Gateway:[/dim] [cyan]http://{settings.gateway_host}:{settings.gateway_port}[/cyan]")
-    console.print("[dim]Press Ctrl+C to stop (if in foreground).[/dim]\n")
 
     async def run_all():
         selected_channel = normalize_user_channel(settings.user_channel)
@@ -751,6 +754,7 @@ def start(
             bot_instance = _build_telegram_bot(settings.telegram_bot_token)
             _dp, octo = build_dispatcher(settings, bot_instance)
             gateway_app = _build_gateway_app(settings, octo)
+        mark_runtime_running(settings)
         import uvicorn
         config = uvicorn.Config(gateway_app, host=settings.gateway_host, port=settings.gateway_port, log_level="info")
         server = uvicorn.Server(config)
@@ -1008,8 +1012,7 @@ def status() -> None:
     running = is_pid_running(pid)
     last_message = status_data.get("last_message_at") if status_data else None
 
-    status_color = "bright_green" if running else "bright_red"
-    status_text = "RUNNING" if running else "STOPPED"
+    status_text, status_color = resolve_runtime_status_display(status_data=status_data, pid_running=running)
 
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="bold cyan", justify="right")
