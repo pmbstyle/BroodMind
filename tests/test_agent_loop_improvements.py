@@ -16,6 +16,7 @@ from octopal.runtime.workers.agent_worker import (
     _extract_tool_progress_key,
     _hash_tool_call,
     _hash_tool_outcome,
+    _meaningful_tool_history_size,
     _parse_tool_arguments,
     _resolve_tool_loop_thresholds,
     _result_has_error,
@@ -301,6 +302,66 @@ def test_extract_tool_progress_key_reads_synthesize_signature_from_json_string()
         )
         == "sig-2"
     )
+
+
+def test_extract_tool_progress_key_reads_worker_result_signature_ignoring_runtime_noise() -> None:
+    first = _extract_tool_progress_key(
+        "get_worker_result",
+        {
+            "status": "running",
+            "worker_id": "w1",
+            "updated_at": "2026-04-16T22:02:26Z",
+            "runtime_seconds": 3,
+            "seconds_since_update": 1,
+        },
+    )
+    second = _extract_tool_progress_key(
+        "get_worker_result",
+        {
+            "status": "running",
+            "worker_id": "w1",
+            "updated_at": "2026-04-16T22:02:26Z",
+            "runtime_seconds": 9,
+            "seconds_since_update": 7,
+        },
+    )
+    assert first == second == "w1:running:2026-04-16T22:02:26Z"
+
+
+def test_meaningful_tool_history_size_dedupes_repeated_worker_polls_without_progress() -> None:
+    history = [
+        {
+            "tool_name": "get_worker_result",
+            "args_hash": "worker-a",
+            "result_hash": "r1",
+            "progress_key": "w1:running:t1",
+        },
+        {
+            "tool_name": "get_worker_result",
+            "args_hash": "worker-b",
+            "result_hash": "r2",
+            "progress_key": "w2:running:t1",
+        },
+        {
+            "tool_name": "get_worker_result",
+            "args_hash": "worker-a",
+            "result_hash": "r3",
+            "progress_key": "w1:running:t1",
+        },
+        {
+            "tool_name": "get_worker_result",
+            "args_hash": "worker-b",
+            "result_hash": "r4",
+            "progress_key": "w2:running:t1",
+        },
+        {
+            "tool_name": "get_worker_result",
+            "args_hash": "worker-a",
+            "result_hash": "r5",
+            "progress_key": "w1:completed:t2",
+        },
+    ]
+    assert _meaningful_tool_history_size(history) == 3
 
 
 def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -> None:

@@ -113,6 +113,11 @@ _OCTO_PROXY_TOOLS = {
     "update_worker_template",
     "delete_worker_template",
 }
+_ORCHESTRATION_PROGRESS_TOOLS = {
+    "get_worker_result",
+    "synthesize_worker_results",
+    "worker_yield",
+}
 
 def _parse_positive_int_env(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -126,13 +131,41 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 
 
 def _extract_tool_progress_key(tool_name: str | None, tool_result: Any) -> str | None:
-    if str(tool_name or "") != "synthesize_worker_results":
-        return None
+    normalized_tool = str(tool_name or "").strip()
     structured = _decode_structured_tool_result(tool_result)
     if not isinstance(structured, dict):
         return None
-    progress_signature = str(structured.get("progress_signature") or "").strip()
-    return progress_signature or None
+    if normalized_tool == "synthesize_worker_results":
+        progress_signature = str(structured.get("progress_signature") or "").strip()
+        return progress_signature or None
+    if normalized_tool == "get_worker_result":
+        worker_id = str(structured.get("worker_id") or "").strip()
+        status = str(structured.get("status") or "").strip().lower()
+        updated_at = str(structured.get("updated_at") or "").strip()
+        if not worker_id or not status:
+            return None
+        if updated_at:
+            return f"{worker_id}:{status}:{updated_at}"
+        summary = str(structured.get("summary") or structured.get("message") or structured.get("error") or "").strip()
+        return f"{worker_id}:{status}:{summary}" if summary else f"{worker_id}:{status}"
+    if normalized_tool == "worker_yield":
+        pending_count = int(structured.get("pending_count") or 0)
+        completed_count = int(structured.get("completed_count") or 0)
+        failed_count = int(structured.get("failed_count") or 0)
+        mode = str(structured.get("mode") or "").strip().lower()
+        lineage_id = str(structured.get("lineage_id") or "").strip()
+        pending_ids = ",".join(
+            sorted(
+                str(item.get("worker_id") or "").strip()
+                for item in structured.get("pending_workers", [])
+                if isinstance(item, dict) and str(item.get("worker_id") or "").strip()
+            )
+        )
+        return (
+            f"yield:{lineage_id}:{mode}:"
+            f"p{pending_count}:c{completed_count}:f{failed_count}:{pending_ids}"
+        )
+    return None
 
 
 def _tool_progress_streak(
@@ -160,6 +193,22 @@ def _tool_progress_streak(
     if streak > 1 and first_seen_at is not None and last_seen_at is not None:
         elapsed_seconds = max(0.0, last_seen_at - first_seen_at)
     return {"count": streak, "elapsed_seconds": elapsed_seconds}
+
+
+def _meaningful_tool_history_size(history: list[dict[str, Any]]) -> int:
+    count = 0
+    last_progress_by_call: dict[tuple[str, str], str] = {}
+    for record in history:
+        tool_name = str(record.get("tool_name") or "").strip()
+        args_hash = str(record.get("args_hash") or "").strip()
+        progress_key = str(record.get("progress_key") or "").strip()
+        if tool_name in _ORCHESTRATION_PROGRESS_TOOLS and args_hash and progress_key:
+            call_key = (tool_name, args_hash)
+            if last_progress_by_call.get(call_key) == progress_key:
+                continue
+            last_progress_by_call[call_key] = progress_key
+        count += 1
+    return count
 
 
 def _resolve_orchestration_stall_thresholds() -> dict[str, int]:
@@ -470,6 +519,7 @@ Important:
                     warning_threshold=tool_loop_thresholds["warning"],
                     critical_threshold=tool_loop_thresholds["critical"],
                     global_breaker_threshold=tool_loop_thresholds["global_breaker"],
+                    global_breaker_count=_meaningful_tool_history_size(tool_call_history),
                 )
                 if loop_state is None:
                     loop_state = _detect_orchestration_stall(
