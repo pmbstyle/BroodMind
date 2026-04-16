@@ -25,6 +25,7 @@ def write_start_status(settings: Settings) -> None:
         "started_at": _utc_now_iso(),
         "last_message_at": None,
         "active_channel": user_channel_label(settings.user_channel),
+        "phase": "starting",
     }
     _status_path(settings).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -43,6 +44,26 @@ def update_last_message(settings: Settings) -> None:
         payload["pid"] = _current_pid()
     if "started_at" not in payload:
         payload["started_at"] = _utc_now_iso()
+    payload["phase"] = "running"
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def mark_runtime_running(settings: Settings) -> None:
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    path = _status_path(settings)
+    payload = {}
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+    if "pid" not in payload:
+        payload["pid"] = _current_pid()
+    if "started_at" not in payload:
+        payload["started_at"] = _utc_now_iso()
+    if "active_channel" not in payload:
+        payload["active_channel"] = user_channel_label(settings.user_channel)
+    payload["phase"] = "running"
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
@@ -54,6 +75,17 @@ def read_status(settings: Settings) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
+
+
+def resolve_runtime_status_display(
+    *, status_data: dict | None, pid_running: bool
+) -> tuple[str, str]:
+    if not pid_running:
+        return "STOPPED", "bright_red"
+    phase = str((status_data or {}).get("phase") or "").strip().lower()
+    if phase == "starting":
+        return "STARTING", "yellow"
+    return "RUNNING", "bright_green"
 
 
 def _current_pid() -> int:
