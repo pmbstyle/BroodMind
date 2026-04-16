@@ -289,6 +289,16 @@ def test_extract_tool_progress_key_reads_synthesize_signature() -> None:
     assert _extract_tool_progress_key("get_worker_result", {"progress_signature": "sig-1"}) is None
 
 
+def test_extract_tool_progress_key_reads_synthesize_signature_from_json_string() -> None:
+    assert (
+        _extract_tool_progress_key(
+            "synthesize_worker_results",
+            '{"status":"pending","progress_signature":"sig-2","pending_count":2}',
+        )
+        == "sig-2"
+    )
+
+
 def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -> None:
     history = [
         {
@@ -335,6 +345,31 @@ def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -
     )
     assert critical is not None
     assert critical["level"] == "critical"
+
+
+def test_detect_orchestration_stall_handles_json_string_tool_results() -> None:
+    history = [
+        {
+            "tool_name": "synthesize_worker_results",
+            "args_hash": "same",
+            "result_hash": "r1",
+            "progress_key": "sig-json",
+        },
+        {
+            "tool_name": "synthesize_worker_results",
+            "args_hash": "same",
+            "result_hash": "r2",
+            "progress_key": "sig-json",
+        },
+    ]
+    warning = _detect_orchestration_stall(
+        history,
+        tool_name="synthesize_worker_results",
+        tool_result='{"status":"pending","pending_count":2,"progress_signature":"sig-json"}',
+        progress_key="sig-json",
+    )
+    assert warning is not None
+    assert warning["level"] == "warning"
 
 
 def test_detect_tool_loop_warning_and_critical_thresholds() -> None:

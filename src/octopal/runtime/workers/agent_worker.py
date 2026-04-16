@@ -126,9 +126,10 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 def _extract_tool_progress_key(tool_name: str | None, tool_result: Any) -> str | None:
     if str(tool_name or "") != "synthesize_worker_results":
         return None
-    if not isinstance(tool_result, dict):
+    structured = _decode_structured_tool_result(tool_result)
+    if not isinstance(structured, dict):
         return None
-    progress_signature = str(tool_result.get("progress_signature") or "").strip()
+    progress_signature = str(structured.get("progress_signature") or "").strip()
     return progress_signature or None
 
 
@@ -157,9 +158,10 @@ def _detect_orchestration_stall(
 ) -> dict[str, Any] | None:
     if str(tool_name or "") != "synthesize_worker_results":
         return None
-    if not progress_key or not isinstance(tool_result, dict):
+    structured = _decode_structured_tool_result(tool_result)
+    if not progress_key or not isinstance(structured, dict):
         return None
-    pending_count = int(tool_result.get("pending_count") or 0)
+    pending_count = int(structured.get("pending_count") or 0)
     if pending_count <= 0:
         return None
     streak = _tool_progress_streak(
