@@ -255,6 +255,7 @@ def test_tool_progress_streak_counts_same_progress_key() -> None:
             "args_hash": "b",
             "result_hash": "1",
             "progress_key": "sig-1",
+            "observed_at": 100.0,
         },
         {"tool_name": "get_worker_result", "args_hash": "c", "result_hash": "y", "progress_key": None},
         {
@@ -262,20 +263,23 @@ def test_tool_progress_streak_counts_same_progress_key() -> None:
             "args_hash": "b",
             "result_hash": "2",
             "progress_key": "sig-1",
+            "observed_at": 108.0,
         },
         {
             "tool_name": "synthesize_worker_results",
             "args_hash": "b",
             "result_hash": "3",
             "progress_key": "sig-1",
+            "observed_at": 116.0,
         },
     ]
-    count = _tool_progress_streak(
+    streak = _tool_progress_streak(
         history,
         tool_name="synthesize_worker_results",
         progress_key="sig-1",
     )
-    assert count == 3
+    assert streak["count"] == 3
+    assert streak["elapsed_seconds"] == 16.0
 
 
 def test_extract_tool_progress_key_reads_synthesize_signature() -> None:
@@ -306,6 +310,7 @@ def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -
             "args_hash": "same",
             "result_hash": "r1",
             "progress_key": "sig-1",
+            "observed_at": 100.0,
         },
         {
             "tool_name": "get_worker_result",
@@ -318,16 +323,18 @@ def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -
             "args_hash": "same",
             "result_hash": "r2",
             "progress_key": "sig-1",
+            "observed_at": 118.0,
         },
     ]
     warning = _detect_orchestration_stall(
         history,
         tool_name="synthesize_worker_results",
-        tool_result={"pending_count": 2, "pending_results": [{"worker_id": "w1", "runtime_seconds": 25}]},
+        tool_result={"pending_count": 2, "pending_results": [{"worker_id": "w1", "runtime_seconds": 2}]},
         progress_key="sig-1",
     )
     assert warning is not None
     assert warning["level"] == "warning"
+    assert warning["elapsed_seconds"] == 18.0
 
     history.append(
         {
@@ -335,16 +342,18 @@ def test_detect_orchestration_stall_warns_and_breaks_on_repeated_no_progress() -
             "args_hash": "same",
             "result_hash": "r3",
             "progress_key": "sig-1",
+            "observed_at": 134.0,
         }
     )
     critical = _detect_orchestration_stall(
         history,
         tool_name="synthesize_worker_results",
-        tool_result={"pending_count": 2, "pending_results": [{"worker_id": "w1", "runtime_seconds": 25}]},
+        tool_result={"pending_count": 2, "pending_results": [{"worker_id": "w1", "runtime_seconds": 2}]},
         progress_key="sig-1",
     )
     assert critical is not None
     assert critical["level"] == "critical"
+    assert critical["elapsed_seconds"] == 34.0
 
 
 def test_detect_orchestration_stall_handles_json_string_tool_results() -> None:
@@ -354,43 +363,48 @@ def test_detect_orchestration_stall_handles_json_string_tool_results() -> None:
             "args_hash": "same",
             "result_hash": "r1",
             "progress_key": "sig-json",
+            "observed_at": 100.0,
         },
         {
             "tool_name": "synthesize_worker_results",
             "args_hash": "same",
             "result_hash": "r2",
             "progress_key": "sig-json",
+            "observed_at": 118.0,
         },
     ]
     warning = _detect_orchestration_stall(
         history,
         tool_name="synthesize_worker_results",
-        tool_result='{"status":"pending","pending_count":2,"progress_signature":"sig-json","pending_results":[{"worker_id":"w1","runtime_seconds":25}]}',
+        tool_result='{"status":"pending","pending_count":2,"progress_signature":"sig-json","pending_results":[{"worker_id":"w1","runtime_seconds":2}]}',
         progress_key="sig-json",
     )
     assert warning is not None
     assert warning["level"] == "warning"
 
 
-def test_detect_orchestration_stall_ignores_freshly_spawned_pending_workers() -> None:
+def test_detect_orchestration_stall_ignores_short_repeat_windows() -> None:
     history = [
         {
             "tool_name": "synthesize_worker_results",
             "args_hash": "same",
             "result_hash": "r1",
             "progress_key": "sig-fresh",
+            "observed_at": 100.0,
         },
         {
             "tool_name": "synthesize_worker_results",
             "args_hash": "same",
             "result_hash": "r2",
             "progress_key": "sig-fresh",
+            "observed_at": 103.0,
         },
         {
             "tool_name": "synthesize_worker_results",
             "args_hash": "same",
             "result_hash": "r3",
             "progress_key": "sig-fresh",
+            "observed_at": 108.0,
         },
     ]
     state = _detect_orchestration_stall(
@@ -398,7 +412,7 @@ def test_detect_orchestration_stall_ignores_freshly_spawned_pending_workers() ->
         tool_name="synthesize_worker_results",
         tool_result={
             "pending_count": 2,
-            "pending_results": [{"worker_id": "w1", "runtime_seconds": 6}],
+            "pending_results": [{"worker_id": "w1", "runtime_seconds": 45}],
         },
         progress_key="sig-fresh",
     )

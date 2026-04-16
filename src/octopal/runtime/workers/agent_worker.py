@@ -43,7 +43,8 @@ _DEFAULT_MAX_STEP_CAP = 30
 _MAX_EMPTY_TURNS = 3
 _ORCHESTRATION_STALL_WARNING_THRESHOLD = 2
 _ORCHESTRATION_STALL_CRITICAL_THRESHOLD = 3
-_ORCHESTRATION_STALL_MIN_PENDING_RUNTIME_SECONDS = 20
+_ORCHESTRATION_STALL_WARNING_MIN_ELAPSED_SECONDS = 15
+_ORCHESTRATION_STALL_CRITICAL_MIN_ELAPSED_SECONDS = 30
 _TRANSIENT_ERROR_HINTS = (
     "timeout",
     "timed out",
@@ -135,23 +136,48 @@ def _extract_tool_progress_key(tool_name: str | None, tool_result: Any) -> str |
 
 
 def _tool_progress_streak(
-    history: list[dict[str, str | None]],
+    history: list[dict[str, Any]],
     *,
     tool_name: str,
     progress_key: str,
-) -> int:
+) -> dict[str, float | int]:
     streak = 0
+    first_seen_at: float | None = None
+    last_seen_at: float | None = None
     for record in reversed(history):
         if record.get("tool_name") != tool_name:
             continue
         if record.get("progress_key") != progress_key:
             break
         streak += 1
-    return streak
+        observed_at = record.get("observed_at")
+        if isinstance(observed_at, int | float):
+            seen_at = float(observed_at)
+            if last_seen_at is None:
+                last_seen_at = seen_at
+            first_seen_at = seen_at
+    elapsed_seconds = 0.0
+    if streak > 1 and first_seen_at is not None and last_seen_at is not None:
+        elapsed_seconds = max(0.0, last_seen_at - first_seen_at)
+    return {"count": streak, "elapsed_seconds": elapsed_seconds}
+
+
+def _resolve_orchestration_stall_thresholds() -> dict[str, int]:
+    warning = _parse_positive_int_env(
+        "OCTOPAL_ORCHESTRATION_STALL_WARNING_SECONDS",
+        _ORCHESTRATION_STALL_WARNING_MIN_ELAPSED_SECONDS,
+    )
+    critical = _parse_positive_int_env(
+        "OCTOPAL_ORCHESTRATION_STALL_CRITICAL_SECONDS",
+        _ORCHESTRATION_STALL_CRITICAL_MIN_ELAPSED_SECONDS,
+    )
+    if critical <= warning:
+        critical = warning + 1
+    return {"warning_seconds": warning, "critical_seconds": critical}
 
 
 def _detect_orchestration_stall(
-    history: list[dict[str, str | None]],
+    history: list[dict[str, Any]],
     *,
     tool_name: str | None,
     tool_result: Any,
@@ -165,44 +191,37 @@ def _detect_orchestration_stall(
     pending_count = int(structured.get("pending_count") or 0)
     if pending_count <= 0:
         return None
-    if not _pending_workers_old_enough_for_stall(structured):
-        return None
     streak = _tool_progress_streak(
         history,
         tool_name="synthesize_worker_results",
         progress_key=progress_key,
     )
-    if streak >= _ORCHESTRATION_STALL_CRITICAL_THRESHOLD:
+    thresholds = _resolve_orchestration_stall_thresholds()
+    count = int(streak["count"])
+    elapsed_seconds = float(streak["elapsed_seconds"])
+    if (
+        count >= _ORCHESTRATION_STALL_CRITICAL_THRESHOLD
+        and elapsed_seconds >= thresholds["critical_seconds"]
+    ):
         return {
             "detector": "orchestration_no_progress",
             "level": "critical",
-            "count": streak,
+            "count": count,
+            "elapsed_seconds": elapsed_seconds,
             "message": "Repeated synthesize_worker_results calls found no worker progress.",
         }
-    if streak >= _ORCHESTRATION_STALL_WARNING_THRESHOLD:
+    if (
+        count >= _ORCHESTRATION_STALL_WARNING_THRESHOLD
+        and elapsed_seconds >= thresholds["warning_seconds"]
+    ):
         return {
             "detector": "orchestration_no_progress",
             "level": "warning",
-            "count": streak,
+            "count": count,
+            "elapsed_seconds": elapsed_seconds,
             "message": "synthesize_worker_results is being retried without worker progress.",
         }
     return None
-
-
-def _pending_workers_old_enough_for_stall(structured: dict[str, Any]) -> bool:
-    pending_results = structured.get("pending_results")
-    if not isinstance(pending_results, list) or not pending_results:
-        return False
-
-    max_runtime_seconds = 0
-    for item in pending_results:
-        if not isinstance(item, dict):
-            continue
-        runtime_seconds = item.get("runtime_seconds")
-        if isinstance(runtime_seconds, int | float):
-            max_runtime_seconds = max(max_runtime_seconds, int(runtime_seconds))
-
-    return max_runtime_seconds >= _ORCHESTRATION_STALL_MIN_PENDING_RUNTIME_SECONDS
 
 
 async def run_agent_worker(spec_path: str) -> None:
@@ -373,7 +392,7 @@ Important:
     }
     upstream_failures: dict[str, int] = {}
     successful_tool_calls = 0
-    tool_call_history: list[dict[str, str | None]] = []
+    tool_call_history: list[dict[str, Any]] = []
     tool_loop_thresholds = _resolve_tool_loop_thresholds()
 
     while thinking_steps < effective_max_steps:
@@ -441,6 +460,7 @@ Important:
                         "args_hash": args_hash,
                         "result_hash": result_hash,
                         "progress_key": progress_key,
+                        "observed_at": time.monotonic(),
                     }
                 )
                 loop_state = _detect_tool_loop(
