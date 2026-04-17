@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,8 @@ _CONTENT_HEAVY_TOOL_NAMES = {
     "markdown_new_fetch",
     "web_fetch",
 }
+_PATH_KEY_RE = re.compile(r"(?:^|_)(?:path|paths|file|files|url|urls)$", re.IGNORECASE)
+_MAX_PATH_HINTS = 6
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,10 @@ def render_tool_result_for_llm(
     if not final_text:
         return RenderedToolResult(text="", was_compacted=was_compacted)
 
+    summary_prefix = _build_summary_prefix(result, was_compacted=was_compacted)
+    if summary_prefix:
+        final_text = f"{summary_prefix}\n{final_text}"
+
     if len(final_text) <= budget.max_chars:
         return RenderedToolResult(text=final_text, was_compacted=was_compacted)
 
@@ -83,6 +90,30 @@ def _budget_for_tool(tool_name: str | None, *, max_chars: int | None) -> ToolRen
         max_depth=base_budget.max_depth,
         max_string_chars=base_budget.max_string_chars,
     )
+
+
+def _build_summary_prefix(value: Any, *, was_compacted: bool) -> str:
+    summary_parts: list[str] = []
+
+    if isinstance(value, dict):
+        keys = [str(key) for key in value.keys()]
+        preview_keys = ", ".join(keys[:10]) if keys else "(none)"
+        summary_parts.append(
+            f"[tool_result_summary type=dict keys={len(keys)} top_keys={preview_keys}]"
+        )
+    elif isinstance(value, list):
+        summary_parts.append(f"[tool_result_summary type=list items={len(value)}]")
+    elif isinstance(value, tuple):
+        summary_parts.append(f"[tool_result_summary type=tuple items={len(value)}]")
+
+    path_hints = _collect_path_hints(value)
+    if path_hints:
+        summary_parts.append("[tool_result_paths " + ", ".join(path_hints) + "]")
+
+    if was_compacted and summary_parts:
+        summary_parts.append("[tool_result_compacted=true]")
+
+    return "\n".join(summary_parts)
 
 
 def _compact_tool_value(value: Any, *, depth: int, budget: ToolRenderBudget) -> tuple[Any, bool]:
@@ -147,6 +178,45 @@ def _parse_json_like_string(value: str) -> Any | None:
         return json.loads(value)
     except Exception:
         return None
+
+
+def _collect_path_hints(value: Any) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _walk(current: Any, parent_key: str | None = None, depth: int = 0) -> None:
+        if len(found) >= _MAX_PATH_HINTS or depth > 3:
+            return
+        if isinstance(current, dict):
+            for key, item in current.items():
+                _walk(item, str(key), depth + 1)
+            return
+        if isinstance(current, list | tuple | set):
+            for item in list(current)[:_MAX_PATH_HINTS]:
+                _walk(item, parent_key, depth + 1)
+            return
+        if not isinstance(current, str):
+            return
+        candidate = current.strip()
+        if not candidate or candidate in seen:
+            return
+        if _looks_like_path_hint(candidate, parent_key=parent_key):
+            seen.add(candidate)
+            found.append(candidate)
+
+    _walk(value)
+    return found
+
+
+def _looks_like_path_hint(value: str, *, parent_key: str | None) -> bool:
+    key = str(parent_key or "").strip()
+    if key and _PATH_KEY_RE.search(key):
+        return True
+    if value.startswith(("http://", "https://", "/", "./", "../")):
+        return True
+    if "\\" in value or "/" in value:
+        return True
+    return bool(re.search(r"\.[A-Za-z0-9]{1,8}$", value))
 
 
 def _truncate_string(value: str, *, max_chars: int) -> str:

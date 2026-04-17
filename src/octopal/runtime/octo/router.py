@@ -226,7 +226,15 @@ async def route_or_reply(
         await _ensure_mcp_connected_for_routing(octo)
 
         octo_tools, ctx = _get_octo_tools(octo, chat_id)
-        logger.info("Octo tools fetched: count=%d", len(octo_tools))
+        resolution_report = ctx.get("tool_resolution_report")
+        available_count = len(getattr(resolution_report, "available_tools", ()) or ())
+        deferred_count = max(0, available_count - len(octo_tools))
+        logger.info(
+            "Octo tools fetched",
+            active_tool_count=len(octo_tools),
+            available_tool_count=available_count,
+            deferred_tool_count=deferred_count,
+        )
         tool_policy_summary = _build_octo_tool_policy_summary(
             octo_tools,
             ctx.get("tool_resolution_report"),
@@ -505,7 +513,18 @@ async def _complete_route_with_tools(
                                     ),
                                 )
                             )
-                    tool_result_text = render_tool_result_for_llm(tool_result).text
+                    tool_name = str(call.get("function", {}).get("name") or "")
+                    rendered_tool_result = render_tool_result_for_llm(
+                        tool_result,
+                        tool_name=tool_name,
+                    )
+                    tool_result_text = rendered_tool_result.text
+                    if rendered_tool_result.was_compacted:
+                        logger.debug(
+                            "Octo tool result compacted",
+                            tool_name=tool_name,
+                            rendered_chars=len(tool_result_text),
+                        )
                     loop_state = _record_octo_tool_call(
                         tool_call_history,
                         call=call,
