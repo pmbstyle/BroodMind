@@ -45,6 +45,7 @@ _MAX_VERIFY_CONTEXT_CHARS = 20000
 _DEFAULT_MAX_TOOL_COUNT = 64
 _MIN_TOOL_COUNT_ON_OVERFLOW = 12
 _CATALOG_TOOL_EXPANSION_LIMIT = 12
+_CATALOG_MCP_TOOL_EXPANSION_LIMIT = 1
 _DEFAULT_INITIAL_OCTO_TOOL_COUNT = 32
 _MANDATORY_OCTO_TOOL_NAMES = {
     "octo_context_health",
@@ -1276,6 +1277,7 @@ def _expand_active_tool_specs_from_catalog_result(
     results = payload.get("results") if isinstance(payload, dict) else None
     if not isinstance(results, list) or not results:
         return active_tool_specs, []
+    query = _normalize_catalog_query(payload.get("query")) if isinstance(payload, dict) else ""
 
     all_specs = list(ctx.get("all_tool_specs") or [])
     by_name = {str(getattr(spec, "name", "") or ""): spec for spec in all_specs}
@@ -1283,6 +1285,7 @@ def _expand_active_tool_specs_from_catalog_result(
     selected_names = {str(getattr(spec, "name", "") or "") for spec in selected}
 
     expanded_names: list[str] = []
+    mcp_added = 0
     for item in results:
         if len(expanded_names) >= _CATALOG_TOOL_EXPANSION_LIMIT:
             break
@@ -1296,6 +1299,13 @@ def _expand_active_tool_specs_from_catalog_result(
         spec = by_name.get(name)
         if spec is None:
             continue
+        is_mcp = _is_mcp_catalog_item(item, spec)
+        if is_mcp:
+            if mcp_added >= _CATALOG_MCP_TOOL_EXPANSION_LIMIT:
+                continue
+            if not _should_expand_mcp_catalog_item(item, spec=spec, query=query):
+                continue
+            mcp_added += 1
         selected.append(spec)
         selected_names.add(name)
         expanded_names.append(name)
@@ -1303,6 +1313,54 @@ def _expand_active_tool_specs_from_catalog_result(
     if expanded_names:
         ctx["active_tool_specs"] = selected
     return selected, expanded_names
+
+
+def _normalize_catalog_query(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _is_mcp_catalog_item(item: dict[str, Any], spec: ToolSpec) -> bool:
+    if bool(item.get("is_mcp")):
+        return True
+    if str(item.get("owner", "") or "").strip().lower() == "mcp":
+        return True
+    metadata = getattr(spec, "metadata", None)
+    if str(getattr(metadata, "owner", "") or "").strip().lower() == "mcp":
+        return True
+    if str(getattr(metadata, "category", "") or "").strip().lower() == "mcp":
+        return True
+    return str(getattr(spec, "name", "") or "").strip().lower().startswith("mcp_")
+
+
+def _should_expand_mcp_catalog_item(
+    item: dict[str, Any],
+    *,
+    spec: ToolSpec,
+    query: str,
+) -> bool:
+    if not query:
+        return False
+
+    name = str(item.get("name", "") or getattr(spec, "name", "") or "").strip().lower()
+    remote_name = str(item.get("remote_name", "") or getattr(spec, "remote_tool_name", "") or "").strip().lower()
+    server_id = str(item.get("server_id", "") or getattr(spec, "server_id", "") or "").strip().lower()
+    description = str(item.get("description", "") or getattr(spec, "description", "") or "").strip().lower()
+    query_terms = tuple(term for term in re.split(r"[\s_:/-]+", query) if term)
+    content_haystacks = tuple(part for part in (name, remote_name, description) if part)
+
+    if query in {name, remote_name}:
+        return True
+    if remote_name and query.endswith(remote_name):
+        return True
+    if server_id and query.startswith(f"{server_id} "):
+        query_terms = tuple(term for term in query_terms if term != server_id)
+    non_server_terms = tuple(term for term in query_terms if term and term != server_id)
+    if not non_server_terms:
+        return False
+    if all(any(term in haystack for haystack in content_haystacks) for term in non_server_terms):
+        return True
+    return False
 
 
 async def _handle_octo_tool_call(
