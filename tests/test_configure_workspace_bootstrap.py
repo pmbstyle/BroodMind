@@ -51,18 +51,19 @@ def test_bootstrap_context_includes_experiments_readme(tmp_path: Path, monkeypat
     assert "one active experiment at a time" in context.content
 
 
-def test_bootstrap_context_compacts_large_daily_memory_file(tmp_path: Path, monkeypatch) -> None:
+def test_bootstrap_context_keeps_full_daily_memory_file(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     _ensure_workspace_bootstrap(workspace)
     monkeypatch.setenv("OCTOPAL_WORKSPACE_DIR", str(workspace))
 
+    memory_payload = "very long memory entry\n" * 400
     today_path = workspace / "memory" / f"{date.today().isoformat()}.md"
-    today_path.write_text(("very long memory entry\n" * 400), encoding="utf-8")
+    today_path.write_text(memory_payload, encoding="utf-8")
 
     context = asyncio.run(build_bootstrap_context_prompt(store=None, chat_id=123))
 
-    assert "bootstrap excerpt from memory/" in context.content
-    assert "Use fs_read for the full file if needed." in context.content
+    assert memory_payload in context.content
+    assert "bootstrap excerpt from memory/" not in context.content
 
 
 def test_workspace_bootstrap_is_non_destructive(tmp_path: Path) -> None:

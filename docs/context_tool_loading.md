@@ -6,7 +6,7 @@ This note describes how Octo now keeps prompt size under control without losing 
 
 - Keep the initial Octo prompt small and stable.
 - Preserve access to the full tool registry through search and expansion.
-- Reduce bootstrap context bloat from large workspace files.
+- Keep bootstrap context complete while trimming tool-loading overhead elsewhere.
 - Compact bulky tool outputs before they re-enter the next model turn.
 
 ## Initial Tool Loading
@@ -36,11 +36,9 @@ Workspace bootstrap files are still loaded from the same sources:
 - `experiments/README.md`
 - daily memory notes
 
-Large files are now injected as compact excerpts instead of full raw content.
+Bootstrap files are injected in full so Octo always starts with the complete workspace instructions and current memory notes.
 
-When Octo needs the full file, it should use `fs_read`.
-
-This keeps bootstrap context useful while avoiding repeated full-file dumps into every request.
+Prompt-size control is handled elsewhere, primarily through deferred tool loading and compacted tool results.
 
 ## Tool Result Compaction
 
@@ -82,7 +80,7 @@ The goal is to understand prompt growth from structure-level metrics, not from f
 These changes should reduce prompt size in three places:
 
 1. fewer tool schemas in the first request
-2. smaller bootstrap workspace payloads
+2. unchanged full bootstrap workspace payloads
 3. smaller tool-result messages in iterative tool loops
 
 The next recommended validation step is to compare before/after values in runtime logs for:
