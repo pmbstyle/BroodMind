@@ -1010,9 +1010,10 @@ def _get_octo_tools(octo: Any, chat_id: int) -> tuple[list[ToolSpec], dict[str, 
     ctx = {
         "base_dir": Path(os.getenv("OCTOPAL_WORKSPACE_DIR", "workspace")).resolve(),
         "octo": octo,
-        "chat_id": chat_id
+        "chat_id": chat_id,
+        "mcp_manager": getattr(octo, "mcp_manager", None),
     }
-    mcp_manager = getattr(octo, "mcp_manager", None)
+    mcp_manager = ctx["mcp_manager"]
     policy_steps = [
         ToolPolicyPipelineStep(
             label="octo.raw_fetch_denylist",
@@ -1306,6 +1307,7 @@ def _expand_active_tool_specs_from_catalog_result(
             if not _should_expand_mcp_catalog_item(item, spec=spec, query=query):
                 continue
             mcp_added += 1
+            spec = _hydrate_mcp_tool_spec_for_activation(spec, ctx)
         selected.append(spec)
         selected_names.add(name)
         expanded_names.append(name)
@@ -1361,6 +1363,22 @@ def _should_expand_mcp_catalog_item(
     if all(any(term in haystack for haystack in content_haystacks) for term in non_server_terms):
         return True
     return False
+
+
+def _hydrate_mcp_tool_spec_for_activation(spec: ToolSpec, ctx: dict[str, object]) -> ToolSpec:
+    manager = ctx.get("mcp_manager")
+    if manager is None:
+        octo = ctx.get("octo")
+        manager = getattr(octo, "mcp_manager", None) if octo is not None else None
+    hydrate = getattr(manager, "hydrate_tool_spec", None)
+    if not callable(hydrate):
+        return spec
+    try:
+        hydrated = hydrate(spec)
+    except Exception:
+        logger.warning("Failed to hydrate MCP tool spec for activation", tool_name=spec.name, exc_info=True)
+        return spec
+    return hydrated if isinstance(hydrated, ToolSpec) else spec
 
 
 async def _handle_octo_tool_call(
