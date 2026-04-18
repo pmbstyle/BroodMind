@@ -91,3 +91,16 @@ def test_get_worker_result_failed_includes_summary_and_output(monkeypatch) -> No
     assert data["summary"] == "Task failed temporarily: inference provider is currently overloaded."
     assert data["output"] == {"retryable": True, "reason": "inference_upstream_unavailable"}
     assert data["error"] == "boom"
+
+
+def test_get_worker_result_waiting_for_children_has_specific_message(monkeypatch) -> None:
+    worker = _worker_record(status="waiting_for_children")
+    frozen_now = datetime(2026, 4, 16, 20, 54, 30, tzinfo=UTC)
+    monkeypatch.setattr(management, "utc_now", lambda: frozen_now)
+    payload = management._tool_get_worker_result(
+        {"worker_id": worker.id},
+        {"octo": _Octo(worker)},
+    )
+    data = json.loads(payload)
+    assert data["status"] == "waiting_for_children"
+    assert data["message"] == "Worker is waiting for child workers to finish before resuming."

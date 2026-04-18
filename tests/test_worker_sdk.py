@@ -40,6 +40,8 @@ def test_http_get_builds_expected_intent_request() -> None:
 
 
 def test_valid_message_types_exposes_expected_protocol_surface() -> None:
+    assert "await_children" in VALID_MESSAGE_TYPES
+    assert "resume_children" in VALID_MESSAGE_TYPES
     assert "intent_request" in VALID_MESSAGE_TYPES
     assert "octo_tool_result" in VALID_MESSAGE_TYPES
     assert "shutdown" in VALID_MESSAGE_TYPES
@@ -99,6 +101,33 @@ def test_worker_add_proposal_records_structured_knowledge() -> None:
     assert len(worker.knowledge_proposals) == 1
     assert worker.knowledge_proposals[0].category == "fact"
     assert worker.knowledge_proposals[0].content == "Service health is green"
+
+
+def test_worker_await_children_emits_suspend_request_and_returns_resume_payload(monkeypatch) -> None:
+    worker = _worker()
+    sent: list[dict] = []
+
+    async def _fake_write_message(payload: dict) -> None:
+        sent.append(payload)
+
+    async def _fake_read_message() -> dict:
+        return {
+            "type": "resume_children",
+            "child_batch": {
+                "worker_ids": ["child-1"],
+                "status": "completed",
+                "completed": [{"worker_id": "child-1", "status": "completed", "summary": "done"}],
+            },
+        }
+
+    monkeypatch.setattr(worker, "_write_message", _fake_write_message)
+    monkeypatch.setattr(worker, "_read_message", _fake_read_message)
+
+    payload = asyncio.run(worker.await_children(["child-1"]))
+
+    assert sent == [{"type": "await_children", "worker_ids": ["child-1"]}]
+    assert payload["status"] == "completed"
+    assert payload["completed"][0]["worker_id"] == "child-1"
 
 
 def test_worker_request_intent_returns_permit_when_hash_matches(monkeypatch) -> None:

@@ -94,6 +94,33 @@ class WorkerResult(BaseModel):
     tools_used: list[str] = Field(default_factory=list)
 
 
+class ChildWorkerOutcome(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    worker_id: str
+    status: str
+    summary: str | None = None
+    output: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ChildBatchResume(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    worker_ids: list[str] = Field(default_factory=list)
+    completed_count: int = 0
+    failed_count: int = 0
+    stopped_count: int = 0
+    missing_count: int = 0
+    status: str = "completed"
+    completed: list[ChildWorkerOutcome] = Field(default_factory=list)
+    failed: list[ChildWorkerOutcome] = Field(default_factory=list)
+    stopped: list[ChildWorkerOutcome] = Field(default_factory=list)
+    missing: list[ChildWorkerOutcome] = Field(default_factory=list)
+
+
 class Capability(BaseModel):
     """Permission capability (kept for policy engine compatibility)."""
     model_config = ConfigDict(frozen=True)
