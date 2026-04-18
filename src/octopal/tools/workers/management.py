@@ -1200,7 +1200,7 @@ def _tool_worker_session_status(args: dict[str, object], ctx: dict[str, object])
     ]
 
     hints: list[str] = []
-    running = counts.get("running", 0) + counts.get("started", 0)
+    running = counts.get("running", 0) + counts.get("started", 0) + counts.get("waiting_for_children", 0)
     failed_recent = sum(1 for worker in recent_workers if str(worker.status) == "failed")
     if running > 0:
         hints.append(f"{running} worker(s) currently in flight.")
@@ -1344,7 +1344,7 @@ def _reconcile_stale_worker_status(octo: Octo, worker: Any) -> Any:
     runtime = getattr(octo, "runtime", None)
     if not runtime or not hasattr(runtime, "is_worker_running"):
         return worker
-    if worker.status not in {"started", "running"}:
+    if worker.status not in {"started", "running", "waiting_for_children"}:
         return worker
     # Small grace window avoids false stale marks during process launch transitions.
     if worker.updated_at >= (utc_now() - timedelta(minutes=2)):
@@ -1367,7 +1367,7 @@ def _reconcile_stale_active_workers(octo: Octo, workers: list[Any], older_than_m
         return workers
     grace_cutoff = utc_now() - timedelta(minutes=2)
     for worker in workers:
-        if worker.status not in {"started", "running"}:
+        if worker.status not in {"started", "running", "waiting_for_children"}:
             continue
         if worker.updated_at >= grace_cutoff:
             continue
@@ -1512,6 +1512,9 @@ def _tool_get_worker_result(args: dict[str, object], ctx: dict[str, object]) -> 
         payload.update(_worker_timing_fields(worker))
         return json.dumps(payload, ensure_ascii=False)
     else:
+        waiting_message = f"Worker is still {worker.status}. Result not available yet."
+        if worker.status == "waiting_for_children":
+            waiting_message = "Worker is waiting for child workers to finish before resuming."
         payload = {
             "status": worker.status,
             "worker_id": worker.id,
@@ -1519,7 +1522,7 @@ def _tool_get_worker_result(args: dict[str, object], ctx: dict[str, object]) -> 
             "parent_worker_id": worker.parent_worker_id,
             "root_task_id": worker.root_task_id,
             "spawn_depth": worker.spawn_depth,
-            "message": f"Worker is still {worker.status}. Result not available yet.",
+            "message": waiting_message,
         }
         payload.update(_worker_timing_fields(worker))
         return json.dumps(payload, ensure_ascii=False)

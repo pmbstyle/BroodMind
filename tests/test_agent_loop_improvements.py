@@ -808,7 +808,7 @@ def test_execute_agent_task_does_not_charge_step_for_throttled_poll_round(
     assert result.tools_used == ["get_worker_result"]
 
 
-def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
+def test_execute_agent_task_suspends_until_runtime_resumes_child_batch(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -818,7 +818,7 @@ def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
             task="coordinate child work",
             inputs={},
             system_prompt="s",
-            available_tools=["start_child_worker", "synthesize_worker_results"],
+            available_tools=["start_child_worker"],
             mcp_tools=[],
             model=None,
             granted_capabilities=[],
@@ -830,16 +830,11 @@ def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
         )
     )
     log_messages: list[str] = []
-    sleep_calls: list[float] = []
 
     async def _fake_log(level: str, message: str) -> None:
         log_messages.append(f"{level}:{message}")
 
-    async def _fake_sleep(seconds: float) -> None:
-        sleep_calls.append(seconds)
-
     monkeypatch.setattr(worker, "log", _fake_log)
-    monkeypatch.setattr("octopal.runtime.workers.agent_worker.asyncio.sleep", _fake_sleep)
     monkeypatch.setattr("octopal.runtime.workers.agent_worker.load_settings", lambda: object())
     monkeypatch.setattr(
         "octopal.runtime.workers.agent_worker.LiteLLMProvider",
@@ -855,18 +850,10 @@ def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
             handler=lambda args, ctx: {"status": "started"},
             is_async=False,
         ),
-        ToolSpec(
-            name="synthesize_worker_results",
-            description="join child results",
-            parameters={"type": "object"},
-            permission="worker_manage",
-            handler=lambda args, ctx: {"status": "completed"},
-            is_async=False,
-        ),
     ]
     monkeypatch.setattr("octopal.runtime.workers.agent_worker.get_tools", lambda: tools)
 
-    call_state = {"llm_calls": 0, "join_calls": 0}
+    call_state = {"llm_calls": 0}
     executed_tools: list[tuple[str | None, dict]] = []
 
     async def _fake_call_llm(provider, messages, tools):
@@ -887,9 +874,9 @@ def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
             str(message.get("content") or "")
             for message in messages
             if message.get("role") == "user"
-            and "Runtime join barrier note" in str(message.get("content") or "")
+            and "Runtime child-batch resume" in str(message.get("content") or "")
         ]
-        assert any("Runtime join barrier note" in note for note in join_notes)
+        assert any("Runtime child-batch resume" in note for note in join_notes)
         assert any("child summary" in note for note in join_notes)
         return {"content": '{"type":"result","summary":"done","output":{"joined":true}}'}
 
@@ -909,41 +896,28 @@ def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
                 '{"status":"started","worker_id":"child-1","run_id":"child-1"}',
                 {"retries": 0, "timed_out": False, "had_error": False, "error_type": "none"},
             )
-        if tool_name == "synthesize_worker_results":
-            call_state["join_calls"] += 1
-            if call_state["join_calls"] == 1:
-                return (
-                    {
-                        "status": "running",
-                        "pending_count": 1,
-                        "completed_count": 0,
-                        "failed_count": 0,
-                        "ready_results": [],
-                        "failed_results": [],
-                        "pending_results": [{"worker_id": "child-1", "status": "running"}],
-                        "synthesis": "Pending workers:\n- child-1: running",
-                    },
-                    {"retries": 0, "timed_out": False, "had_error": False, "error_type": "none"},
-                )
-            return (
-                {
-                    "status": "completed",
-                    "pending_count": 0,
-                    "completed_count": 1,
-                    "failed_count": 0,
-                    "ready_results": [
-                        {"worker_id": "child-1", "summary": "child summary", "output": {"ok": True}}
-                    ],
-                    "failed_results": [],
-                    "pending_results": [],
-                    "synthesis": "Completed worker findings:\n- child-1: child summary",
-                },
-                {"retries": 0, "timed_out": False, "had_error": False, "error_type": "none"},
-            )
         raise AssertionError(f"Unexpected tool: {tool_name}")
+
+    async def _fake_await_children(worker_ids: list[str]) -> dict:
+        assert worker_ids == ["child-1"]
+        return {
+            "worker_ids": ["child-1"],
+            "status": "completed",
+            "completed_count": 1,
+            "failed_count": 0,
+            "stopped_count": 0,
+            "missing_count": 0,
+            "completed": [
+                {"worker_id": "child-1", "status": "completed", "summary": "child summary", "output": {"ok": True}}
+            ],
+            "failed": [],
+            "stopped": [],
+            "missing": [],
+        }
 
     monkeypatch.setattr("octopal.runtime.workers.agent_worker._call_llm", _fake_call_llm)
     monkeypatch.setattr("octopal.runtime.workers.agent_worker._execute_tool", _fake_execute_tool)
+    monkeypatch.setattr(worker, "await_children", _fake_await_children)
 
     result = asyncio.run(execute_agent_task(worker, tmp_path, tmp_path))
 
@@ -951,11 +925,140 @@ def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
     assert result.output is not None
     assert result.output["joined"] is True
     assert call_state["llm_calls"] == 2
-    assert call_state["join_calls"] == 2
-    assert [name for name, _ in executed_tools] == [
-        "start_child_worker",
-        "synthesize_worker_results",
-        "synthesize_worker_results",
+    assert [name for name, _ in executed_tools] == ["start_child_worker"]
+    assert any("Suspending parent worker until child batch completes" in message for message in log_messages)
+    assert any("Resuming parent worker after child batch completion" in message for message in log_messages)
+
+
+def test_execute_agent_task_skips_redundant_get_worker_result_for_joined_child(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    worker = Worker(
+        spec=WorkerSpec(
+            id="w-guardrail",
+            task="coordinate child work",
+            inputs={},
+            system_prompt="s",
+            available_tools=["start_child_worker", "get_worker_result"],
+            mcp_tools=[],
+            model=None,
+            granted_capabilities=[],
+            timeout_seconds=60,
+            max_thinking_steps=5,
+            run_id="r-guardrail",
+            lifecycle="ephemeral",
+            correlation_id=None,
+        )
+    )
+    log_messages: list[str] = []
+
+    async def _fake_log(level: str, message: str) -> None:
+        log_messages.append(f"{level}:{message}")
+
+    monkeypatch.setattr(worker, "log", _fake_log)
+    monkeypatch.setattr("octopal.runtime.workers.agent_worker.load_settings", lambda: object())
+    monkeypatch.setattr(
+        "octopal.runtime.workers.agent_worker.LiteLLMProvider",
+        lambda settings, model=None, config=None: object(),
+    )
+
+    tools = [
+        ToolSpec(
+            name="start_child_worker",
+            description="spawn child",
+            parameters={"type": "object"},
+            permission="worker_manage",
+            handler=lambda args, ctx: {"status": "started"},
+            is_async=False,
+        ),
+        ToolSpec(
+            name="get_worker_result",
+            description="get child result",
+            parameters={"type": "object"},
+            permission="worker_manage",
+            handler=lambda args, ctx: {"status": "completed"},
+            is_async=False,
+        ),
     ]
-    assert sleep_calls == [1.0]
-    assert any("Join barrier engaged" in message for message in log_messages)
+    monkeypatch.setattr("octopal.runtime.workers.agent_worker.get_tools", lambda: tools)
+
+    responses = iter(
+        [
+            {
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "start_child_worker",
+                            "arguments": '{"worker_id":"coder","task":"do child task"}',
+                        },
+                    }
+                ]
+            },
+            {
+                "tool_calls": [
+                    {
+                        "id": "call-2",
+                        "function": {
+                            "name": "get_worker_result",
+                            "arguments": '{"worker_id":"child-1"}',
+                        },
+                    }
+                ]
+            },
+            {"content": '{"type":"result","summary":"done","output":{"guardrail":true}}'},
+        ]
+    )
+
+    async def _fake_call_llm(provider, messages, tools):
+        return next(responses)
+
+    executed_tools: list[str] = []
+
+    async def _fake_execute_tool(
+        tool_name,
+        tool_input,
+        workspace_root,
+        worker_dir,
+        worker_obj,
+        tool_map,
+        *,
+        timeout_seconds=None,
+    ):
+        executed_tools.append(str(tool_name))
+        if tool_name == "start_child_worker":
+            return (
+                '{"status":"started","worker_id":"child-1","run_id":"child-1"}',
+                {"retries": 0, "timed_out": False, "had_error": False, "error_type": "none"},
+            )
+        raise AssertionError(f"Unexpected real tool execution: {tool_name}")
+
+    async def _fake_await_children(worker_ids: list[str]) -> dict:
+        assert worker_ids == ["child-1"]
+        return {
+            "worker_ids": ["child-1"],
+            "status": "completed",
+            "completed_count": 1,
+            "failed_count": 0,
+            "stopped_count": 0,
+            "missing_count": 0,
+            "completed": [
+                {"worker_id": "child-1", "status": "completed", "summary": "child summary", "output": {"ok": True}}
+            ],
+            "failed": [],
+            "stopped": [],
+            "missing": [],
+        }
+
+    monkeypatch.setattr("octopal.runtime.workers.agent_worker._call_llm", _fake_call_llm)
+    monkeypatch.setattr("octopal.runtime.workers.agent_worker._execute_tool", _fake_execute_tool)
+    monkeypatch.setattr(worker, "await_children", _fake_await_children)
+
+    result = asyncio.run(execute_agent_task(worker, tmp_path, tmp_path))
+
+    assert result.summary == "done"
+    assert result.output is not None
+    assert result.output["guardrail"] is True
+    assert executed_tools == ["start_child_worker"]
+    assert any("Skipping redundant get_worker_result for already-joined child worker: child-1" in message for message in log_messages)

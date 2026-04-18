@@ -31,7 +31,13 @@ from octopal.runtime.housekeeping import remove_tree_with_retries
 from octopal.runtime.intents.types import ActionIntent
 from octopal.runtime.policy.engine import PolicyEngine
 from octopal.runtime.tool_errors import ToolBridgeError
-from octopal.runtime.workers.contracts import TaskRequest, WorkerResult, WorkerSpec
+from octopal.runtime.workers.contracts import (
+    ChildBatchResume,
+    ChildWorkerOutcome,
+    TaskRequest,
+    WorkerResult,
+    WorkerSpec,
+)
 from octopal.runtime.workers.launcher import WorkerLauncher
 from octopal.utils import utc_now
 
@@ -47,6 +53,8 @@ _RECOVERY_BACKOFF_SECONDS = 0.2
 _STDERR_BATCH_IDLE_SECONDS = 0.05
 _STDERR_BATCH_MAX_LINES = 40
 _STDERR_BATCH_MAX_CHARS = 12000
+_CHILD_WAIT_POLL_SECONDS = 0.25
+_CHILD_WAIT_MISSING_GRACE_SECONDS = 5.0
 
 WORKER_MODULE = "octopal.runtime.workers.agent_worker"
 _TASK_LOG_PREVIEW_CHARS = 100
@@ -582,7 +590,7 @@ class WorkerRuntime:
         process = self._running.get(worker_id)
         if not process:
             worker = await asyncio.to_thread(self.store.get_worker, worker_id)
-            if worker and worker.status in {"started", "running"}:
+            if worker and worker.status in {"started", "running", "waiting_for_children"}:
                 await asyncio.to_thread(self.store.update_worker_status, worker_id, "stopped")
                 await asyncio.to_thread(
                     self.store.update_worker_result,
@@ -655,6 +663,115 @@ class WorkerRuntime:
         line = json.dumps(payload) + "\n"
         process.stdin.write(line.encode("utf-8"))
         await process.stdin.drain()
+
+    async def _await_child_batch(
+        self,
+        *,
+        spec: WorkerSpec,
+        process: asyncio.subprocess.Process,
+        worker_ids: list[str],
+    ) -> ChildBatchResume:
+        child_ids = list(dict.fromkeys(str(worker_id).strip() for worker_id in worker_ids if str(worker_id).strip()))
+        if not child_ids:
+            return ChildBatchResume()
+
+        await asyncio.to_thread(self.store.update_worker_status, spec.id, "waiting_for_children")
+        await asyncio.to_thread(
+            self.store.update_worker_result,
+            spec.id,
+            summary=(
+                f"Waiting for {len(child_ids)} child worker(s) to finish: "
+                + ", ".join(child_ids)
+            ),
+        )
+        await self._append_audit(
+            "worker_waiting_for_children",
+            correlation_id=spec.id,
+            data={"child_worker_ids": child_ids, "count": len(child_ids)},
+        )
+
+        missing_since: dict[str, float] = {}
+
+        while True:
+            if self._is_stop_requested(spec.id):
+                raise _WorkerStopRequested(f"Worker {spec.id} stop requested while waiting for children")
+            if process.returncode is not None:
+                raise RuntimeError("Parent worker exited while waiting for child workers")
+
+            pending_ids: list[str] = []
+            completed: list[ChildWorkerOutcome] = []
+            failed: list[ChildWorkerOutcome] = []
+            stopped: list[ChildWorkerOutcome] = []
+            missing: list[ChildWorkerOutcome] = []
+
+            for child_id in child_ids:
+                record = await asyncio.to_thread(self.store.get_worker, child_id)
+                if record is None:
+                    now_monotonic = asyncio.get_running_loop().time()
+                    first_seen = missing_since.setdefault(child_id, now_monotonic)
+                    elapsed_missing = now_monotonic - first_seen
+                    if elapsed_missing >= _CHILD_WAIT_MISSING_GRACE_SECONDS:
+                        missing.append(
+                            ChildWorkerOutcome(
+                                worker_id=child_id,
+                                status="missing",
+                                error=(
+                                    "Child worker record did not appear within the runtime "
+                                    "spawn grace window."
+                                ),
+                            )
+                        )
+                    else:
+                        pending_ids.append(child_id)
+                    continue
+
+                missing_since.pop(child_id, None)
+                outcome = _child_worker_outcome_from_record(record)
+                normalized_status = str(record.status or "").strip().lower()
+                if normalized_status == "completed":
+                    completed.append(outcome)
+                elif normalized_status == "failed":
+                    failed.append(outcome)
+                elif normalized_status == "stopped":
+                    stopped.append(outcome)
+                else:
+                    pending_ids.append(child_id)
+
+            if not pending_ids:
+                status = "completed"
+                if failed or stopped or missing:
+                    status = "partial"
+                resume = ChildBatchResume(
+                    worker_ids=child_ids,
+                    completed_count=len(completed),
+                    failed_count=len(failed),
+                    stopped_count=len(stopped),
+                    missing_count=len(missing),
+                    status=status,
+                    completed=completed,
+                    failed=failed,
+                    stopped=stopped,
+                    missing=missing,
+                )
+                await asyncio.to_thread(self.store.update_worker_status, spec.id, "running")
+                await self._append_audit(
+                    "worker_resumed_after_children",
+                    correlation_id=spec.id,
+                    data={
+                        "child_worker_ids": child_ids,
+                        "completed_count": len(completed),
+                        "failed_count": len(failed),
+                        "stopped_count": len(stopped),
+                        "missing_count": len(missing),
+                    },
+                )
+                await self._write_to_worker(
+                    process,
+                    {"type": "resume_children", "child_batch": resume.model_dump(mode="json")},
+                )
+                return resume
+
+            await asyncio.sleep(_CHILD_WAIT_POLL_SECONDS)
 
     async def _read_loop(
         self,
@@ -993,6 +1110,20 @@ class WorkerRuntime:
                 )
                 return None
 
+            if msg_type == "await_children":
+                raw_worker_ids = payload.get("worker_ids")
+                worker_ids = (
+                    raw_worker_ids
+                    if isinstance(raw_worker_ids, list)
+                    else [raw_worker_ids] if raw_worker_ids is not None else []
+                )
+                await self._await_child_batch(
+                    spec=spec,
+                    process=process,
+                    worker_ids=[str(worker_id).strip() for worker_id in worker_ids],
+                )
+                return None
+
             if msg_type == "result":
                 raw_result = payload.get("result", {})
                 repaired_result = _repair_worker_result_payload(raw_result)
@@ -1210,6 +1341,18 @@ class WorkerRuntime:
             buffered_chars += len(text)
             if len(buffer) >= _STDERR_BATCH_MAX_LINES or buffered_chars >= _STDERR_BATCH_MAX_CHARS:
                 _flush()
+
+
+def _child_worker_outcome_from_record(record: WorkerRecord) -> ChildWorkerOutcome:
+    return ChildWorkerOutcome(
+        worker_id=str(record.id),
+        status=str(record.status),
+        summary=record.summary,
+        output=record.output,
+        error=record.error,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
 
 
 def _safe_parse_json(line: bytes) -> dict[str, Any] | None:

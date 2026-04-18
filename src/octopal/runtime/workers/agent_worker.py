@@ -42,7 +42,6 @@ _MAX_TOOL_ITERS = 10
 _DEFAULT_TOOL_TIMEOUT_SECONDS = 60
 _DEFAULT_MAX_STEP_CAP = 30
 _MAX_EMPTY_TURNS = 3
-_CHILD_JOIN_BARRIER_POLL_SECONDS = 1.0
 _ORCHESTRATION_STALL_WARNING_THRESHOLD = 2
 _ORCHESTRATION_STALL_CRITICAL_THRESHOLD = 3
 _ORCHESTRATION_STALL_WARNING_MIN_ELAPSED_SECONDS = 15
@@ -331,241 +330,80 @@ def _extract_spawned_worker_ids(tool_name: str | None, tool_result: Any) -> list
     return worker_ids
 
 
-def _build_join_barrier_payload_from_results(
-    completed: list[dict[str, Any]],
-    failed: list[dict[str, Any]],
-    pending: list[dict[str, Any]],
-) -> dict[str, Any]:
-    synthesis_lines: list[str] = []
+def _render_resumed_child_batch_message(child_batch: dict[str, Any]) -> str:
+    worker_ids = [
+        str(worker_id).strip()
+        for worker_id in child_batch.get("worker_ids", [])
+        if str(worker_id).strip()
+    ]
+    lines = [
+        "Runtime child-batch resume: the workers started in the previous tool-call batch have now reached terminal states.",
+        f"Joined worker ids: {', '.join(worker_ids) if worker_ids else '<none>'}",
+    ]
+
+    completed = child_batch.get("completed", [])
+    failed = child_batch.get("failed", [])
+    stopped = child_batch.get("stopped", [])
+    missing = child_batch.get("missing", [])
+
     if completed:
-        synthesis_lines.append("Completed worker findings:")
+        lines.append("Completed workers:")
         for item in completed:
             summary = str(item.get("summary") or "").strip() or "No summary"
-            synthesis_lines.append(f"- {item['worker_id']}: {summary}")
+            lines.append(f"- {item.get('worker_id')}: {summary}")
     if failed:
-        synthesis_lines.append("Failed workers:")
+        lines.append("Failed workers:")
         for item in failed:
-            error = str(item.get("error") or item.get("message") or "Unknown error").strip()
-            synthesis_lines.append(f"- {item['worker_id']}: {error}")
-    if pending:
-        synthesis_lines.append("Pending workers:")
-        for item in pending:
-            status = str(item.get("status") or "running").strip() or "running"
-            synthesis_lines.append(f"- {item['worker_id']}: {status}")
-    if not synthesis_lines:
-        synthesis_lines.append("No child worker results were collected.")
+            error = str(item.get("error") or item.get("summary") or "Unknown error").strip()
+            lines.append(f"- {item.get('worker_id')}: {error}")
+    if stopped:
+        lines.append("Stopped workers:")
+        for item in stopped:
+            error = str(item.get("error") or item.get("summary") or "Stopped").strip()
+            lines.append(f"- {item.get('worker_id')}: {error}")
+    if missing:
+        lines.append("Missing workers:")
+        for item in missing:
+            error = str(item.get("error") or "Missing worker record after spawn").strip()
+            lines.append(f"- {item.get('worker_id')}: {error}")
+    if not any((completed, failed, stopped, missing)):
+        lines.append("No child worker outcomes were collected.")
 
-    status = "completed" if not pending and not failed else "partial"
-    if pending and not completed and not failed:
-        status = "running"
-
-    return {
-        "status": status,
-        "can_synthesize": bool(completed) and not pending,
-        "next_best_action": (
-            "synthesize_ready_results" if completed and not pending else "wait_for_worker_progress"
-        ),
-        "followup_required": bool(completed or failed or pending),
-        "completed_count": len(completed),
-        "failed_count": len(failed),
-        "pending_count": len(pending),
-        "missing_count": 0,
-        "ready_results": completed,
-        "failed_results": failed,
-        "pending_results": pending,
-        "missing_results": [],
-        "synthesis": "\n".join(synthesis_lines),
-    }
+    lines.append("Use these results directly in your next reasoning step. Do not re-poll the same child ids unless you are intentionally starting a new retry.")
+    return "\n".join(lines)
 
 
-async def _execute_join_barrier_tool(
-    *,
-    tool_name: str,
-    tool_input: dict[str, Any],
-    worker: Worker,
-    workspace_root: Path,
-    worker_dir: Path,
-    tool_map: dict[str, Any],
-    spec_timeout_seconds: int,
-    loop_start: float,
-    telemetry: dict[str, Any],
-    tools_used: list[str],
-) -> tuple[Any, dict[str, Any]]:
-    elapsed = asyncio.get_running_loop().time() - loop_start
-    remaining_budget = max(1, spec_timeout_seconds - int(elapsed))
-    tool_timeout = min(_DEFAULT_TOOL_TIMEOUT_SECONDS, remaining_budget)
-    tool_start = time.perf_counter()
-    tool_result, tool_meta = await _execute_tool(
-        tool_name,
-        tool_input,
-        workspace_root,
-        worker_dir,
-        worker,
-        tool_map,
-        timeout_seconds=tool_timeout,
-    )
-    telemetry["tool_calls"] += 1
-    telemetry["tool_latency_ms_total"] += int((time.perf_counter() - tool_start) * 1000)
-    telemetry["tool_retries"] += int(tool_meta.get("retries", 0))
-    if tool_meta.get("timed_out"):
-        telemetry["tool_timeouts"] += 1
-    if tool_meta.get("had_error"):
-        telemetry["tool_errors"] += 1
-    tools_used.append(tool_name)
-    return tool_result, tool_meta
-
-
-def _render_join_barrier_message(
-    *,
-    join_payload: dict[str, Any],
-    worker_ids: list[str],
-) -> str:
-    rendered = render_tool_result_for_llm(join_payload, tool_name="synthesize_worker_results")
-    intro = (
-        "Runtime join barrier note: the child workers started in the immediately "
-        "preceding tool-call batch have been joined before your next reasoning step."
-    )
-    if int(join_payload.get("pending_count") or 0) > 0:
-        intro = (
-            "Runtime join barrier note: waiting hit the current time budget before every "
-            "child worker finished. Use the latest joined state below and avoid duplicate polling."
-        )
-    return "\n".join(
-        [
-            intro,
-            f"Joined worker ids: {', '.join(worker_ids)}",
-            rendered.text,
-            "Do not re-poll these worker ids in this round unless you are starting a new retry.",
-        ]
-    )
-
-
-async def _join_spawned_child_batch(
-    *,
-    worker: Worker,
-    worker_ids: list[str],
-    workspace_root: Path,
-    worker_dir: Path,
-    tool_map: dict[str, Any],
-    spec_timeout_seconds: int,
-    loop_start: float,
-    telemetry: dict[str, Any],
-    tools_used: list[str],
-) -> dict[str, Any] | None:
-    joined_worker_ids = list(
-        dict.fromkeys(str(worker_id).strip() for worker_id in worker_ids if str(worker_id).strip())
-    )
-    if not joined_worker_ids:
-        return None
-
-    if "synthesize_worker_results" in tool_map:
-        await worker.log(
-            "info",
-            f"Join barrier engaged for {len(joined_worker_ids)} child worker(s): {', '.join(joined_worker_ids)}",
-        )
-        while True:
-            payload, tool_meta = await _execute_join_barrier_tool(
-                tool_name="synthesize_worker_results",
-                tool_input={"worker_ids": joined_worker_ids},
-                worker=worker,
-                workspace_root=workspace_root,
-                worker_dir=worker_dir,
-                tool_map=tool_map,
-                spec_timeout_seconds=spec_timeout_seconds,
-                loop_start=loop_start,
-                telemetry=telemetry,
-                tools_used=tools_used,
-            )
-            if tool_meta.get("had_error"):
-                return None
-            structured = _decode_structured_tool_result(payload)
-            if not isinstance(structured, dict):
-                return None
-            pending_count = int(structured.get("pending_count") or 0)
-            if pending_count <= 0:
-                return structured
-            elapsed = asyncio.get_running_loop().time() - loop_start
-            remaining_budget = max(0, spec_timeout_seconds - int(elapsed))
-            if remaining_budget <= 1:
-                await worker.log(
-                    "warning",
-                    (
-                        "Join barrier ran out of local time budget before all child workers "
-                        f"finished ({pending_count} still pending)."
-                    ),
-                )
-                return structured
-            await asyncio.sleep(min(_CHILD_JOIN_BARRIER_POLL_SECONDS, float(remaining_budget)))
-
-    if "get_worker_result" not in tool_map:
-        await worker.log(
-            "warning",
-            (
-                "Child workers were spawned, but no result-collection tool is available "
-                "for an automatic join barrier."
-            ),
-        )
-        return None
-
-    pending_worker_ids = list(joined_worker_ids)
-    completed: list[dict[str, Any]] = []
-    failed: list[dict[str, Any]] = []
-    await worker.log(
-        "info",
-        f"Join barrier engaged for {len(joined_worker_ids)} child worker(s): {', '.join(joined_worker_ids)}",
-    )
-    while pending_worker_ids:
-        next_pending: list[str] = []
-        for worker_id in pending_worker_ids:
-            payload, tool_meta = await _execute_join_barrier_tool(
-                tool_name="get_worker_result",
-                tool_input={"worker_id": worker_id},
-                worker=worker,
-                workspace_root=workspace_root,
-                worker_dir=worker_dir,
-                tool_map=tool_map,
-                spec_timeout_seconds=spec_timeout_seconds,
-                loop_start=loop_start,
-                telemetry=telemetry,
-                tools_used=tools_used,
-            )
-            if tool_meta.get("had_error"):
-                next_pending.append(worker_id)
+def _record_joined_child_batch(
+    joined_results_by_id: dict[str, dict[str, Any]],
+    child_batch: dict[str, Any],
+) -> None:
+    for key in ("completed", "failed", "stopped", "missing"):
+        items = child_batch.get(key, [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
                 continue
-            structured = _decode_structured_tool_result(payload)
-            if not isinstance(structured, dict):
-                next_pending.append(worker_id)
+            worker_id = str(item.get("worker_id") or "").strip()
+            if not worker_id:
                 continue
-            status = str(structured.get("status", "") or "").strip().lower()
-            if status == "completed":
-                completed.append(structured)
-            elif status in {"failed", "stopped", "not_found"}:
-                failed.append(structured)
-            else:
-                next_pending.append(worker_id)
+            joined_results_by_id[worker_id] = dict(item)
 
-        pending_worker_ids = next_pending
-        if not pending_worker_ids:
-            break
 
-        elapsed = asyncio.get_running_loop().time() - loop_start
-        remaining_budget = max(0, spec_timeout_seconds - int(elapsed))
-        if remaining_budget <= 1:
-            await worker.log(
-                "warning",
-                (
-                    "Join barrier ran out of local time budget before all child workers "
-                    f"finished ({len(pending_worker_ids)} still pending)."
-                ),
-            )
-            break
-        await asyncio.sleep(min(_CHILD_JOIN_BARRIER_POLL_SECONDS, float(remaining_budget)))
-
-    return _build_join_barrier_payload_from_results(
-        completed=completed,
-        failed=failed,
-        pending=[{"worker_id": worker_id, "status": "running"} for worker_id in pending_worker_ids],
+def _build_joined_child_guardrail_result(
+    *,
+    worker_id: str,
+    joined_result: dict[str, Any],
+) -> dict[str, Any]:
+    payload = dict(joined_result)
+    payload.setdefault("worker_id", worker_id)
+    payload["joined_via_runtime"] = True
+    payload["guardrail"] = "child_result_already_in_context"
+    payload["message"] = (
+        "Runtime already joined this child worker and injected the authoritative result into context. "
+        "Reuse that result instead of polling again unless you are starting a new retry."
     )
+    return payload
 
 
 def _detect_orchestration_stall(
@@ -792,6 +630,7 @@ Important:
     successful_tool_calls = 0
     tool_call_history: list[dict[str, Any]] = []
     tool_loop_thresholds = _resolve_tool_loop_thresholds()
+    joined_child_results_by_id: dict[str, dict[str, Any]] = {}
 
     while thinking_steps < effective_max_steps:
         llm_start = time.perf_counter()
@@ -848,29 +687,58 @@ Important:
                 )
                 step_exempt = bool(poll_window.get("step_exempt"))
 
-                # Execute tool
-                elapsed = asyncio.get_running_loop().time() - loop_start
-                remaining_budget = max(1, spec.timeout_seconds - int(elapsed))
-                tool_timeout = min(_DEFAULT_TOOL_TIMEOUT_SECONDS, remaining_budget)
-                tool_start = time.perf_counter()
-                tool_result, tool_meta = await _execute_tool(
-                    tool_name,
-                    tool_input,
-                    workspace_root,
-                    worker_dir,
-                    worker,
-                    tool_map,
-                    timeout_seconds=tool_timeout,
-                )
-                telemetry["tool_calls"] += 1
-                telemetry["tool_latency_ms_total"] += int((time.perf_counter() - tool_start) * 1000)
-                telemetry["tool_retries"] += int(tool_meta.get("retries", 0))
-                if tool_meta.get("timed_out"):
-                    telemetry["tool_timeouts"] += 1
-                if tool_meta.get("had_error"):
-                    telemetry["tool_errors"] += 1
+                normalized_tool_name = str(tool_name or "").strip()
+                joined_worker_id = ""
+                joined_result: dict[str, Any] | None = None
+                if normalized_tool_name == "get_worker_result":
+                    joined_worker_id = str(tool_input.get("worker_id") or "").strip()
+                    if joined_worker_id:
+                        joined_result = joined_child_results_by_id.get(joined_worker_id)
+
+                if joined_result is not None and joined_worker_id:
+                    tool_result = _build_joined_child_guardrail_result(
+                        worker_id=joined_worker_id,
+                        joined_result=joined_result,
+                    )
+                    tool_meta = {
+                        "retries": 0,
+                        "timed_out": False,
+                        "had_error": False,
+                        "error_type": "none",
+                        "guardrail": True,
+                    }
+                    step_exempt = True
+                    await worker.log(
+                        "info",
+                        (
+                            "Skipping redundant get_worker_result for already-joined child worker: "
+                            f"{joined_worker_id}"
+                        ),
+                    )
                 else:
-                    successful_tool_calls += 1
+                    # Execute tool
+                    elapsed = asyncio.get_running_loop().time() - loop_start
+                    remaining_budget = max(1, spec.timeout_seconds - int(elapsed))
+                    tool_timeout = min(_DEFAULT_TOOL_TIMEOUT_SECONDS, remaining_budget)
+                    tool_start = time.perf_counter()
+                    tool_result, tool_meta = await _execute_tool(
+                        tool_name,
+                        tool_input,
+                        workspace_root,
+                        worker_dir,
+                        worker,
+                        tool_map,
+                        timeout_seconds=tool_timeout,
+                    )
+                    telemetry["tool_calls"] += 1
+                    telemetry["tool_latency_ms_total"] += int((time.perf_counter() - tool_start) * 1000)
+                    telemetry["tool_retries"] += int(tool_meta.get("retries", 0))
+                    if tool_meta.get("timed_out"):
+                        telemetry["tool_timeouts"] += 1
+                    if tool_meta.get("had_error"):
+                        telemetry["tool_errors"] += 1
+                    else:
+                        successful_tool_calls += 1
                 tools_used.append(tool_name)
                 args_hash = str(
                     poll_window.get("args_hash")
@@ -1002,23 +870,36 @@ Important:
                 if str(tool_name or "") in _CHILD_SPAWN_TOOLS:
                     spawned_child_ids.extend(_extract_spawned_worker_ids(tool_name, tool_result))
             if spawned_child_ids:
-                join_payload = await _join_spawned_child_batch(
-                    worker=worker,
-                    worker_ids=spawned_child_ids,
-                    workspace_root=workspace_root,
-                    worker_dir=worker_dir,
-                    tool_map=tool_map,
-                    spec_timeout_seconds=spec.timeout_seconds,
-                    loop_start=loop_start,
-                    telemetry=telemetry,
-                    tools_used=tools_used,
-                )
-                if isinstance(join_payload, dict):
-                    rendered_join_message = _render_join_barrier_message(
-                        join_payload=join_payload,
-                        worker_ids=list(dict.fromkeys(spawned_child_ids)),
+                joined_worker_ids = list(
+                    dict.fromkeys(
+                        str(worker_id).strip()
+                        for worker_id in spawned_child_ids
+                        if str(worker_id).strip()
                     )
-                    messages.append({"role": "user", "content": rendered_join_message})
+                )
+                if joined_worker_ids:
+                    await worker.log(
+                        "info",
+                        (
+                            "Suspending parent worker until child batch completes: "
+                            + ", ".join(joined_worker_ids)
+                        ),
+                    )
+                    child_batch = await worker.await_children(joined_worker_ids)
+                    await worker.log(
+                        "info",
+                        (
+                            "Resuming parent worker after child batch completion: "
+                            + ", ".join(joined_worker_ids)
+                        ),
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": _render_resumed_child_batch_message(child_batch),
+                        }
+                    )
+                    _record_joined_child_batch(joined_child_results_by_id, child_batch)
             if round_consumes_step:
                 thinking_steps += 1
             empty_turns = 0

@@ -76,6 +76,22 @@ class Worker:
     async def complete(self, result: WorkerResult) -> None:
         await self._write_message({"type": "result", "result": result.model_dump()})
 
+    async def await_children(self, worker_ids: list[str]) -> dict[str, Any]:
+        child_ids = [str(worker_id).strip() for worker_id in worker_ids if str(worker_id).strip()]
+        if not child_ids:
+            raise ValueError("await_children requires at least one worker id")
+
+        await self._write_message({"type": "await_children", "worker_ids": child_ids})
+        while True:
+            response = await self._read_message()
+            response_type = str(response.get("type") or "").strip()
+            if response_type == "resume_children":
+                payload = response.get("child_batch")
+                return payload if isinstance(payload, dict) else {}
+            if response_type == "shutdown":
+                raise RuntimeError("Worker shutdown requested while waiting for child workers")
+            raise RuntimeError(f"Unexpected response from Octo while waiting for children: {response_type}")
+
     async def call_mcp_tool(self, server_id: str, tool_name: str, arguments: dict[str, Any]) -> Any:
         await self._write_message({
             "type": "mcp_call",
