@@ -1018,7 +1018,7 @@ Important:
                         join_payload=join_payload,
                         worker_ids=list(dict.fromkeys(spawned_child_ids)),
                     )
-                    messages.append({"role": "system", "content": rendered_join_message})
+                    messages.append({"role": "user", "content": rendered_join_message})
             if round_consumes_step:
                 thinking_steps += 1
             empty_turns = 0

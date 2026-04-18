@@ -886,7 +886,8 @@ def test_execute_agent_task_auto_joins_spawned_children_before_next_llm_turn(
         join_notes = [
             str(message.get("content") or "")
             for message in messages
-            if message.get("role") == "system"
+            if message.get("role") == "user"
+            and "Runtime join barrier note" in str(message.get("content") or "")
         ]
         assert any("Runtime join barrier note" in note for note in join_notes)
         assert any("child summary" in note for note in join_notes)
